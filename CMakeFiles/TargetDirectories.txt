@@ -1,0 +1,10 @@
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/intrinsics_gen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/vt_gen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/omp_gen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/acc_gen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/ARMTargetParserTableGen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/AArch64TargetParserTableGen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/RISCVTargetParserTableGen.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/tocin-compiler.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/ALL_BUILD.dir
+C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/CMakeFiles/ZERO_CHECK.dir
