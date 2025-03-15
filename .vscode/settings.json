@@ -1,0 +1,16 @@
+{
+  "cmake.sourceDirectory": "C:/Users/Afolabi Oluwatoisn A/Downloads/tocin-compiler/tocin-compiler",
+  "files.associations": {
+    "algorithm": "cpp",
+    "functional": "cpp",
+    "optional": "cpp",
+    "system_error": "cpp",
+    "type_traits": "cpp",
+    "xlocmon": "cpp",
+    "xtr1common": "cpp",
+    "xutility": "cpp",
+    "sstream": "cpp",
+    "istream": "cpp"
+  },
+  "C_Cpp.errorSquiggles": "enabled"
+}
