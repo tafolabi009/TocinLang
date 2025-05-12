@@ -10,7 +10,16 @@
     "xtr1common": "cpp",
     "xutility": "cpp",
     "sstream": "cpp",
-    "istream": "cpp"
+    "istream": "cpp",
+    "iostream": "cpp",
+    "cmath": "cpp",
+    "string": "cpp",
+    "cstring": "cpp",
+    "new": "cpp",
+    "vector": "cpp",
+    "ostream": "cpp",
+    "fstream": "cpp",
+    "memory": "cpp"
   },
   "C_Cpp.errorSquiggles": "enabled"
 }

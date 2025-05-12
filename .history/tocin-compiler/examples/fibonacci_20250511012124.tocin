@@ -1,0 +1,44 @@
+// Fibonacci sequence calculation in Tocin
+
+// Recursive fibonacci implementation
+def fibonacci_recursive(n: int) -> int {
+    if n <= 1 {
+        return n;
+    } else {
+        return fibonacci_recursive(n - 1) + fibonacci_recursive(n - 2);
+    }
+}
+
+// Iterative fibonacci implementation
+def fibonacci_iterative(n: int) -> int {
+    if n <= 1 {
+        return n;
+    }
+    
+    let a: int = 0;
+    let b: int = 1;
+    let result: int = 0;
+    
+    for i in range(2, n + 1) {
+        result = a + b;
+        a = b;
+        b = result;
+    }
+    
+    return result;
+}
+
+def main() -> int {
+    print_string("Fibonacci Sequence:");
+    println();
+    
+    for i in range(10) {
+        print_string("fibonacci(");
+        print_int(i);
+        print_string(") = ");
+        print_int(fibonacci_iterative(i));
+        println();
+    }
+    
+    return 0;
+} 

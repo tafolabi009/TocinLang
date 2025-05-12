@@ -1,0 +1,138 @@
+// Example Tocin program demonstrating concurrency with goroutines and channels
+
+// Simple function to be run as a goroutine
+fn sayHello(name: string, delayMs: int) {
+    // Sleep for the specified duration
+    sleep(delayMs);
+    println("Hello, " + name + "!");
+}
+
+// Function that demonstrates a producer-consumer pattern with channels
+fn producerConsumer() {
+    // Create a buffered channel with capacity 5
+    let jobs = Channel<int>(5);
+    let results = Channel<string>(5);
+    
+    // Start worker goroutines
+    for i in 1..4 {
+        go worker(i, jobs, results);
+    }
+    
+    // Send jobs to the workers
+    for i in 1..10 {
+        println("Sending job " + i.toString());
+        jobs.send(i);
+    }
+    
+    // Close the jobs channel to signal no more jobs
+    jobs.close();
+    
+    // Collect results from the workers
+    for i in 1..10 {
+        let result = results.receive();
+        println("Received result: " + result);
+    }
+    
+    println("All jobs processed");
+}
+
+// Worker function that processes jobs from a channel
+fn worker(id: int, jobs: Channel<int>, results: Channel<string>) {
+    loop {
+        // Try to receive a job from the jobs channel
+        match jobs.tryReceive() {
+            Some(job) => {
+                println("Worker " + id.toString() + " processing job " + job.toString());
+                
+                // Simulate work by sleeping
+                sleep(job * 100);
+                
+                // Send the result back
+                let result = "Result of job " + job.toString() + " processed by worker " + id.toString();
+                results.send(result);
+            },
+            None => {
+                // No more jobs, exit the loop
+                println("Worker " + id.toString() + " done");
+                break;
+            }
+        }
+    }
+}
+
+// Function that demonstrates the select statement
+fn selectDemo() {
+    let c1 = Channel<string>();
+    let c2 = Channel<string>();
+    
+    // Send values on the channels after a delay
+    go func() {
+        sleep(1000);
+        c1.send("one");
+    };
+    
+    go func() {
+        sleep(2000);
+        c2.send("two");
+    };
+    
+    // Use select to wait for either channel to receive a value
+    for i in 1..3 {
+        select {
+            case v = <-c1:
+                println("Received " + v + " from c1");
+            case v = <-c2:
+                println("Received " + v + " from c2");
+            case <-timeout(500):
+                println("Timeout!");
+            default:
+                println("No value ready, trying again...");
+                sleep(500);
+        }
+    }
+}
+
+// Fibonacci generator using channels
+fn fibonacci(n: int, c: Channel<int>) {
+    let x = 0;
+    let y = 1;
+    
+    for i in 0..n {
+        c.send(x);
+        let z = x + y;
+        x = y;
+        y = z;
+    }
+    
+    c.close();
+}
+
+fn main() {
+    println("=== Goroutine Demo ===");
+    
+    // Start goroutines
+    go sayHello("Alice", 100);
+    go sayHello("Bob", 200);
+    sayHello("Charlie", 0);  // This runs in the main goroutine
+    
+    // Wait for all goroutines to finish
+    sleep(300);
+    
+    println("\n=== Producer-Consumer Demo ===");
+    producerConsumer();
+    
+    println("\n=== Select Demo ===");
+    selectDemo();
+    
+    println("\n=== Fibonacci Generator Demo ===");
+    let c = Channel<int>();
+    go fibonacci(10, c);
+    
+    // Receive and print values from the channel
+    for {
+        match c.tryReceive() {
+            Some(value) => println(value.toString()),
+            None => break
+        }
+    }
+} 

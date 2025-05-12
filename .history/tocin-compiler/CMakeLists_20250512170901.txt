@@ -1,0 +1,187 @@
+﻿cmake_minimum_required(VERSION 3.16)
+project(Tocin LANGUAGES C CXX)
+
+# Set C++ standard to C++17 for better compatibility
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Enable verbose output for debugging
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# Add compiler flags and definitions
+add_definitions(-D_WIN32_WINNT=0x0601)
+add_definitions(-DWIN32_LEAN_AND_MEAN)
+add_definitions(-DNOMINMAX)
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+add_definitions(-D__STDC_CONSTANT_MACROS)
+add_definitions(-D__STDC_FORMAT_MACROS)
+add_definitions(-D__STDC_LIMIT_MACROS)
+
+# -------------------------
+# ZLIB Integration
+# -------------------------
+find_package(ZLIB REQUIRED)
+include_directories(${ZLIB_INCLUDE_DIRS})
+
+# -------------------------
+# LLVM Integration
+# -------------------------
+set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm")
+find_package(LLVM REQUIRED CONFIG)
+
+if(LLVM_FOUND)
+    message(STATUS "Found LLVM version ${LLVM_PACKAGE_VERSION}")
+    include_directories(${LLVM_INCLUDE_DIRS})
+    add_definitions(${LLVM_DEFINITIONS})
+    link_directories(${LLVM_LIBRARY_DIRS})
+    
+    # Add additional LLVM include directories for better header discovery
+    include_directories(
+        ${LLVM_INCLUDE_DIRS}/llvm
+        ${LLVM_INCLUDE_DIRS}/llvm/Support
+        ${LLVM_INCLUDE_DIRS}/llvm/IR
+        ${LLVM_INCLUDE_DIRS}/llvm/ExecutionEngine
+    )
+    
+    # Map LLVM components
+    llvm_map_components_to_libnames(llvm_libs
+        core
+        support
+        irreader
+        codegen
+        mc
+        mcparser
+        passes
+        target
+        x86codegen
+        x86asmparser
+        x86desc
+        x86info
+        asmprinter
+        analysis
+        transformutils
+        instcombine
+        scalaropts
+        ExecutionEngine
+        MCJIT
+        OrcJIT
+        RuntimeDyld
+        native
+    )
+else()
+    message(FATAL_ERROR "LLVM not found. Please ensure LLVM is installed.")
+endif()
+
+# -------------------------
+# Python Integration
+# -------------------------
+find_package(Python COMPONENTS Interpreter Development)
+if(Python_FOUND)
+    include_directories(${Python_INCLUDE_DIRS})
+    add_definitions(-DWITH_PYTHON)
+    message(STATUS "Python found at: ${Python_EXECUTABLE}")
+else()
+    message(WARNING "Python not found. Python-related functionality will be disabled.")
+endif()
+
+# -------------------------
+# V8 Integration
+# -------------------------
+find_path(V8_INCLUDE_DIR v8.h HINTS "C:/msys64/mingw64/include")
+find_library(V8_LIBRARY NAMES v8 v8.dll.a libv8 libv8.dll.a HINTS "C:/msys64/mingw64/lib")
+
+if(V8_INCLUDE_DIR AND V8_LIBRARY AND NOT V8_LIBRARY STREQUAL "V8_LIBRARY-NOTFOUND")
+    set(V8_FOUND TRUE)
+    message(STATUS "Found V8 headers in: ${V8_INCLUDE_DIR}")
+    message(STATUS "Found V8 library: ${V8_LIBRARY}")
+    include_directories(${V8_INCLUDE_DIR})
+    add_definitions(-DWITH_V8)
+else()
+    set(V8_FOUND FALSE)
+    message(WARNING "V8 not found. V8-related functionality will be disabled.")
+endif()
+
+# -------------------------
+# V8 Platform Dependencies
+# -------------------------
+if(V8_FOUND)
+    set(V8_PLATFORM_LIBRARIES
+        ${V8_LIBRARY}
+    )
+    
+    find_library(V8_PLATFORM_LIBRARY 
+                NAMES v8_libplatform v8_libplatform.dll.a libv8_libplatform libv8_libplatform.dll.a 
+                HINTS "C:/msys64/mingw64/lib")
+    if(V8_PLATFORM_LIBRARY)
+        list(APPEND V8_PLATFORM_LIBRARIES ${V8_PLATFORM_LIBRARY})
+    endif()
+    
+    find_library(V8_BASE_LIBRARY 
+                NAMES v8_libbase v8_libbase.dll.a libv8_libbase libv8_libbase.dll.a 
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/lexer/token.cpp")
+    list(APPEND SOURCES src/lexer/token.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/parser/parser.cpp")
+    list(APPEND SOURCES src/parser/parser.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/error/error_handler.cpp")
+    list(APPEND SOURCES src/error/error_handler.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/type/type_checker.cpp")
+    list(APPEND SOURCES src/type/type_checker.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/codegen/ir_generator.cpp")
+    list(APPEND SOURCES src/codegen/ir_generator.cpp)
+endif()
+
+# Create executable
+add_executable(tocin ${SOURCES})
+
+# Include Project Headers
+target_include_directories(tocin PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${LLVM_INCLUDE_DIRS}
+    C:/msys64/mingw64/include
+)
+
+# Add Python headers if found
+if(Python_FOUND)
+    target_include_directories(tocin PRIVATE ${Python_INCLUDE_DIRS})
+endif()
+
+# Linking Libraries
+set(LINK_LIBS
+    -lmingw32
+    ${llvm_libs}
+)
+
+# Add optional libraries
+if(ZLIB_FOUND)
+    list(APPEND LINK_LIBS ${ZLIB_LIBRARIES})
+endif()
+
+if(Python_FOUND)
+    list(APPEND LINK_LIBS ${Python_LIBRARIES})
+endif()
+
+target_link_libraries(tocin PRIVATE ${LINK_LIBS})
+
+# Install target
+install(TARGETS tocin DESTINATION bin)
+
+# Simplified CPack configuration
+include(InstallRequiredSystemLibraries)
+set(CPACK_PACKAGE_VERSION_MAJOR "1")
+set(CPACK_PACKAGE_VERSION_MINOR "0")
+set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "tocin")
+set(CPACK_PACKAGE_VENDOR "Afolabi_Oluwatosin")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Tocin Compiler")
+
+include(CPack)

@@ -1,0 +1,140 @@
+﻿cmake_minimum_required(VERSION 3.16)
+project(Tocin LANGUAGES C CXX)
+
+# Set C++ standard to C++17 for better compatibility
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Enable verbose output for debugging
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# Add compiler flags
+add_definitions(-D_WIN32_WINNT=0x0601)
+add_definitions(-DWIN32_LEAN_AND_MEAN)
+add_definitions(-DNOMINMAX)
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+add_definitions(-D__STDC_CONSTANT_MACROS)
+add_definitions(-D__STDC_FORMAT_MACROS)
+add_definitions(-D__STDC_LIMIT_MACROS)
+
+# ZLIB Integration
+find_package(ZLIB)
+if(ZLIB_FOUND)
+    include_directories(${ZLIB_INCLUDE_DIRS})
+endif()
+
+# LLVM Integration
+set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm")
+find_package(LLVM REQUIRED CONFIG)
+
+if(LLVM_FOUND)
+    message(STATUS "Found LLVM version ${LLVM_PACKAGE_VERSION}")
+    include_directories(${LLVM_INCLUDE_DIRS})
+    add_definitions(${LLVM_DEFINITIONS})
+    
+    # Map LLVM components
+    llvm_map_components_to_libnames(llvm_libs
+        core
+        support
+        irreader
+        analysis
+        bitreader
+        bitwriter
+        mcjit
+        executionengine
+        target
+        native
+        x86codegen
+        x86asmparser
+        x86desc
+        x86info
+    )
+else()
+    message(FATAL_ERROR "LLVM not found. Please ensure LLVM is installed.")
+endif()
+
+# Python Integration (optional)
+find_package(Python COMPONENTS Interpreter Development)
+if(Python_FOUND)
+    include_directories(${Python_INCLUDE_DIRS})
+    add_definitions(-DWITH_PYTHON)
+    message(STATUS "Python found at: ${Python_EXECUTABLE}")
+endif()
+
+# Source Files - add back core compiler components
+set(SOURCES
+    src/main.cpp
+)
+
+# If additional source files exist, add them
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/lexer/lexer.cpp")
+    list(APPEND SOURCES src/lexer/lexer.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/lexer/token.cpp")
+    list(APPEND SOURCES src/lexer/token.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/parser/parser.cpp")
+    list(APPEND SOURCES src/parser/parser.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/error/error_handler.cpp")
+    list(APPEND SOURCES src/error/error_handler.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/type/type_checker.cpp")
+    list(APPEND SOURCES src/type/type_checker.cpp)
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/codegen/ir_generator.cpp")
+    list(APPEND SOURCES src/codegen/ir_generator.cpp)
+endif()
+
+# Create executable
+add_executable(tocin ${SOURCES})
+
+# Include Project Headers
+target_include_directories(tocin PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${LLVM_INCLUDE_DIRS}
+    C:/msys64/mingw64/include
+)
+
+# Add Python headers if found
+if(Python_FOUND)
+    target_include_directories(tocin PRIVATE ${Python_INCLUDE_DIRS})
+endif()
+
+# Linking Libraries
+set(LINK_LIBS
+    -lmingw32
+    ${llvm_libs}
+)
+
+# Add optional libraries
+if(ZLIB_FOUND)
+    list(APPEND LINK_LIBS ${ZLIB_LIBRARIES})
+endif()
+
+if(Python_FOUND)
+    list(APPEND LINK_LIBS ${Python_LIBRARIES})
+endif()
+
+target_link_libraries(tocin PRIVATE ${LINK_LIBS})
+
+# Install target
+install(TARGETS tocin DESTINATION bin)
+
+# Simplified CPack configuration
+include(InstallRequiredSystemLibraries)
+set(CPACK_PACKAGE_VERSION_MAJOR "1")
+set(CPACK_PACKAGE_VERSION_MINOR "0")
+set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "tocin")
+set(CPACK_PACKAGE_VENDOR "Afolabi_Oluwatosin")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Tocin Compiler")
+
+include(CPack)

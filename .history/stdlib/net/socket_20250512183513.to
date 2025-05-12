@@ -1,0 +1,386 @@
+/**
+ * Network Socket Module for Tocin
+ * Provides TCP and UDP socket programming capabilities
+ */
+
+module net.socket {
+    // Socket types
+    export enum SocketType {
+        TCP,
+        UDP
+    }
+    
+    // Socket address families
+    export enum AddressFamily {
+        IPv4,
+        IPv6
+    }
+    
+    // Socket error class
+    export class SocketError: Error {
+        constructor(message: string) {
+            super(message);
+        }
+    }
+    
+    // Socket options
+    export class SocketOptions {
+        reuseAddress: bool = false;
+        reusePort: bool = false;
+        nonBlocking: bool = false;
+        timeout: int = 0;      // Socket timeout in milliseconds (0 = no timeout)
+        
+        constructor(options: dict<string, any> = {}) {
+            if "reuseAddress" in options {
+                this.reuseAddress = options["reuseAddress"] as bool;
+            }
+            
+            if "reusePort" in options {
+                this.reusePort = options["reusePort"] as bool;
+            }
+            
+            if "nonBlocking" in options {
+                this.nonBlocking = options["nonBlocking"] as bool;
+            }
+            
+            if "timeout" in options {
+                this.timeout = options["timeout"] as int;
+            }
+        }
+    }
+    
+    // Base Socket class
+    export class Socket {
+        protected handle: int;
+        protected type: SocketType;
+        protected family: AddressFamily;
+        protected connected: bool = false;
+        protected bound: bool = false;
+        protected closed: bool = false;
+        
+        constructor(type: SocketType = SocketType.TCP, family: AddressFamily = AddressFamily.IPv4, options: SocketOptions = new SocketOptions()) {
+            @extern("socket", "create")
+            def _socket_create(type: int, family: int, reuseAddress: bool, reusePort: bool, nonBlocking: bool, timeout: int) -> int;
+            
+            this.type = type;
+            this.family = family;
+            
+            this.handle = _socket_create(
+                type as int,
+                family as int,
+                options.reuseAddress,
+                options.reusePort,
+                options.nonBlocking,
+                options.timeout
+            );
+            
+            if this.handle < 0 {
+                throw new SocketError("Failed to create socket");
+            }
+        }
+        
+        // Set socket option
+        def setOption(option: string, value: any) -> bool {
+            @extern("socket", "setOption")
+            def _socket_set_option(handle: int, option: string, value: any) -> bool;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            return _socket_set_option(this.handle, option, value);
+        }
+        
+        // Get socket option
+        def getOption(option: string) -> any {
+            @extern("socket", "getOption")
+            def _socket_get_option(handle: int, option: string) -> any;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            return _socket_get_option(this.handle, option);
+        }
+        
+        // Close the socket
+        def close() {
+            if this.closed {
+                return;
+            }
+            
+            @extern("socket", "close")
+            def _socket_close(handle: int);
+            
+            _socket_close(this.handle);
+            this.closed = true;
+            this.connected = false;
+            this.bound = false;
+        }
+        
+        // Check if socket is connected
+        def isConnected() -> bool {
+            return this.connected;
+        }
+        
+        // Check if socket is bound
+        def isBound() -> bool {
+            return this.bound;
+        }
+        
+        // Check if socket is closed
+        def isClosed() -> bool {
+            return this.closed;
+        }
+    }
+    
+    // TCP Socket class
+    export class TCPSocket: Socket {
+        constructor(family: AddressFamily = AddressFamily.IPv4, options: SocketOptions = new SocketOptions()) {
+            super(SocketType.TCP, family, options);
+        }
+        
+        // Connect to a remote host
+        def connect(host: string, port: int) -> bool {
+            @extern("socket", "connect")
+            def _socket_connect(handle: int, host: string, port: int) -> bool;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if this.connected {
+                throw new SocketError("Socket is already connected");
+            }
+            
+            let result = _socket_connect(this.handle, host, port);
+            if result {
+                this.connected = true;
+            }
+            
+            return result;
+        }
+        
+        // Bind to a local address
+        def bind(host: string = "0.0.0.0", port: int = 0) -> bool {
+            @extern("socket", "bind")
+            def _socket_bind(handle: int, host: string, port: int) -> bool;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if this.bound {
+                throw new SocketError("Socket is already bound");
+            }
+            
+            let result = _socket_bind(this.handle, host, port);
+            if result {
+                this.bound = true;
+            }
+            
+            return result;
+        }
+        
+        // Listen for incoming connections
+        def listen(backlog: int = 5) -> bool {
+            @extern("socket", "listen")
+            def _socket_listen(handle: int, backlog: int) -> bool;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if !this.bound {
+                throw new SocketError("Socket is not bound");
+            }
+            
+            return _socket_listen(this.handle, backlog);
+        }
+        
+        // Accept an incoming connection
+        def accept() -> TCPSocket? {
+            @extern("socket", "accept")
+            def _socket_accept(handle: int) -> dict<string, any>;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if !this.bound {
+                throw new SocketError("Socket is not bound");
+            }
+            
+            let result = _socket_accept(this.handle);
+            if !result {
+                return nil;
+            }
+            
+            let clientHandle = result["handle"] as int;
+            if clientHandle < 0 {
+                return nil;
+            }
+            
+            // Create a new TCPSocket with the client handle
+            let clientSocket = new TCPSocket(this.family);
+            
+            // Replace the handle with the accepted client handle
+            @extern("socket", "setHandle")
+            def _socket_set_handle(socket: TCPSocket, handle: int);
+            
+            _socket_set_handle(clientSocket, clientHandle);
+            clientSocket.connected = true;
+            
+            return clientSocket;
+        }
+        
+        // Send data
+        def send(data: string) -> int {
+            @extern("socket", "send")
+            def _socket_send(handle: int, data: string) -> int;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if !this.connected {
+                throw new SocketError("Socket is not connected");
+            }
+            
+            return _socket_send(this.handle, data);
+        }
+        
+        // Receive data
+        def recv(bufferSize: int = 4096) -> string {
+            @extern("socket", "recv")
+            def _socket_recv(handle: int, bufferSize: int) -> string;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if !this.connected {
+                throw new SocketError("Socket is not connected");
+            }
+            
+            return _socket_recv(this.handle, bufferSize);
+        }
+    }
+    
+    // UDP Socket class
+    export class UDPSocket: Socket {
+        constructor(family: AddressFamily = AddressFamily.IPv4, options: SocketOptions = new SocketOptions()) {
+            super(SocketType.UDP, family, options);
+        }
+        
+        // Bind to a local address
+        def bind(host: string = "0.0.0.0", port: int = 0) -> bool {
+            @extern("socket", "bind")
+            def _socket_bind(handle: int, host: string, port: int) -> bool;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            if this.bound {
+                throw new SocketError("Socket is already bound");
+            }
+            
+            let result = _socket_bind(this.handle, host, port);
+            if result {
+                this.bound = true;
+            }
+            
+            return result;
+        }
+        
+        // Send data to a specific address
+        def sendTo(data: string, host: string, port: int) -> int {
+            @extern("socket", "sendTo")
+            def _socket_send_to(handle: int, data: string, host: string, port: int) -> int;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            return _socket_send_to(this.handle, data, host, port);
+        }
+        
+        // Receive data from any address
+        def recvFrom(bufferSize: int = 4096) -> tuple<string, string, int> {
+            @extern("socket", "recvFrom")
+            def _socket_recv_from(handle: int, bufferSize: int) -> dict<string, any>;
+            
+            if this.closed {
+                throw new SocketError("Socket is closed");
+            }
+            
+            let result = _socket_recv_from(this.handle, bufferSize);
+            
+            let data = result["data"] as string;
+            let host = result["host"] as string;
+            let port = result["port"] as int;
+            
+            return (data, host, port);
+        }
+    }
+    
+    // Create a TCP server socket
+    export def createTCPServer(host: string = "0.0.0.0", port: int, backlog: int = 5, options: SocketOptions = new SocketOptions()) -> TCPSocket {
+        let socket = new TCPSocket(AddressFamily.IPv4, options);
+        
+        let bindResult = socket.bind(host, port);
+        if !bindResult {
+            throw new SocketError(f"Failed to bind to {host}:{port}");
+        }
+        
+        let listenResult = socket.listen(backlog);
+        if !listenResult {
+            throw new SocketError(f"Failed to listen on {host}:{port}");
+        }
+        
+        return socket;
+    }
+    
+    // Create a TCP client socket connected to a server
+    export def createTCPClient(host: string, port: int, options: SocketOptions = new SocketOptions()) -> TCPSocket {
+        let socket = new TCPSocket(AddressFamily.IPv4, options);
+        
+        let connectResult = socket.connect(host, port);
+        if !connectResult {
+            throw new SocketError(f"Failed to connect to {host}:{port}");
+        }
+        
+        return socket;
+    }
+    
+    // Create a UDP socket bound to a specific address
+    export def createUDPSocket(host: string = "0.0.0.0", port: int = 0, options: SocketOptions = new SocketOptions()) -> UDPSocket {
+        let socket = new UDPSocket(AddressFamily.IPv4, options);
+        
+        if port > 0 {
+            let bindResult = socket.bind(host, port);
+            if !bindResult {
+                throw new SocketError(f"Failed to bind to {host}:{port}");
+            }
+        }
+        
+        return socket;
+    }
+    
+    // Helper function to resolve hostname to IP address
+    export def resolveHostname(hostname: string) -> list<string> {
+        @extern("socket", "resolveHostname")
+        def _socket_resolve_hostname(hostname: string) -> list<string>;
+        
+        return _socket_resolve_hostname(hostname);
+    }
+    
+    // Helper function to get local IP addresses
+    export def getLocalAddresses() -> list<string> {
+        @extern("socket", "getLocalAddresses")
+        def _socket_get_local_addresses() -> list<string>;
+        
+        return _socket_get_local_addresses();
+    }
+} 

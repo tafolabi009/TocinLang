@@ -1,0 +1,108 @@
+// Example Tocin program demonstrating Option and Result types
+
+// Function that might not find a value
+fn find_user(id: int) -> Option<string> {
+    if id == 1 {
+        return Some("Alice");
+    } else if id == 2 {
+        return Some("Bob");
+    } else {
+        return None;
+    }
+}
+
+// Function that might fail with an error
+fn divide(a: float, b: float) -> Result<float, string> {
+    if b == 0.0 {
+        return Err("Division by zero");
+    } else {
+        return Ok(a / b);
+    }
+}
+
+fn main() {
+    // Using Option
+    let user = find_user(1);
+    
+    // Pattern matching on Option
+    match user {
+        Some(name) => {
+            println("User found: " + name);
+        },
+        None => {
+            println("User not found");
+        }
+    }
+    
+    // Using Result
+    let division_result = divide(10.0, 2.0);
+    
+    // Pattern matching on Result
+    match division_result {
+        Ok(value) => {
+            println("Result: " + toString(value));
+        },
+        Err(error) => {
+            println("Error: " + error);
+        }
+    }
+    
+    // Using Result with potential error
+    let error_result = divide(5.0, 0.0);
+    
+    match error_result {
+        Ok(value) => {
+            println("Result: " + toString(value));
+        },
+        Err(error) => {
+            println("Error: " + error);
+        }
+    }
+    
+    // Optional chaining (using ? operator)
+    fn process_user(id: int) -> Option<string> {
+        let user = find_user(id)?;  // Returns None if find_user returns None
+        return Some(user + " processed");
+    }
+    
+    // Result chaining
+    fn safe_divide_and_multiply(a: float, b: float, c: float) -> Result<float, string> {
+        let div_result = divide(a, b)?;  // Returns Err if divide returns Err
+        return Ok(div_result * c);
+    }
+    
+    // Try the chained functions
+    let processed = process_user(2);
+    let not_processed = process_user(3);
+    
+    println("Processed user: " + 
+        match processed {
+            Some(name) => name,
+            None => "Not found"
+        }
+    );
+    
+    println("Not processed user: " + 
+        match not_processed {
+            Some(name) => name,
+            None => "Not found"
+        }
+    );
+    
+    let calculate = safe_divide_and_multiply(10.0, 2.0, 3.0);
+    let error_calculate = safe_divide_and_multiply(10.0, 0.0, 3.0);
+    
+    println("Calculate result: " + 
+        match calculate {
+            Ok(value) => toString(value),
+            Err(error) => "Error: " + error
+        }
+    );
+    
+    println("Error calculate result: " + 
+        match error_calculate {
+            Ok(value) => toString(value),
+            Err(error) => "Error: " + error
+        }
+    );
+} 
