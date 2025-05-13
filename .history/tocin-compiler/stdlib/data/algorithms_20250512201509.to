@@ -1,0 +1,929 @@
+/**
+ * Tocin Standard Library - Algorithms Module
+ * Provides implementations of common algorithms for sorting, searching, etc.
+ */
+
+/**
+ * Sorting Algorithms
+ */
+class Sorting {
+    /**
+     * Quick sort algorithm
+     */
+    static def quickSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        if (array.length <= 1) {
+            return array;
+        }
+        
+        function partition(arr: Array<T>, low: int, high: int) -> int {
+            let pivot = arr[high];
+            let i = low - 1;
+            
+            for (let j = low; j < high; j++) {
+                if (comparator(arr[j], pivot) <= 0) {
+                    i++;
+                    // Swap elements
+                    let temp = arr[i];
+                    arr[i] = arr[j];
+                    arr[j] = temp;
+                }
+            }
+            
+            // Swap pivot into place
+            let temp = arr[i + 1];
+            arr[i + 1] = arr[high];
+            arr[high] = temp;
+            
+            return i + 1;
+        }
+        
+        function quickSortImpl(arr: Array<T>, low: int, high: int) -> void {
+            if (low < high) {
+                let pi = partition(arr, low, high);
+                
+                quickSortImpl(arr, low, pi - 1);
+                quickSortImpl(arr, pi + 1, high);
+            }
+        }
+        
+        // Create a copy to avoid modifying the original array
+        let result = [...array];
+        quickSortImpl(result, 0, result.length - 1);
+        
+        return result;
+    }
+    
+    /**
+     * Merge sort algorithm
+     */
+    static def mergeSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        if (array.length <= 1) {
+            return array;
+        }
+        
+        function merge(left: Array<T>, right: Array<T>) -> Array<T> {
+            let result = [];
+            let leftIndex = 0;
+            let rightIndex = 0;
+            
+            while (leftIndex < left.length && rightIndex < right.length) {
+                if (comparator(left[leftIndex], right[rightIndex]) <= 0) {
+                    result.push(left[leftIndex]);
+                    leftIndex++;
+                } else {
+                    result.push(right[rightIndex]);
+                    rightIndex++;
+                }
+            }
+            
+            // Add remaining elements
+            return [
+                ...result,
+                ...left.slice(leftIndex),
+                ...right.slice(rightIndex)
+            ];
+        }
+        
+        function mergeSortImpl(arr: Array<T>) -> Array<T> {
+            if (arr.length <= 1) {
+                return arr;
+            }
+            
+            const mid = Math.floor(arr.length / 2);
+            const left = arr.slice(0, mid);
+            const right = arr.slice(mid);
+            
+            return merge(mergeSortImpl(left), mergeSortImpl(right));
+        }
+        
+        return mergeSortImpl([...array]);
+    }
+    
+    /**
+     * Heap sort algorithm
+     */
+    static def heapSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        function heapify(arr: Array<T>, n: int, i: int) -> void {
+            let largest = i;
+            let left = 2 * i + 1;
+            let right = 2 * i + 2;
+            
+            if (left < n && comparator(arr[left], arr[largest]) > 0) {
+                largest = left;
+            }
+            
+            if (right < n && comparator(arr[right], arr[largest]) > 0) {
+                largest = right;
+            }
+            
+            if (largest !== i) {
+                // Swap elements
+                let temp = arr[i];
+                arr[i] = arr[largest];
+                arr[largest] = temp;
+                
+                heapify(arr, n, largest);
+            }
+        }
+        
+        let result = [...array];
+        let n = result.length;
+        
+        // Build heap (rearrange array)
+        for (let i = Math.floor(n / 2) - 1; i >= 0; i--) {
+            heapify(result, n, i);
+        }
+        
+        // Extract elements from heap one by one
+        for (let i = n - 1; i > 0; i--) {
+            // Move current root to end
+            let temp = result[0];
+            result[0] = result[i];
+            result[i] = temp;
+            
+            // Call heapify on the reduced heap
+            heapify(result, i, 0);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Insertion sort algorithm (efficient for small arrays)
+     */
+    static def insertionSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        let result = [...array];
+        let n = result.length;
+        
+        for (let i = 1; i < n; i++) {
+            let key = result[i];
+            let j = i - 1;
+            
+            while (j >= 0 && comparator(result[j], key) > 0) {
+                result[j + 1] = result[j];
+                j--;
+            }
+            
+            result[j + 1] = key;
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Searching Algorithms
+ */
+class Searching {
+    /**
+     * Binary search algorithm for sorted arrays
+     * Returns the index of the element or -1 if not found
+     */
+    static def binarySearch<T>(
+        array: Array<T>,
+        target: T,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> int {
+        let left = 0;
+        let right = array.length - 1;
+        
+        while (left <= right) {
+            let mid = Math.floor((left + right) / 2);
+            let comparison = comparator(array[mid], target);
+            
+            if (comparison === 0) {
+                return mid; // Element found
+            } else if (comparison < 0) {
+                left = mid + 1; // Search in the right half
+            } else {
+                right = mid - 1; // Search in the left half
+            }
+        }
+        
+        return -1; // Element not found
+    }
+    
+    /**
+     * Linear search algorithm
+     * Returns the index of the first occurrence or -1 if not found
+     */
+    static def linearSearch<T>(
+        array: Array<T>,
+        target: T,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> int {
+        for (let i = 0; i < array.length; i++) {
+            if (comparator(array[i], target) === 0) {
+                return i;
+            }
+        }
+        
+        return -1; // Element not found
+    }
+    
+    /**
+     * Interpolation search (improved binary search for uniformly distributed data)
+     * Returns the index of the element or -1 if not found
+     */
+    static def interpolationSearch(
+        array: Array<float>,
+        target: float
+    ) -> int {
+        let low = 0;
+        let high = array.length - 1;
+        
+        while (low <= high && target >= array[low] && target <= array[high]) {
+            if (low === high) {
+                if (array[low] === target) {
+                    return low;
+                }
+                return -1;
+            }
+            
+            // Calculate probe position
+            let pos = low + Math.floor(
+                ((high - low) * (target - array[low])) / 
+                (array[high] - array[low])
+            );
+            
+            if (array[pos] === target) {
+                return pos;
+            } else if (array[pos] < target) {
+                low = pos + 1;
+            } else {
+                high = pos - 1;
+            }
+        }
+        
+        return -1; // Element not found
+    }
+}
+
+/**
+ * Graph Algorithms
+ */
+class GraphAlgorithms {
+    /**
+     * Breadth-First Search on a graph represented as an adjacency list
+     * Returns all reachable nodes from the start node
+     */
+    static def breadthFirstSearch<T>(
+        graph: Map<T, Array<T>>,
+        start: T
+    ) -> Array<T> {
+        if (!graph.has(start)) {
+            return [];
+        }
+        
+        let visited = new Set<T>();
+        let queue = [start];
+        let result = [];
+        
+        visited.add(start);
+        
+        while (queue.length > 0) {
+            let node = queue.shift();
+            result.push(node);
+            
+            for (let neighbor of graph.get(node)) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    queue.push(neighbor);
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Depth-First Search on a graph represented as an adjacency list
+     * Returns all reachable nodes from the start node
+     */
+    static def depthFirstSearch<T>(
+        graph: Map<T, Array<T>>,
+        start: T
+    ) -> Array<T> {
+        if (!graph.has(start)) {
+            return [];
+        }
+        
+        let visited = new Set<T>();
+        let result = [];
+        
+        function dfs(node: T) -> void {
+            visited.add(node);
+            result.push(node);
+            
+            for (let neighbor of graph.get(node)) {
+                if (!visited.has(neighbor)) {
+                    dfs(neighbor);
+                }
+            }
+        }
+        
+        dfs(start);
+        return result;
+    }
+    
+    /**
+     * Dijkstra's algorithm for finding shortest paths in a weighted graph
+     * Returns the shortest distances from the start node to all other nodes
+     */
+    static def dijkstra<T>(
+        graph: Map<T, Map<T, float>>,
+        start: T
+    ) -> Map<T, {distance: float, previous: T?}> {
+        if (!graph.has(start)) {
+            return new Map();
+        }
+        
+        let nodes = new Set<T>();
+        let distances = new Map<T, {distance: float, previous: T?}>();
+        
+        // Initialize distances and nodes
+        for (let [node, _] of graph) {
+            distances.set(node, {
+                distance: node === start ? 0 : Infinity,
+                previous: null
+            });
+            nodes.add(node);
+        }
+        
+        while (nodes.size > 0) {
+            // Find node with minimum distance
+            let current = null;
+            let minDistance = Infinity;
+            
+            for (let node of nodes) {
+                let nodeInfo = distances.get(node);
+                if (nodeInfo.distance < minDistance) {
+                    minDistance = nodeInfo.distance;
+                    current = node;
+                }
+            }
+            
+            // No reachable nodes left
+            if (current === null || minDistance === Infinity) {
+                break;
+            }
+            
+            // Remove current node from unprocessed nodes
+            nodes.delete(current);
+            
+            // Update distances to neighbors
+            for (let [neighbor, weight] of graph.get(current)) {
+                if (!nodes.has(neighbor)) {
+                    continue; // Skip processed nodes
+                }
+                
+                let currentInfo = distances.get(current);
+                let neighborInfo = distances.get(neighbor);
+                
+                let newDistance = currentInfo.distance + weight;
+                
+                if (newDistance < neighborInfo.distance) {
+                    distances.set(neighbor, {
+                        distance: newDistance,
+                        previous: current
+                    });
+                }
+            }
+        }
+        
+        return distances;
+    }
+    
+    /**
+     * Prim's algorithm for finding a minimum spanning tree
+     * Returns an array of edges in the MST
+     */
+    static def primMST<T>(
+        graph: Map<T, Map<T, float>>
+    ) -> Array<{from: T, to: T, weight: float}> {
+        if (graph.size === 0) {
+            return [];
+        }
+        
+        let startNode = graph.keys().next().value;
+        let visited = new Set<T>([startNode]);
+        let result = [];
+        
+        // Loop until all nodes are in the MST
+        while (visited.size < graph.size) {
+            let minEdge = null;
+            let minWeight = Infinity;
+            
+            // Find the minimum weight edge from visited to unvisited nodes
+            for (let from of visited) {
+                let neighbors = graph.get(from);
+                
+                for (let [to, weight] of neighbors) {
+                    if (!visited.has(to) && weight < minWeight) {
+                        minWeight = weight;
+                        minEdge = {from, to, weight};
+                    }
+                }
+            }
+            
+            // If no edge was found, the graph is disconnected
+            if (minEdge === null) {
+                break;
+            }
+            
+            // Add the edge to the MST
+            result.push(minEdge);
+            visited.add(minEdge.to);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Kruskal's algorithm for finding a minimum spanning tree
+     * Returns an array of edges in the MST
+     */
+    static def kruskalMST<T>(
+        graph: Map<T, Map<T, float>>
+    ) -> Array<{from: T, to: T, weight: float}> {
+        // Helper class for Union-Find data structure
+        class DisjointSet {
+            property parent: Map<T, T>;
+            property rank: Map<T, int>;
+            
+            def initialize(nodes: Array<T>) {
+                self.parent = new Map();
+                self.rank = new Map();
+                
+                for (let node of nodes) {
+                    self.parent.set(node, node);
+                    self.rank.set(node, 0);
+                }
+            }
+            
+            def find(x: T) -> T {
+                if (self.parent.get(x) !== x) {
+                    self.parent.set(x, self.find(self.parent.get(x)));
+                }
+                return self.parent.get(x);
+            }
+            
+            def union(x: T, y: T) -> void {
+                let rootX = self.find(x);
+                let rootY = self.find(y);
+                
+                if (rootX === rootY) {
+                    return;
+                }
+                
+                // Attach smaller rank tree under root of higher rank tree
+                if (self.rank.get(rootX) < self.rank.get(rootY)) {
+                    self.parent.set(rootX, rootY);
+                } else if (self.rank.get(rootX) > self.rank.get(rootY)) {
+                    self.parent.set(rootY, rootX);
+                } else {
+                    // Same rank, make one as root and increment its rank
+                    self.parent.set(rootY, rootX);
+                    self.rank.set(rootX, self.rank.get(rootX) + 1);
+                }
+            }
+        }
+        
+        // Get all nodes
+        let nodes = Array.from(graph.keys());
+        
+        // Get all edges
+        let edges = [];
+        for (let [from, neighbors] of graph) {
+            for (let [to, weight] of neighbors) {
+                // Add each edge only once (assuming undirected graph)
+                if (from < to) {
+                    edges.push({from, to, weight});
+                }
+            }
+        }
+        
+        // Sort edges by weight
+        edges.sort((a, b) => a.weight - b.weight);
+        
+        // Create disjoint set
+        let disjointSet = new DisjointSet(nodes);
+        
+        // Process edges
+        let result = [];
+        for (let edge of edges) {
+            let {from, to, weight} = edge;
+            
+            // Check if adding this edge creates a cycle
+            if (disjointSet.find(from) !== disjointSet.find(to)) {
+                // Add to MST
+                result.push(edge);
+                disjointSet.union(from, to);
+                
+                // Stop if we have n-1 edges (enough for MST)
+                if (result.length === nodes.length - 1) {
+                    break;
+                }
+            }
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * String Algorithms
+ */
+class StringAlgorithms {
+    /**
+     * Knuth-Morris-Pratt algorithm for pattern matching
+     * Returns the index of the first occurrence or -1 if not found
+     */
+    static def kmpSearch(text: string, pattern: string) -> int {
+        if (pattern.length === 0) {
+            return 0;
+        }
+        
+        if (text.length < pattern.length) {
+            return -1;
+        }
+        
+        // Compute prefix function
+        function computeLPS(pattern: string) -> Array<int> {
+            let m = pattern.length;
+            let lps = new Array(m).fill(0);
+            
+            let len = 0;
+            let i = 1;
+            
+            while (i < m) {
+                if (pattern[i] === pattern[len]) {
+                    len++;
+                    lps[i] = len;
+                    i++;
+                } else {
+                    if (len !== 0) {
+                        len = lps[len - 1];
+                    } else {
+                        lps[i] = 0;
+                        i++;
+                    }
+                }
+            }
+            
+            return lps;
+        }
+        
+        let lps = computeLPS(pattern);
+        
+        let i = 0; // index for text
+        let j = 0; // index for pattern
+        
+        while (i < text.length) {
+            if (pattern[j] === text[i]) {
+                i++;
+                j++;
+            }
+            
+            if (j === pattern.length) {
+                return i - j; // Found pattern
+            } else if (i < text.length && pattern[j] !== text[i]) {
+                if (j !== 0) {
+                    j = lps[j - 1];
+                } else {
+                    i++;
+                }
+            }
+        }
+        
+        return -1; // Pattern not found
+    }
+    
+    /**
+     * Longest Common Subsequence of two strings
+     * Returns the LCS length and the actual subsequence
+     */
+    static def longestCommonSubsequence(str1: string, str2: string) -> {
+        length: int,
+        subsequence: string
+    } {
+        let m = str1.length;
+        let n = str2.length;
+        
+        // Create DP table
+        let dp = new Array(m + 1);
+        for (let i = 0; i <= m; i++) {
+            dp[i] = new Array(n + 1).fill(0);
+        }
+        
+        // Fill dp table
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (str1[i - 1] === str2[j - 1]) {
+                    dp[i][j] = dp[i - 1][j - 1] + 1;
+                } else {
+                    dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+                }
+            }
+        }
+        
+        // Reconstruct the LCS
+        let i = m;
+        let j = n;
+        let lcs = "";
+        
+        while (i > 0 && j > 0) {
+            if (str1[i - 1] === str2[j - 1]) {
+                lcs = str1[i - 1] + lcs;
+                i--;
+                j--;
+            } else if (dp[i - 1][j] > dp[i][j - 1]) {
+                i--;
+            } else {
+                j--;
+            }
+        }
+        
+        return {
+            length: dp[m][n],
+            subsequence: lcs
+        };
+    }
+    
+    /**
+     * Levenshtein Distance (Edit Distance) between two strings
+     * Returns the minimum number of operations (insertions, deletions, substitutions)
+     * required to convert one string to another
+     */
+    static def levenshteinDistance(str1: string, str2: string) -> int {
+        let m = str1.length;
+        let n = str2.length;
+        
+        // Create DP table
+        let dp = new Array(m + 1);
+        for (let i = 0; i <= m; i++) {
+            dp[i] = new Array(n + 1);
+            dp[i][0] = i; // Deletions
+        }
+        
+        // Initialize first row
+        for (let j = 0; j <= n; j++) {
+            dp[0][j] = j; // Insertions
+        }
+        
+        // Fill dp table
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (str1[i - 1] === str2[j - 1]) {
+                    dp[i][j] = dp[i - 1][j - 1]; // No operation needed
+                } else {
+                    dp[i][j] = 1 + Math.min(
+                        dp[i - 1][j],     // Deletion
+                        dp[i][j - 1],     // Insertion
+                        dp[i - 1][j - 1]  // Substitution
+                    );
+                }
+            }
+        }
+        
+        return dp[m][n];
+    }
+}
+
+/**
+ * Dynamic Programming Algorithms
+ */
+class DynamicProgramming {
+    /**
+     * 0/1 Knapsack Problem
+     * Returns the maximum value that can be put in a knapsack of capacity W
+     */
+    static def knapsack01(
+        values: Array<int>,
+        weights: Array<int>,
+        capacity: int
+    ) -> {
+        maxValue: int,
+        selectedItems: Array<int>
+    } {
+        let n = values.length;
+        
+        if (n === 0 || capacity === 0) {
+            return {
+                maxValue: 0,
+                selectedItems: []
+            };
+        }
+        
+        // Create DP table
+        let dp = new Array(n + 1);
+        for (let i = 0; i <= n; i++) {
+            dp[i] = new Array(capacity + 1).fill(0);
+        }
+        
+        // Fill dp table
+        for (let i = 1; i <= n; i++) {
+            for (let w = 1; w <= capacity; w++) {
+                // If current item weight is less than or equal to capacity
+                if (weights[i - 1] <= w) {
+                    dp[i][w] = Math.max(
+                        values[i - 1] + dp[i - 1][w - weights[i - 1]],
+                        dp[i - 1][w]
+                    );
+                } else {
+                    dp[i][w] = dp[i - 1][w];
+                }
+            }
+        }
+        
+        // Find selected items
+        let selectedItems = [];
+        let w = capacity;
+        
+        for (let i = n; i > 0 && w > 0; i--) {
+            // If the value comes from including this item
+            if (dp[i][w] !== dp[i - 1][w]) {
+                selectedItems.push(i - 1); // Add item index to selected items
+                w -= weights[i - 1]; // Reduce capacity
+            }
+        }
+        
+        // Reverse to get items in original order
+        selectedItems.reverse();
+        
+        return {
+            maxValue: dp[n][capacity],
+            selectedItems
+        };
+    }
+    
+    /**
+     * Longest Increasing Subsequence
+     * Returns the length and the actual subsequence
+     */
+    static def longestIncreasingSubsequence<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> {
+        length: int,
+        subsequence: Array<T>
+    } {
+        let n = array.length;
+        
+        if (n === 0) {
+            return {
+                length: 0,
+                subsequence: []
+            };
+        }
+        
+        // Create DP table and predecessor array
+        let dp = new Array(n).fill(1);
+        let predecessor = new Array(n).fill(-1);
+        
+        let maxLength = 1;
+        let endIndex = 0;
+        
+        // Fill dp table
+        for (let i = 1; i < n; i++) {
+            for (let j = 0; j < i; j++) {
+                if (comparator(array[j], array[i]) < 0 && dp[i] < dp[j] + 1) {
+                    dp[i] = dp[j] + 1;
+                    predecessor[i] = j;
+                    
+                    if (dp[i] > maxLength) {
+                        maxLength = dp[i];
+                        endIndex = i;
+                    }
+                }
+            }
+        }
+        
+        // Reconstruct the subsequence
+        let subsequence = [];
+        let curr = endIndex;
+        
+        while (curr !== -1) {
+            subsequence.unshift(array[curr]);
+            curr = predecessor[curr];
+        }
+        
+        return {
+            length: maxLength,
+            subsequence
+        };
+    }
+    
+    /**
+     * Matrix Chain Multiplication
+     * Returns the minimum number of operations to multiply a chain of matrices
+     */
+    static def matrixChainMultiplication(
+        dimensions: Array<int>
+    ) -> {
+        minOperations: int,
+        optimalParenthesization: string
+    } {
+        let n = dimensions.length - 1; // Number of matrices
+        
+        if (n <= 1) {
+            return {
+                minOperations: 0,
+                optimalParenthesization: n === 1 ? "M1" : ""
+            };
+        }
+        
+        // Create DP table for minimum operations and split positions
+        let dp = new Array(n + 1);
+        let split = new Array(n + 1);
+        
+        for (let i = 1; i <= n; i++) {
+            dp[i] = new Array(n + 1).fill(0);
+            split[i] = new Array(n + 1).fill(0);
+        }
+        
+        // l is the chain length
+        for (let l = 2; l <= n; l++) {
+            for (let i = 1; i <= n - l + 1; i++) {
+                let j = i + l - 1;
+                dp[i][j] = Infinity;
+                
+                // Try different split positions k
+                for (let k = i; k < j; k++) {
+                    let operations = dp[i][k] + dp[k + 1][j] +
+                                      dimensions[i - 1] * dimensions[k] * dimensions[j];
+                    
+                    if (operations < dp[i][j]) {
+                        dp[i][j] = operations;
+                        split[i][j] = k;
+                    }
+                }
+            }
+        }
+        
+        // Reconstruct optimal parenthesization
+        function optimalParens(i: int, j: int) -> string {
+            if (i === j) {
+                return `M${i}`;
+            } else {
+                let k = split[i][j];
+                let left = optimalParens(i, k);
+                let right = optimalParens(k + 1, j);
+                return `(${left} × ${right})`;
+            }
+        }
+        
+        return {
+            minOperations: dp[1][n],
+            optimalParenthesization: optimalParens(1, n)
+        };
+    }
+}
+
+export {
+    Sorting,
+    Searching,
+    GraphAlgorithms,
+    StringAlgorithms,
+    DynamicProgramming
+} 

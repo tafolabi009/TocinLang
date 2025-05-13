@@ -1,0 +1,1097 @@
+/**
+ * Tocin Standard Library - Database Module
+ * Provides interfaces for SQL and NoSQL databases.
+ */
+
+/**
+ * Base database interface
+ */
+interface Database {
+    def connect() -> void;
+    def disconnect() -> void;
+    def isConnected() -> bool;
+}
+
+/**
+ * SQL Database interface
+ */
+interface SQLDatabase extends Database {
+    def query(sql: string, params: Array<any>? = null) -> Array<any>;
+    def execute(sql: string, params: Array<any>? = null) -> int;
+    def beginTransaction() -> void;
+    def commit() -> void;
+    def rollback() -> void;
+}
+
+/**
+ * NoSQL Database interface
+ */
+interface NoSQLDatabase extends Database {
+    def collection(name: string) -> Collection;
+}
+
+/**
+ * NoSQL Collection interface
+ */
+interface Collection {
+    def insert(document: any) -> string;
+    def insertMany(documents: Array<any>) -> Array<string>;
+    def find(query: any? = null) -> Cursor;
+    def findOne(query: any) -> any?;
+    def update(query: any, update: any, options: any? = null) -> int;
+    def delete(query: any) -> int;
+}
+
+/**
+ * NoSQL Cursor interface
+ */
+interface Cursor {
+    def hasNext() -> bool;
+    def next() -> any?;
+    def toArray() -> Array<any>;
+    def skip(count: int) -> Cursor;
+    def limit(count: int) -> Cursor;
+    def sort(field: string, order: int) -> Cursor;
+}
+
+/**
+ * SQLite database implementation
+ */
+class SQLite implements SQLDatabase {
+    property filename: string;
+    property connection: any?;
+    property inTransaction: bool;
+    property lastInsertId: int;
+    
+    def initialize(filename: string) {
+        self.filename = filename;
+        self.connection = null;
+        self.inTransaction = false;
+        self.lastInsertId = 0;
+    }
+    
+    def connect() {
+        if (self.connection) {
+            return;
+        }
+        
+        // Here we would use FFI to connect to SQLite
+        // For example:
+        // self.connection = ffi.sqlite3.open(self.filename);
+        self.connection = {};
+        
+        console.log("Connected to SQLite database:", self.filename);
+    }
+    
+    def disconnect() {
+        if (!self.connection) {
+            return;
+        }
+        
+        // Close the connection
+        // ffi.sqlite3.close(self.connection);
+        self.connection = null;
+        console.log("Disconnected from SQLite database");
+    }
+    
+    def isConnected() -> bool {
+        return self.connection != null;
+    }
+    
+    def query(sql: string, params: Array<any>? = null) -> Array<any> {
+        if (!self.isConnected()) {
+            throw DatabaseError("Not connected to the database");
+        }
+        
+        try {
+            // Prepare and execute statement
+            // let stmt = ffi.sqlite3.prepare(self.connection, sql);
+            // if (params) {
+            //     for (let i = 0; i < params.length; i++) {
+            //         ffi.sqlite3.bind_parameter(stmt, i + 1, params[i]);
+            //     }
+            // }
+            
+            // Fetch results
+            let results = [];
+            // while (ffi.sqlite3.step(stmt) == ffi.sqlite3.ROW) {
+            //     let row = {};
+            //     for (let i = 0; i < ffi.sqlite3.column_count(stmt); i++) {
+            //         let name = ffi.sqlite3.column_name(stmt, i);
+            //         let value = ffi.sqlite3.column_value(stmt, i);
+            //         row[name] = value;
+            //     }
+            //     results.push(row);
+            // }
+            
+            // ffi.sqlite3.finalize(stmt);
+            
+            return results;
+        } catch (error) {
+            throw DatabaseError("Query error: " + error.message);
+        }
+    }
+    
+    def execute(sql: string, params: Array<any>? = null) -> int {
+        if (!self.isConnected()) {
+            throw DatabaseError("Not connected to the database");
+        }
+        
+        try {
+            // Prepare and execute statement
+            // let stmt = ffi.sqlite3.prepare(self.connection, sql);
+            // if (params) {
+            //     for (let i = 0; i < params.length; i++) {
+            //         ffi.sqlite3.bind_parameter(stmt, i + 1, params[i]);
+            //     }
+            // }
+            
+            // Execute the statement
+            // ffi.sqlite3.step(stmt);
+            // ffi.sqlite3.finalize(stmt);
+            
+            // Get changes count
+            // let changes = ffi.sqlite3.changes(self.connection);
+            let changes = 0;
+            
+            // Get last insert ID
+            // self.lastInsertId = ffi.sqlite3.last_insert_rowid(self.connection);
+            
+            return changes;
+        } catch (error) {
+            throw DatabaseError("Execute error: " + error.message);
+        }
+    }
+    
+    def beginTransaction() {
+        if (self.inTransaction) {
+            throw DatabaseError("Transaction already in progress");
+        }
+        
+        self.execute("BEGIN TRANSACTION");
+        self.inTransaction = true;
+    }
+    
+    def commit() {
+        if (!self.inTransaction) {
+            throw DatabaseError("No transaction in progress");
+        }
+        
+        self.execute("COMMIT");
+        self.inTransaction = false;
+    }
+    
+    def rollback() {
+        if (!self.inTransaction) {
+            throw DatabaseError("No transaction in progress");
+        }
+        
+        self.execute("ROLLBACK");
+        self.inTransaction = false;
+    }
+    
+    def getLastInsertId() -> int {
+        return self.lastInsertId;
+    }
+    
+    def createTable(name: string, columns: Array<string>) {
+        let columnDefs = columns.join(", ");
+        let sql = "CREATE TABLE IF NOT EXISTS " + name + " (" + columnDefs + ")";
+        self.execute(sql);
+    }
+    
+    def dropTable(name: string) {
+        let sql = "DROP TABLE IF EXISTS " + name;
+        self.execute(sql);
+    }
+}
+
+/**
+ * MySQL database implementation
+ */
+class MySQL implements SQLDatabase {
+    property host: string;
+    property port: int;
+    property user: string;
+    property password: string;
+    property database: string;
+    property connection: any?;
+    property inTransaction: bool;
+    
+    def initialize(host: string, user: string, password: string, database: string, port: int = 3306) {
+        self.host = host;
+        self.port = port;
+        self.user = user;
+        self.password = password;
+        self.database = database;
+        self.connection = null;
+        self.inTransaction = false;
+    }
+    
+    def connect() {
+        if (self.connection) {
+            return;
+        }
+        
+        // Here we would use FFI to connect to MySQL
+        // For example:
+        // self.connection = ffi.mysql.real_connect(
+        //     self.host, self.user, self.password, self.database, self.port
+        // );
+        self.connection = {};
+        
+        console.log("Connected to MySQL database:", self.database);
+    }
+    
+    def disconnect() {
+        if (!self.connection) {
+            return;
+        }
+        
+        // Close the connection
+        // ffi.mysql.close(self.connection);
+        self.connection = null;
+        console.log("Disconnected from MySQL database");
+    }
+    
+    def isConnected() -> bool {
+        return self.connection != null;
+    }
+    
+    def query(sql: string, params: Array<any>? = null) -> Array<any> {
+        if (!self.isConnected()) {
+            throw DatabaseError("Not connected to the database");
+        }
+        
+        try {
+            // Prepare statement
+            let preparedSql = sql;
+            if (params) {
+                // Replace placeholders with escaped values
+                // This is simplified; a real implementation would use prepared statements
+                for (let param of params) {
+                    preparedSql = preparedSql.replace("?", self.escape(param));
+                }
+            }
+            
+            // Execute query
+            // let result = ffi.mysql.query(self.connection, preparedSql);
+            
+            // Fetch results
+            let results = [];
+            // while (let row = ffi.mysql.fetch_row(result)) {
+            //     results.push(row);
+            // }
+            
+            // ffi.mysql.free_result(result);
+            
+            return results;
+        } catch (error) {
+            throw DatabaseError("Query error: " + error.message);
+        }
+    }
+    
+    def execute(sql: string, params: Array<any>? = null) -> int {
+        if (!self.isConnected()) {
+            throw DatabaseError("Not connected to the database");
+        }
+        
+        try {
+            // Prepare statement
+            let preparedSql = sql;
+            if (params) {
+                // Replace placeholders with escaped values
+                for (let param of params) {
+                    preparedSql = preparedSql.replace("?", self.escape(param));
+                }
+            }
+            
+            // Execute statement
+            // ffi.mysql.query(self.connection, preparedSql);
+            
+            // Get affected rows
+            // let affectedRows = ffi.mysql.affected_rows(self.connection);
+            let affectedRows = 0;
+            
+            return affectedRows;
+        } catch (error) {
+            throw DatabaseError("Execute error: " + error.message);
+        }
+    }
+    
+    def beginTransaction() {
+        if (self.inTransaction) {
+            throw DatabaseError("Transaction already in progress");
+        }
+        
+        self.execute("START TRANSACTION");
+        self.inTransaction = true;
+    }
+    
+    def commit() {
+        if (!self.inTransaction) {
+            throw DatabaseError("No transaction in progress");
+        }
+        
+        self.execute("COMMIT");
+        self.inTransaction = false;
+    }
+    
+    def rollback() {
+        if (!self.inTransaction) {
+            throw DatabaseError("No transaction in progress");
+        }
+        
+        self.execute("ROLLBACK");
+        self.inTransaction = false;
+    }
+    
+    private def escape(value: any) -> string {
+        if (value == null) {
+            return "NULL";
+        }
+        
+        if (typeof value == "number") {
+            return value.toString();
+        }
+        
+        if (typeof value == "boolean") {
+            return value ? "1" : "0";
+        }
+        
+        // Escape string
+        // let escaped = ffi.mysql.real_escape_string(self.connection, value.toString());
+        let escaped = value.toString().replace(/'/g, "''");
+        return "'" + escaped + "'";
+    }
+}
+
+/**
+ * MongoDB-style NoSQL database implementation
+ */
+class MongoDB implements NoSQLDatabase {
+    property uri: string;
+    property client: any?;
+    property db: any?;
+    
+    def initialize(uri: string, database: string) {
+        self.uri = uri;
+        self.client = null;
+        self.db = null;
+        self.database = database;
+    }
+    
+    def connect() {
+        if (self.client) {
+            return;
+        }
+        
+        // Here we would use FFI to connect to MongoDB
+        // For example:
+        // self.client = ffi.mongodb.MongoClient.connect(self.uri);
+        // self.db = self.client.database(self.database);
+        self.client = {};
+        self.db = {};
+        
+        console.log("Connected to MongoDB database:", self.database);
+    }
+    
+    def disconnect() {
+        if (!self.client) {
+            return;
+        }
+        
+        // Close the connection
+        // self.client.close();
+        self.client = null;
+        self.db = null;
+        
+        console.log("Disconnected from MongoDB database");
+    }
+    
+    def isConnected() -> bool {
+        return self.client != null && self.db != null;
+    }
+    
+    def collection(name: string) -> Collection {
+        if (!self.isConnected()) {
+            throw DatabaseError("Not connected to the database");
+        }
+        
+        return MongoCollection(self.db, name);
+    }
+}
+
+/**
+ * MongoDB collection implementation
+ */
+class MongoCollection implements Collection {
+    property db: any;
+    property name: string;
+    property coll: any;
+    
+    def initialize(db: any, name: string) {
+        self.db = db;
+        self.name = name;
+        
+        // Get collection from database
+        // self.coll = self.db.collection(name);
+        self.coll = {};
+    }
+    
+    def insert(document: any) -> string {
+        try {
+            // Insert document
+            // let result = self.coll.insertOne(document);
+            // return result.insertedId.toString();
+            return generateId();
+        } catch (error) {
+            throw DatabaseError("Insert error: " + error.message);
+        }
+    }
+    
+    def insertMany(documents: Array<any>) -> Array<string> {
+        try {
+            // Insert documents
+            // let result = self.coll.insertMany(documents);
+            // return result.insertedIds.map(id => id.toString());
+            
+            let ids = [];
+            for (let i = 0; i < documents.length; i++) {
+                ids.push(generateId());
+            }
+            return ids;
+        } catch (error) {
+            throw DatabaseError("Insert many error: " + error.message);
+        }
+    }
+    
+    def find(query: any? = null) -> Cursor {
+        query = query ?? {};
+        
+        try {
+            // Find documents
+            // let cursor = self.coll.find(query);
+            return MongoCursor();
+        } catch (error) {
+            throw DatabaseError("Find error: " + error.message);
+        }
+    }
+    
+    def findOne(query: any) -> any? {
+        try {
+            // Find one document
+            // return self.coll.findOne(query);
+            return null;
+        } catch (error) {
+            throw DatabaseError("Find one error: " + error.message);
+        }
+    }
+    
+    def update(query: any, update: any, options: any? = null) -> int {
+        options = options ?? { multi: false };
+        
+        try {
+            // Update documents
+            if (options.multi) {
+                // let result = self.coll.updateMany(query, update);
+                // return result.modifiedCount;
+                return 0;
+            } else {
+                // let result = self.coll.updateOne(query, update);
+                // return result.modifiedCount;
+                return 0;
+            }
+        } catch (error) {
+            throw DatabaseError("Update error: " + error.message);
+        }
+    }
+    
+    def delete(query: any) -> int {
+        try {
+            // Delete documents
+            // let result = self.coll.deleteMany(query);
+            // return result.deletedCount;
+            return 0;
+        } catch (error) {
+            throw DatabaseError("Delete error: " + error.message);
+        }
+    }
+    
+    def createIndex(fields: any, options: any? = null) {
+        options = options ?? {};
+        
+        try {
+            // Create index
+            // self.coll.createIndex(fields, options);
+        } catch (error) {
+            throw DatabaseError("Create index error: " + error.message);
+        }
+    }
+    
+    def aggregate(pipeline: Array<any>) -> Cursor {
+        try {
+            // Aggregate documents
+            // let cursor = self.coll.aggregate(pipeline);
+            return MongoCursor();
+        } catch (error) {
+            throw DatabaseError("Aggregate error: " + error.message);
+        }
+    }
+}
+
+/**
+ * MongoDB cursor implementation
+ */
+class MongoCursor implements Cursor {
+    property cursor: any;
+    property skipCount: int;
+    property limitCount: int;
+    property sortField: string?;
+    property sortOrder: int;
+    
+    def initialize() {
+        // self.cursor = cursor;
+        self.cursor = {};
+        self.skipCount = 0;
+        self.limitCount = 0;
+        self.sortField = null;
+        self.sortOrder = 1;
+    }
+    
+    def hasNext() -> bool {
+        // return self.cursor.hasNext();
+        return false;
+    }
+    
+    def next() -> any? {
+        // return self.cursor.next();
+        return null;
+    }
+    
+    def toArray() -> Array<any> {
+        // return self.cursor.toArray();
+        return [];
+    }
+    
+    def skip(count: int) -> Cursor {
+        self.skipCount = count;
+        // self.cursor.skip(count);
+        return self;
+    }
+    
+    def limit(count: int) -> Cursor {
+        self.limitCount = count;
+        // self.cursor.limit(count);
+        return self;
+    }
+    
+    def sort(field: string, order: int = 1) -> Cursor {
+        self.sortField = field;
+        self.sortOrder = order;
+        
+        // let sort = {};
+        // sort[field] = order;
+        // self.cursor.sort(sort);
+        
+        return self;
+    }
+}
+
+/**
+ * SQL Query Builder
+ */
+class QueryBuilder {
+    property type: string;
+    property table: string?;
+    property fields: Array<string>;
+    property conditions: Array<string>;
+    property values: Array<any>;
+    property joins: Array<string>;
+    property groupBy: Array<string>;
+    property havingConditions: Array<string>;
+    property orderBy: Array<string>;
+    property limitValue: int;
+    property offsetValue: int;
+    
+    def initialize() {
+        self.type = "SELECT";
+        self.table = null;
+        self.fields = [];
+        self.conditions = [];
+        self.values = [];
+        self.joins = [];
+        self.groupBy = [];
+        self.havingConditions = [];
+        self.orderBy = [];
+        self.limitValue = 0;
+        self.offsetValue = 0;
+    }
+    
+    def select(fields: string | Array<string>) -> QueryBuilder {
+        self.type = "SELECT";
+        
+        if (typeof fields == "string") {
+            self.fields = [fields];
+        } else {
+            self.fields = fields;
+        }
+        
+        return self;
+    }
+    
+    def insert(table: string) -> QueryBuilder {
+        self.type = "INSERT";
+        self.table = table;
+        
+        return self;
+    }
+    
+    def update(table: string) -> QueryBuilder {
+        self.type = "UPDATE";
+        self.table = table;
+        
+        return self;
+    }
+    
+    def delete(table: string) -> QueryBuilder {
+        self.type = "DELETE";
+        self.table = table;
+        
+        return self;
+    }
+    
+    def from(table: string) -> QueryBuilder {
+        self.table = table;
+        
+        return self;
+    }
+    
+    def join(table: string, condition: string, type: string = "INNER") -> QueryBuilder {
+        self.joins.push(`${type} JOIN ${table} ON ${condition}`);
+        
+        return self;
+    }
+    
+    def leftJoin(table: string, condition: string) -> QueryBuilder {
+        return self.join(table, condition, "LEFT");
+    }
+    
+    def rightJoin(table: string, condition: string) -> QueryBuilder {
+        return self.join(table, condition, "RIGHT");
+    }
+    
+    def where(condition: string, value: any? = null) -> QueryBuilder {
+        self.conditions.push(condition);
+        
+        if (value !== null) {
+            self.values.push(value);
+        }
+        
+        return self;
+    }
+    
+    def andWhere(condition: string, value: any? = null) -> QueryBuilder {
+        return self.where(condition, value);
+    }
+    
+    def orWhere(condition: string, value: any? = null) -> QueryBuilder {
+        if (self.conditions.length > 0) {
+            self.conditions.push("OR " + condition);
+        } else {
+            self.conditions.push(condition);
+        }
+        
+        if (value !== null) {
+            self.values.push(value);
+        }
+        
+        return self;
+    }
+    
+    def groupBy(fields: string | Array<string>) -> QueryBuilder {
+        if (typeof fields == "string") {
+            self.groupBy.push(fields);
+        } else {
+            self.groupBy = self.groupBy.concat(fields);
+        }
+        
+        return self;
+    }
+    
+    def having(condition: string, value: any? = null) -> QueryBuilder {
+        self.havingConditions.push(condition);
+        
+        if (value !== null) {
+            self.values.push(value);
+        }
+        
+        return self;
+    }
+    
+    def orderBy(field: string, direction: string = "ASC") -> QueryBuilder {
+        self.orderBy.push(`${field} ${direction}`);
+        
+        return self;
+    }
+    
+    def limit(value: int) -> QueryBuilder {
+        self.limitValue = value;
+        
+        return self;
+    }
+    
+    def offset(value: int) -> QueryBuilder {
+        self.offsetValue = value;
+        
+        return self;
+    }
+    
+    def getQuery() -> {sql: string, params: Array<any>} {
+        let sql = "";
+        let params = self.values;
+        
+        switch (self.type) {
+            case "SELECT":
+                sql = "SELECT " + (self.fields.length > 0 ? self.fields.join(", ") : "*");
+                
+                if (self.table) {
+                    sql += " FROM " + self.table;
+                }
+                
+                if (self.joins.length > 0) {
+                    sql += " " + self.joins.join(" ");
+                }
+                
+                if (self.conditions.length > 0) {
+                    sql += " WHERE " + self.conditions.join(" AND ");
+                }
+                
+                if (self.groupBy.length > 0) {
+                    sql += " GROUP BY " + self.groupBy.join(", ");
+                }
+                
+                if (self.havingConditions.length > 0) {
+                    sql += " HAVING " + self.havingConditions.join(" AND ");
+                }
+                
+                if (self.orderBy.length > 0) {
+                    sql += " ORDER BY " + self.orderBy.join(", ");
+                }
+                
+                if (self.limitValue > 0) {
+                    sql += " LIMIT " + self.limitValue;
+                }
+                
+                if (self.offsetValue > 0) {
+                    sql += " OFFSET " + self.offsetValue;
+                }
+                
+                break;
+                
+            case "INSERT":
+                // This would be expanded in a full implementation
+                break;
+                
+            case "UPDATE":
+                // This would be expanded in a full implementation
+                break;
+                
+            case "DELETE":
+                sql = "DELETE FROM " + self.table;
+                
+                if (self.conditions.length > 0) {
+                    sql += " WHERE " + self.conditions.join(" AND ");
+                }
+                
+                break;
+        }
+        
+        return {sql, params};
+    }
+    
+    def execute(db: SQLDatabase) -> any {
+        let {sql, params} = self.getQuery();
+        
+        if (self.type == "SELECT") {
+            return db.query(sql, params);
+        } else {
+            return db.execute(sql, params);
+        }
+    }
+}
+
+/**
+ * Database connection pool for SQL databases
+ */
+class ConnectionPool {
+    property db: SQLDatabase;
+    property max: int;
+    property connections: Array<SQLDatabase>;
+    property busy: Array<bool>;
+    
+    def initialize(dbFactory: fn() -> SQLDatabase, max: int = 10) {
+        self.dbFactory = dbFactory;
+        self.max = max;
+        self.connections = [];
+        self.busy = [];
+    }
+    
+    async def getConnection() -> SQLDatabase {
+        // Check if there's an available connection
+        for (let i = 0; i < self.connections.length; i++) {
+            if (!self.busy[i]) {
+                self.busy[i] = true;
+                return self.connections[i];
+            }
+        }
+        
+        // Create a new connection if under max
+        if (self.connections.length < self.max) {
+            let db = self.dbFactory();
+            await db.connect();
+            
+            self.connections.push(db);
+            self.busy.push(true);
+            
+            return db;
+        }
+        
+        // Wait for a connection to become available
+        return new Promise((resolve) => {
+            let interval = setInterval(() => {
+                for (let i = 0; i < self.connections.length; i++) {
+                    if (!self.busy[i]) {
+                        self.busy[i] = true;
+                        clearInterval(interval);
+                        resolve(self.connections[i]);
+                        return;
+                    }
+                }
+            }, 100);
+        });
+    }
+    
+    def releaseConnection(db: SQLDatabase) {
+        let index = self.connections.indexOf(db);
+        
+        if (index >= 0) {
+            self.busy[index] = false;
+        }
+    }
+    
+    async def close() {
+        for (let db of self.connections) {
+            await db.disconnect();
+        }
+        
+        self.connections = [];
+        self.busy = [];
+    }
+}
+
+/**
+ * Database migration manager
+ */
+class Migration {
+    property db: SQLDatabase;
+    property migrations: Array<{version: int, up: fn() -> void, down: fn() -> void}>;
+    
+    def initialize(db: SQLDatabase) {
+        self.db = db;
+        self.migrations = [];
+        
+        // Ensure migrations table exists
+        self.db.execute(`
+            CREATE TABLE IF NOT EXISTS migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+    }
+    
+    def addMigration(version: int, up: fn() -> void, down: fn() -> void) {
+        self.migrations.push({version, up, down});
+    }
+    
+    def getCurrentVersion() -> int {
+        let result = self.db.query("SELECT MAX(version) as version FROM migrations");
+        
+        if (result.length == 0 || result[0].version == null) {
+            return 0;
+        }
+        
+        return result[0].version;
+    }
+    
+    def migrateUp(targetVersion: int? = null) {
+        let currentVersion = self.getCurrentVersion();
+        
+        // Sort migrations by version
+        self.migrations.sort((a, b) => a.version - b.version);
+        
+        // Apply migrations
+        for (let migration of self.migrations) {
+            if (migration.version > currentVersion && (targetVersion == null || migration.version <= targetVersion)) {
+                self.db.beginTransaction();
+                
+                try {
+                    migration.up();
+                    self.db.execute("INSERT INTO migrations (version) VALUES (?)", [migration.version]);
+                    self.db.commit();
+                    
+                    console.log("Applied migration:", migration.version);
+                } catch (error) {
+                    self.db.rollback();
+                    throw MigrationError("Failed to apply migration " + migration.version + ": " + error.message);
+                }
+            }
+        }
+    }
+    
+    def migrateDown(targetVersion: int) {
+        let currentVersion = self.getCurrentVersion();
+        
+        if (targetVersion >= currentVersion) {
+            return;
+        }
+        
+        // Sort migrations by version descending
+        self.migrations.sort((a, b) => b.version - a.version);
+        
+        // Revert migrations
+        for (let migration of self.migrations) {
+            if (migration.version <= currentVersion && migration.version > targetVersion) {
+                self.db.beginTransaction();
+                
+                try {
+                    migration.down();
+                    self.db.execute("DELETE FROM migrations WHERE version = ?", [migration.version]);
+                    self.db.commit();
+                    
+                    console.log("Reverted migration:", migration.version);
+                } catch (error) {
+                    self.db.rollback();
+                    throw MigrationError("Failed to revert migration " + migration.version + ": " + error.message);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * ORM Entity class
+ */
+class Entity {
+    static property tableName: string;
+    static property primaryKey: string;
+    static property fields: Array<string>;
+    static property relations: Map<string, {type: string, entity: string, foreignKey: string}>;
+    
+    def initialize(data: any? = null) {
+        if (data) {
+            for (let key in data) {
+                self[key] = data[key];
+            }
+        }
+    }
+    
+    static def find(db: SQLDatabase, id: any) -> Entity? {
+        let query = `SELECT * FROM ${self.tableName} WHERE ${self.primaryKey} = ? LIMIT 1`;
+        let result = db.query(query, [id]);
+        
+        if (result.length == 0) {
+            return null;
+        }
+        
+        return new self(result[0]);
+    }
+    
+    static def findAll(db: SQLDatabase, where: any? = null) -> Array<Entity> {
+        let query = `SELECT * FROM ${self.tableName}`;
+        let params = [];
+        
+        if (where) {
+            let conditions = [];
+            
+            for (let key in where) {
+                conditions.push(`${key} = ?`);
+                params.push(where[key]);
+            }
+            
+            query += " WHERE " + conditions.join(" AND ");
+        }
+        
+        let results = db.query(query, params);
+        
+        return results.map(row => new self(row));
+    }
+    
+    def save(db: SQLDatabase) {
+        if (self[self.constructor.primaryKey]) {
+            // Update
+            let fields = [];
+            let values = [];
+            
+            for (let field of self.constructor.fields) {
+                if (field != self.constructor.primaryKey) {
+                    fields.push(`${field} = ?`);
+                    values.push(self[field]);
+                }
+            }
+            
+            values.push(self[self.constructor.primaryKey]);
+            
+            let query = `UPDATE ${self.constructor.tableName} SET ${fields.join(", ")} WHERE ${self.constructor.primaryKey} = ?`;
+            db.execute(query, values);
+        } else {
+            // Insert
+            let fields = [];
+            let placeholders = [];
+            let values = [];
+            
+            for (let field of self.constructor.fields) {
+                if (self[field] !== undefined && field != self.constructor.primaryKey) {
+                    fields.push(field);
+                    placeholders.push("?");
+                    values.push(self[field]);
+                }
+            }
+            
+            let query = `INSERT INTO ${self.constructor.tableName} (${fields.join(", ")}) VALUES (${placeholders.join(", ")})`;
+            db.execute(query, values);
+            
+            // Get last insert ID for primary key
+            if (db instanceof SQLite) {
+                self[self.constructor.primaryKey] = db.getLastInsertId();
+            }
+        }
+    }
+    
+    def delete(db: SQLDatabase) {
+        if (!self[self.constructor.primaryKey]) {
+            throw DatabaseError("Cannot delete entity without primary key");
+        }
+        
+        let query = `DELETE FROM ${self.constructor.tableName} WHERE ${self.constructor.primaryKey} = ?`;
+        db.execute(query, [self[self.constructor.primaryKey]]);
+    }
+}
+
+// Helper functions
+function generateId() -> string {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2);
+}
+
+// Error classes
+class DatabaseError extends Error {
+    def initialize(message: string) {
+        super.initialize(message);
+    }
+}
+
+class MigrationError extends DatabaseError {
+    def initialize(message: string) {
+        super.initialize(message);
+    }
+} 
