@@ -1,0 +1,155 @@
+// Example Tocin program demonstrating GUI features
+
+// Import necessary GUI modules
+import gui.core;
+import gui.widgets;
+import gui.layout;
+import gui.events;
+import math.basic;
+
+class TodoItem {
+    property id: int;
+    property text: string;
+    property completed: bool;
+    
+    def initialize(id: int, text: string, completed: bool = false) {
+        self.id = id;
+        self.text = text;
+        self.completed = completed;
+    }
+}
+
+class TodoListApp extends Application {
+    property todoItems: Array<TodoItem>;
+    property nextId: int;
+    property addButton: Button;
+    property clearButton: Button;
+    property inputField: TextField;
+    property todoList: VerticalList;
+    
+    def initialize() {
+        super.initialize("Todo List Application", 400, 500);
+        
+        self.todoItems = [];
+        self.nextId = 1;
+        
+        // Create UI elements
+        self.createUI();
+        
+        // Add some sample tasks
+        self.addTodoItem("Buy groceries");
+        self.addTodoItem("Finish Tocin project");
+        self.addTodoItem("Learn GUI programming");
+    }
+    
+    def createUI() -> void {
+        // Main layout
+        let mainLayout = new VerticalLayout();
+        mainLayout.padding = EdgeInsets.all(16);
+        mainLayout.spacing = 8;
+        
+        // Title
+        let titleLabel = new Label("Todo List");
+        titleLabel.font = new Font("sans-serif", 24, FontWeight.BOLD);
+        titleLabel.textAlign = TextAlign.CENTER;
+        mainLayout.add(titleLabel);
+        
+        // Input row
+        let inputRow = new HorizontalLayout();
+        inputRow.spacing = 8;
+        
+        self.inputField = new TextField("Add a new task...");
+        self.inputField.constraints.preferredWidth = 300;
+        inputRow.add(self.inputField, 1.0); // 1.0 means take remaining space
+        
+        self.addButton = new Button("Add");
+        self.addButton.addEventListener("click", self.handleAddClick.bind(self));
+        inputRow.add(self.addButton);
+        
+        mainLayout.add(inputRow);
+        
+        // Todo list
+        let listContainer = new ScrollView();
+        listContainer.constraints.preferredHeight = 300;
+        
+        self.todoList = new VerticalList();
+        self.todoList.padding = EdgeInsets.all(8);
+        self.todoList.spacing = 4;
+        
+        listContainer.setContent(self.todoList);
+        mainLayout.add(listContainer);
+        
+        // Clear completed button
+        self.clearButton = new Button("Clear Completed");
+        self.clearButton.addEventListener("click", self.handleClearClick.bind(self));
+        mainLayout.add(self.clearButton);
+        
+        // Set the main layout as the root
+        self.setRootLayout(mainLayout);
+    }
+    
+    def addTodoItem(text: string) -> void {
+        let item = new TodoItem(self.nextId++, text);
+        self.todoItems.push(item);
+        self.renderTodoList();
+    }
+    
+    def renderTodoList() -> void {
+        // Clear the list
+        self.todoList.removeAll();
+        
+        // Add each todo item
+        for (let item of self.todoItems) {
+            let itemRow = new HorizontalLayout();
+            itemRow.spacing = 8;
+            itemRow.padding = EdgeInsets.all(4);
+            
+            // Checkbox for completion status
+            let checkbox = new Checkbox("", item.completed);
+            checkbox.addEventListener("click", (event) => {
+                item.completed = checkbox.checked;
+            });
+            itemRow.add(checkbox);
+            
+            // Task text
+            let label = new Label(item.text);
+            if (item.completed) {
+                label.textColor = ColorRGBA.GRAY;
+                // Apply strike-through (not directly supported, would need custom drawing)
+            }
+            itemRow.add(label, 1.0);
+            
+            // Delete button
+            let deleteButton = new Button("×");
+            deleteButton.textColor = ColorRGBA.RED;
+            deleteButton.addEventListener("click", () => {
+                self.todoItems = self.todoItems.filter(todo => todo.id != item.id);
+                self.renderTodoList();
+            });
+            itemRow.add(deleteButton);
+            
+            self.todoList.add(itemRow);
+        }
+    }
+    
+    def handleAddClick(event: MouseEvent) -> void {
+        let text = self.inputField.text.trim();
+        if (text.length > 0) {
+            self.addTodoItem(text);
+            self.inputField.text = "";
+        }
+    }
+    
+    def handleClearClick(event: MouseEvent) -> void {
+        self.todoItems = self.todoItems.filter(item => !item.completed);
+        self.renderTodoList();
+    }
+}
+
+def main() -> int {
+    // Create and run the application
+    let app = new TodoListApp();
+    app.run();
+    
+    return 0;
+} 

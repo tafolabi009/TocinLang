@@ -1,0 +1,77 @@
+{
+    "name": "tocin-language",
+    "displayName": "Tocin Language Support",
+    "description": "Language support for the Tocin programming language",
+    "version": "0.1.0",
+    "publisher": "tocin",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Formatters",
+        "Linters"
+    ],
+    "activationEvents": [
+        "onLanguage:tocin"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [{
+            "id": "tocin",
+            "aliases": ["Tocin", "tocin"],
+            "extensions": [".to"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "tocin",
+            "scopeName": "source.tocin",
+            "path": "./syntaxes/tocin.tmLanguage.json"
+        }],
+        "commands": [
+            {
+                "command": "tocin.restart",
+                "title": "Restart Tocin Language Server"
+            },
+            {
+                "command": "tocin.format",
+                "title": "Format Tocin Document"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Tocin",
+            "properties": {
+                "tocin.maxNumberOfProblems": {
+                    "type": "number",
+                    "default": 100,
+                    "description": "Controls the maximum number of problems produced by the server."
+                },
+                "tocin.trace.server": {
+                    "type": "string",
+                    "enum": ["off", "messages", "verbose"],
+                    "default": "off",
+                    "description": "Traces the communication between VS Code and the language server."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "lint": "eslint src --ext ts"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^8.1.0"
+    },
+    "devDependencies": {
+        "@types/node": "^16.18.34",
+        "@types/vscode": "^1.75.0",
+        "@typescript-eslint/eslint-plugin": "^5.59.8",
+        "@typescript-eslint/parser": "^5.59.8",
+        "eslint": "^8.41.0",
+        "typescript": "^5.1.3"
+    }
+}
+  

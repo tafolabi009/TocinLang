@@ -362,3 +362,25 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 .qodo
+
+# CI/CD and GitHub Actions
+.github/workflows/logs/
+.github/workflows/.cache/
+
+# CTest and test output
+Testing/
+CTestTestfile.cmake
+CTestCostData.txt
+DartConfiguration.tcl
+LastTest.log
+LastTestsFailed.log
+LastTestsPassed.log
+Testing/
+
+# Doxygen output
+/docs/html/
+/docs/latex/
+
+# Coverage and test results
+coverage/
+test-results/

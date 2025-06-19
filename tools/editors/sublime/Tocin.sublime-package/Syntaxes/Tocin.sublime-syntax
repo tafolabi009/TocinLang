@@ -1,0 +1,69 @@
+%YAML 1.2
+---
+name: Tocin
+file_extensions:
+  - to
+scope: source.tocin
+version: 2
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+  type_identifier: '[A-Z][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: keywords
+    - include: strings
+    - include: numbers
+    - include: types
+    - include: functions
+    - include: variables
+
+  comments:
+    - match: //.*$
+      scope: comment.line.double-slash.tocin
+    - match: /\*
+      push: block_comment
+
+  block_comment:
+    - meta_scope: comment.block.tocin
+    - match: \*/
+      pop: true
+    - match: .
+      scope: comment.block.tocin
+
+  keywords:
+    - match: '\b(fn|let|if|else|while|for|return|break|continue|match|trait|impl|pub|use|mod|type|struct|enum|async|await|defer)\b'
+      scope: keyword.control.tocin
+
+  strings:
+    - match: '"'
+      push: double_quoted_string
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.tocin
+    - match: '\\"'
+      scope: constant.character.escape.tocin
+    - match: '"'
+      pop: true
+
+  numbers:
+    - match: '\b([0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?|0x[0-9a-fA-F]+|0b[01]+)\b'
+      scope: constant.numeric.tocin
+
+  types:
+    - match: '\b(i32|i64|f32|f64|bool|string|char)\b'
+      scope: storage.type.tocin
+    - match: '\b{{type_identifier}}\b'
+      scope: storage.type.tocin
+
+  functions:
+    - match: '\bfn\s+({{identifier}})'
+      captures:
+        1: entity.name.function.tocin
+
+  variables:
+    - match: '\blet\s+({{identifier}})'
+      captures:
+        1: variable.other.tocin 

@@ -1,0 +1,182 @@
+%%{init: {"flowchart": {"curve": "step", "nodeSpacing": 70, "rankSpacing": 60}} }%%
+flowchart TD
+
+%% Source Code Processing
+subgraph SC["Source Code Processing"]
+  direction TB
+  SRC([Source File])
+  LEXA{{Lexer}}
+  PARS["Parser":::process]
+  ASTG([["AST Generation"]]:::output)
+  SRC --> LEXA --> PARS --> ASTG
+
+  subgraph ASTC["AST Components"]
+    direction LR
+    ASTG --> ExpN([Expression Nodes]:::ast)
+    ASTG --> StmN([Statement Nodes]:::ast)
+    ASTG --> DecN([Declaration Nodes]:::ast)
+    ASTG --> TyN([Type Nodes]:::ast)
+  end
+end
+
+%% Compiler Pipeline
+subgraph CP["Compiler Pipeline"]
+  direction TB
+  ASTG --> SA([Semantic Analysis]:::process)
+
+  subgraph SECM["Semantic Analysis"]
+    direction LR
+    SA --> STAB([Symbol Table]:::table)
+    SA --> SCOP([Scope Analysis]:::tool)
+    SA --> NRES([Name Resolution]:::tool)
+  end
+
+  SA --> TS([Type System]:::process)
+  subgraph TYS["Type System"]
+    direction LR
+    TS --> TINF([Type Inference]:::ty)
+    TS --> TCHK([Type Checking]:::ty)
+    TS --> TCON([Type Conversion]:::ty)
+    TS --> TGEN([Generic Types]:::ty)
+  end
+
+  TS --> IR([LLVM IR Generation]:::process)
+  subgraph IRC["IR Components"]
+    direction LR
+    IR --> FIR([Function IR]:::ir)
+    IR --> MIR([Module IR]:::ir)
+    IR --> GVAR([Global Vars]:::ir)
+    IR --> META([Metadata]:::ir)
+  end
+
+  IR --> OPT([Optimization]:::process)
+  subgraph OPAS["Optimization Passes"]
+    direction LR
+    OPT --> INL([Inlining]:::opt)
+    OPT --> DCE([Dead Code Elim]:::opt)
+    OPT --> LOOP([Loop Opt]:::opt)
+    OPT --> MEMO([Memory Opt]:::opt)
+  end
+
+  OPT --> CGEN([Code Generation]:::process)
+  subgraph CGENST["Code Generation"]
+    direction LR
+    CGEN --> TSEL([Target Select]:::asm)
+    CGEN --> REGAL([Register Alloc]:::asm)
+    CGEN --> ISEL([Instr Select]:::asm)
+    CGEN --> FASM([Final Assembly]:::asm)
+  end
+end
+
+%% Interpreter System
+subgraph INT["Interpreter System"]
+  direction TB
+  REPL([REPL]:::input) --> EINTR([Interpreter]:::process)
+
+  subgraph INTCP["Interpreter Components"]
+    direction LR
+    EINTR --> ASTWK([AST Walker]:::walk)
+    EINTR --> VALSYS([Value System]:::walk)
+    EINTR --> ERRH([Error Handling]:::walk)
+    EINTR --> DEBGSUP([Debug Support]:::walk)
+  end
+
+  EINTR --> LJIT([LLVM JIT]:::jit)
+  subgraph JITC["JIT Components"]
+    direction LR
+    LJIT --> MODC([Module Compilation]:::jitc)
+    LJIT --> FUNC([Function Compilation]:::jitc)
+    LJIT --> JOPT([JIT Optim]:::jitc)
+    LJIT --> EXEC([Execution]:::jitc)
+  end
+
+  LJIT --> EXECENG([Execution Engine]:::exec)
+  subgraph EXECCP["Execution Engine"]
+    direction LR
+    EXECENG --> MEMM([Memory Mgmt]:::engine)
+    EXECENG --> THRM([Thread Mgmt]:::engine)
+    EXECENG --> EXCH([Exception Hdl]:::engine)
+    EXECENG --> PROF([Profiling]:::engine)
+  end
+end
+
+%% Runtime System
+subgraph RT["Runtime System"]
+  direction TB
+  MEM([Memory Mgmt]:::runtime)
+  subgraph MEMCMP["Memory Components"]
+    direction LR
+    MEM --> ALLOC([Allocation]:::mem)
+    MEM --> DEALLOC([Deallocation]:::mem)
+    MEM --> MPOOLS([Memory Pools]:::mem)
+    MEM --> MBARS([Memory Barriers]:::mem)
+  end
+
+  GARB([Garbage Collection]:::runtime)
+  subgraph GCMP["GC Components"]
+    direction LR
+    GARB --> MSW([Mark & Sweep]:::gc)
+    GARB --> RCNT([Ref Counting]:::gc)
+    GARB --> GENGC([Generational GC]:::gc)
+    GARB --> CGC([Concurrent GC]:::gc)
+  end
+
+  STDLIB([Standard Library]:::runtime)
+  subgraph LIBCMP["Library Components"]
+    direction LR
+    STDLIB --> CTY([Core Types]:::lib)
+    STDLIB --> COLL([Collections]:::lib)
+    STDLIB --> IOOP([I/O Ops]:::lib)
+    STDLIB --> CONC([Concurrency]:::lib)
+  end
+end
+
+%% Outputs & Runtime Connections
+CGEN --> EXE(["Executable"]:::output)
+EXECENG --> RTEXE(["Runtime Execution"]:::output)
+RTEXE --> MEM
+RTEXE --> GARB
+RTEXE --> STDLIB
+
+%% Class Definitions
+classDef process fill:#8ecae6,stroke:#2a6f97,stroke-width:2px;
+classDef table fill:#e5fde5,stroke:#347147,stroke-width:2px;
+classDef tool fill:#fff9db,stroke:#b38600,stroke-width:2px;
+classDef ast fill:#eeb4d2,stroke:#995378,stroke-width:2px;
+classDef ty fill:#ffd7b5,stroke:#b5742d,stroke-width:2px;
+classDef ir fill:#c0cfff,stroke:#4775b3,stroke-width:2px;
+classDef opt fill:#a8f0c6,stroke:#3dbc6a,stroke-width:2px;
+classDef asm fill:#e6d9f4,stroke:#6f42c1,stroke-width:2px;
+classDef output fill:#caffb9,stroke:#4b803f,stroke-width:2px;
+classDef input fill:#fefae0,stroke:#b08968,stroke-width:2px;
+classDef walk fill:#c8e6e9,stroke:#026872,stroke-width:2px;
+classDef jit fill:#7ad8fa,stroke:#145374,stroke-width:2px;
+classDef jitc fill:#afeaff,stroke:#3089c6,stroke-width:2px;
+classDef exec fill:#ffeac9,stroke:#b77406,stroke-width:2px;
+classDef engine fill:#ffd6d6,stroke:#c04444,stroke-width:2px;
+classDef runtime fill:#ffcbab,stroke:#d2691e,stroke-width:2px;
+classDef mem fill:#fbeccf,stroke:#ab6617,stroke-width:2px;
+classDef gc fill:#dbf4cb,stroke:#489250,stroke-width:2px;
+classDef lib fill:#d5e6fb,stroke:#3471ab,stroke-width:2px;
+
+%% Assign classes
+class SRC,LEXA,PARS,ASTG,ExpN,StmN,DecN,TyN ast
+class SA,TS,IR,OPT,CGEN process
+class STAB table
+class SCOP,NRES tool
+class TINF,TCHK,TCON,TGEN ty
+class FIR,MIR,GVAR,META ir
+class INL,DCE,LOOP,MEMO opt
+class TSEL,REGAL,ISEL,FASM asm
+class EXE,RTEXE output
+class REPL input
+class EINTR process
+class ASTWK,VALSYS,ERRH,DEBGSUP walk
+class LJIT jit
+class MODC,FUNC,JOPT,EXEC jitc
+class EXECENG exec
+class MEMM,THRM,EXCH,PROF engine
+class MEM,GARB,STDLIB runtime
+class ALLOC,DEALLOC,MPOOLS,MBARS mem
+class MSW,RCNT,GENGC,CGC gc
+class CTY,COLL,IOOP,CONC lib

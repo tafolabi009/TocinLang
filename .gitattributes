@@ -61,3 +61,16 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# Linguist overrides for Tocin
+*.to linguist-language=Tocin
+
+# Mark generated documentation and coverage as linguist-generated
+/docs/html/* linguist-generated
+/docs/latex/* linguist-generated
+/coverage/* linguist-generated
+/test-results/* linguist-generated
+
+# Workflow YAML files
+.github/workflows/*.yml text=auto
+.github/workflows/*.yaml text=auto

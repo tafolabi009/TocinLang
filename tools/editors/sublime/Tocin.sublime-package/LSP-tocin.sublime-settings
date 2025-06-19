@@ -1,0 +1,25 @@
+{
+    "command": ["node", "${home}/.local/share/tocin/lsp/out/server.js", "--stdio"],
+    "enabled": true,
+    "languages": [
+        {
+            "languageId": "tocin",
+            "scopes": ["source.tocin"],
+            "syntaxes": ["Packages/Tocin/Syntaxes/Tocin.sublime-syntax"]
+        }
+    ],
+    "initializationOptions": {
+        "formatting": true,
+        "diagnostics": true,
+        "semanticTokens": true,
+        "codeActions": true
+    },
+    "settings": {
+        "tocin": {
+            "maxNumberOfProblems": 100,
+            "trace": {
+                "server": "off"
+            }
+        }
+    }
+} 

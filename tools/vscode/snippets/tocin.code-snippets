@@ -1,0 +1,77 @@
+{
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params})${3: -> type} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Struct definition"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name} {",
+      "    fn ${2:method}(${3:self});",
+      "}"
+    ],
+    "description": "Trait definition"
+  },
+  "Impl": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "    fn ${3:method}(${4:self}) {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Impl block"
+  },
+  "If": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "If statement"
+  },
+  "For": {
+    "prefix": "for",
+    "body": [
+      "for (${1:item} in ${2:iterable}) {",
+      "    $0",
+      "}"
+    ],
+    "description": "For loop"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": [
+      "match (${1:expr}) {",
+      "    case ${2:pattern}: { $0 }",
+      "    default: { }",
+      "}"
+    ],
+    "description": "Match statement"
+  },
+  "Main": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "    $0",
+      "}"
+    ],
+    "description": "Main function"
+  }
+} 
