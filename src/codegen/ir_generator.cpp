@@ -1018,9 +1018,14 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     if (!operand)
         return;
 
+    using lexer::TokenType;
     switch (expr->op.type)
     {
-    case lexer::TokenType::MINUS:
+    case TokenType::PLUS:
+        // Unary plus is a no-op
+        lastValue = operand;
+        break;
+    case TokenType::MINUS:
         if (operand->getType()->isIntegerTy())
         {
             lastValue = builder.CreateNeg(operand, "negtmp");
@@ -1037,8 +1042,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             lastValue = nullptr;
         }
         break;
-
-    case lexer::TokenType::BANG:
+    case TokenType::BANG:
         if (operand->getType()->isIntegerTy(1))
         {
             // Boolean negation
@@ -1076,10 +1080,31 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             lastValue = nullptr;
         }
         break;
-
+    case TokenType::BITWISE_NOT:
+        if (operand->getType()->isIntegerTy())
+        {
+            lastValue = builder.CreateNot(operand, "bitnot");
+        }
+        else
+        {
+            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
+                                     "Invalid operand to unary ~ (bitwise not)",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+    case TokenType::INCREMENT:
+    case TokenType::DECREMENT:
+        // ++x and --x are not true unary operators in LLVM IR; they require an lvalue (variable)
+        // For now, report as unimplemented
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Increment/decrement operators require lvalue support (not implemented)",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        break;
     default:
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
-                                 "Unhandled unary operator",
+                                 "Unhandled or unsupported unary operator",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         break;
@@ -2484,46 +2509,94 @@ void IRGenerator::visitArrayLiteralExpr(ast::ArrayLiteralExpr *expr)
 // Empty implementations for types from other namespaces
 void IRGenerator::visitMoveExpr(void *expr)
 {
-    // Cast back to the actual type when needed
-    // auto moveExpr = static_cast<type_checker::MoveExpr*>(expr);
-
-    // No implementation yet
-    lastValue = nullptr;
+    // MoveExpr: just forward the value for now (no real move semantics in LLVM IR)
+    auto moveExpr = static_cast<type_checker::MoveExpr *>(expr);
+    if (moveExpr) {
+        moveExpr->getExpr()->accept(*this);
+        // In a real implementation, mark the source as moved-from
+        // For now, just forward the value
+        // Optionally, could bitcast to rvalue reference type
+    } else {
+        lastValue = nullptr;
+    }
 }
 
 void IRGenerator::visitGoExpr(void *expr)
 {
-    // Cast back to the actual type when needed
-    // auto goExpr = static_cast<runtime::GoExpr*>(expr);
-
-    // No implementation yet
-    lastValue = nullptr;
+    // GoExpr: emit a call to a runtime stub for goroutine launch
+    auto goExpr = static_cast<ast::GoStmt *>(expr);
+    if (goExpr && goExpr->expression) {
+        // Evaluate the function call expression
+        goExpr->expression->accept(*this);
+        llvm::Value *fnCall = lastValue;
+        // Emit a call to a runtime stub (e.g., __tocin_go_launch)
+        llvm::Function *goStub = getStdLibFunction("__tocin_go_launch");
+        if (!goStub) {
+            // Declare the stub if not present
+            llvm::FunctionType *goType = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(context), {fnCall->getType()}, false);
+            goStub = llvm::Function::Create(goType, llvm::Function::ExternalLinkage, "__tocin_go_launch", *module);
+        }
+        builder.CreateCall(goStub, {fnCall});
+        lastValue = nullptr;
+    } else {
+        lastValue = nullptr;
+    }
 }
 
 void IRGenerator::visitRuntimeChannelSendExpr(void *expr)
 {
-    // Cast back to the actual type when needed
-    // auto sendExpr = static_cast<runtime::ChannelSendExpr*>(expr);
-
-    // No implementation yet
-    lastValue = nullptr;
+    // ChannelSendExpr: emit a call to a runtime stub for channel send
+    auto sendExpr = static_cast<ast::ChannelSendExpr *>(expr);
+    if (sendExpr && sendExpr->channel && sendExpr->value) {
+        sendExpr->channel->accept(*this);
+        llvm::Value *chan = lastValue;
+        sendExpr->value->accept(*this);
+        llvm::Value *val = lastValue;
+        llvm::Function *sendStub = getStdLibFunction("__tocin_chan_send");
+        if (!sendStub) {
+            llvm::FunctionType *sendType = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(context), {chan->getType(), val->getType()}, false);
+            sendStub = llvm::Function::Create(sendType, llvm::Function::ExternalLinkage, "__tocin_chan_send", *module);
+        }
+        builder.CreateCall(sendStub, {chan, val});
+        lastValue = nullptr;
+    } else {
+        lastValue = nullptr;
+    }
 }
 
 void IRGenerator::visitRuntimeChannelReceiveExpr(void *expr)
 {
-    // Cast back to the actual type when needed
-    // auto receiveExpr = static_cast<runtime::ChannelReceiveExpr*>(expr);
-
-    // No implementation yet
-    lastValue = nullptr;
+    // ChannelReceiveExpr: emit a call to a runtime stub for channel receive
+    auto recvExpr = static_cast<ast::ChannelReceiveExpr *>(expr);
+    if (recvExpr && recvExpr->channel) {
+        recvExpr->channel->accept(*this);
+        llvm::Value *chan = lastValue;
+        llvm::Function *recvStub = getStdLibFunction("__tocin_chan_recv");
+        if (!recvStub) {
+            llvm::FunctionType *recvType = llvm::FunctionType::get(
+                llvm::PointerType::get(context, 0), {chan->getType()}, false);
+            recvStub = llvm::Function::Create(recvType, llvm::Function::ExternalLinkage, "__tocin_chan_recv", *module);
+        }
+        lastValue = builder.CreateCall(recvStub, {chan});
+    } else {
+        lastValue = nullptr;
+    }
 }
 
 void IRGenerator::visitRuntimeSelectStmt(void *stmt)
 {
-    // Cast back to the actual type when needed
-    // auto selectStmt = static_cast<runtime::SelectStmt*>(stmt);
-
-    // No implementation yet
+    // SelectStmt: emit a call to a runtime stub for select
+    auto selectStmt = static_cast<ast::SelectStmt *>(stmt);
+    // For now, just emit a call to a stub (real implementation would be more complex)
+    llvm::Function *selectStub = getStdLibFunction("__tocin_chan_select");
+    if (!selectStub) {
+        llvm::FunctionType *selectType = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(context), {}, false);
+        selectStub = llvm::Function::Create(selectType, llvm::Function::ExternalLinkage, "__tocin_chan_select", *module);
+    }
+    lastValue = builder.CreateCall(selectStub, {});
 }
 
 // AST channel visitor methods - empty implementations for now
