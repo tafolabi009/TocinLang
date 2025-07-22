@@ -1,5 +1,5 @@
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-    set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/Tocin")
+    set(CMAKE_INSTALL_PREFIX "/usr/local")
 endif()
 
 message(STATUS "Uninstalling from ${CMAKE_INSTALL_PREFIX}")
