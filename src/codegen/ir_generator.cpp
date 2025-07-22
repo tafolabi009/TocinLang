@@ -1018,9 +1018,14 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     if (!operand)
         return;
 
+    using lexer::TokenType;
     switch (expr->op.type)
     {
-    case lexer::TokenType::MINUS:
+    case TokenType::PLUS:
+        // Unary plus is a no-op
+        lastValue = operand;
+        break;
+    case TokenType::MINUS:
         if (operand->getType()->isIntegerTy())
         {
             lastValue = builder.CreateNeg(operand, "negtmp");
@@ -1037,8 +1042,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             lastValue = nullptr;
         }
         break;
-
-    case lexer::TokenType::BANG:
+    case TokenType::BANG:
         if (operand->getType()->isIntegerTy(1))
         {
             // Boolean negation
@@ -1076,10 +1080,31 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             lastValue = nullptr;
         }
         break;
-
+    case TokenType::BITWISE_NOT:
+        if (operand->getType()->isIntegerTy())
+        {
+            lastValue = builder.CreateNot(operand, "bitnot");
+        }
+        else
+        {
+            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
+                                     "Invalid operand to unary ~ (bitwise not)",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+    case TokenType::INCREMENT:
+    case TokenType::DECREMENT:
+        // ++x and --x are not true unary operators in LLVM IR; they require an lvalue (variable)
+        // For now, report as unimplemented
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Increment/decrement operators require lvalue support (not implemented)",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        break;
     default:
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
-                                 "Unhandled unary operator",
+                                 "Unhandled or unsupported unary operator",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         break;
