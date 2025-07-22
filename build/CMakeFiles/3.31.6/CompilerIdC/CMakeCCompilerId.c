@@ -184,7 +184,6 @@
 # define COMPILER_VERSION_MINOR DEC(__open_xl_release__)
 # define COMPILER_VERSION_PATCH DEC(__open_xl_modification__)
 # define COMPILER_VERSION_TWEAK DEC(__open_xl_ptf_fix_level__)
-# define COMPILER_VERSION_INTERNAL_STR  __clang_version__
 
 
 #elif defined(__ibmxl__) && defined(__clang__)
@@ -726,7 +725,7 @@ char const *info_cray = "INFO" ":" "compiler_wrapper[CrayPrgEnv]";
 # elif defined(__CMCS__)
 #  define ARCHITECTURE_ID "MCS"
 
-# elif defined(__CARM__) || defined(__CPARM__)
+# elif defined(__CARM__)
 #  define ARCHITECTURE_ID "ARM"
 
 # elif defined(__CARC__)
@@ -885,7 +884,7 @@ int main(int argc, char* argv[])
 #ifdef COMPILER_VERSION_MAJOR
   require += info_version[argc];
 #endif
-#if defined(COMPILER_VERSION_INTERNAL) || defined(COMPILER_VERSION_INTERNAL_STR)
+#ifdef COMPILER_VERSION_INTERNAL
   require += info_version_internal[argc];
 #endif
 #ifdef SIMULATE_ID
