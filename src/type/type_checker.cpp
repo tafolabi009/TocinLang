@@ -54,36 +54,131 @@ namespace type_checker
 
     void TypeChecker::visitMoveExpr(void *expr)
     {
-        // Type check move semantics (placeholder, should be replaced with actual logic)
-        currentType_ = nullptr;
+        // Type check move semantics
+        auto moveExpr = static_cast<ast::MoveExpr*>(expr);
+        if (!moveExpr) {
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Visit the expression being moved
+        if (moveExpr->expression) {
+            moveExpr->expression->accept(*this);
+            // The type of a move expression is the same as the moved expression
+            // but we need to ensure the expression is movable
+            if (currentType_) {
+                // Check if the type supports move semantics
+                if (!isMovableType(currentType_)) {
+                    errorHandler_.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                            "Cannot move type: " + currentType_->toString());
+                    currentType_ = nullptr;
+                }
+            }
+        } else {
+            currentType_ = nullptr;
+        }
     }
 
     void TypeChecker::visitGoExpr(void *expr)
     {
-        // Type check go expression (should be a function call)
-        // Placeholder: In practice, check that expr is a function call and is goroutine-safe
-        currentType_ = nullptr;
+        // Type check go expression (goroutine launch)
+        auto goExpr = static_cast<ast::GoExpr*>(expr);
+        if (!goExpr) {
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Visit the function call
+        if (goExpr->functionCall) {
+            goExpr->functionCall->accept(*this);
+            // A go expression returns void (the goroutine runs independently)
+            currentType_ = std::make_shared<ast::SimpleType>(
+                lexer::Token(lexer::TokenType::IDENTIFIER, "void", "", 0, 0));
+        } else {
+            currentType_ = nullptr;
+        }
     }
 
     void TypeChecker::visitRuntimeChannelSendExpr(void *expr)
     {
         // Type check channel send (channel <- value)
-        // Placeholder: In practice, check channel type and value type compatibility
-        currentType_ = nullptr;
+        auto sendExpr = static_cast<ast::ChannelSendExpr*>(expr);
+        if (!sendExpr) {
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Check channel type
+        if (sendExpr->channel) {
+            sendExpr->channel->accept(*this);
+            auto channelType = currentType_;
+            
+            // Check value type
+            if (sendExpr->value) {
+                sendExpr->value->accept(*this);
+                auto valueType = currentType_;
+                
+                // Verify the value type matches the channel element type
+                if (channelType && valueType) {
+                    auto elementType = getChannelElementType(channelType);
+                    if (elementType && !typesCompatible(valueType, elementType)) {
+                        errorHandler_.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                                "Cannot send value of type " + valueType->toString() + 
+                                                " to channel of type " + channelType->toString());
+                    }
+                }
+            }
+        }
+        
+        // Channel send returns void
+        currentType_ = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, "void", "", 0, 0));
     }
 
     void TypeChecker::visitRuntimeChannelReceiveExpr(void *expr)
     {
         // Type check channel receive (<-channel)
-        // Placeholder: In practice, check channel type and set currentType_ to channel element type
-        currentType_ = nullptr;
+        auto receiveExpr = static_cast<ast::ChannelReceiveExpr*>(expr);
+        if (!receiveExpr) {
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Check channel type
+        if (receiveExpr->channel) {
+            receiveExpr->channel->accept(*this);
+            auto channelType = currentType_;
+            
+            if (channelType) {
+                // The type of a receive expression is the channel's element type
+                currentType_ = getChannelElementType(channelType);
+            } else {
+                currentType_ = nullptr;
+            }
+        } else {
+            currentType_ = nullptr;
+        }
     }
 
     void TypeChecker::visitRuntimeSelectStmt(void *stmt)
     {
         // Type check select statement (concurrency)
-        // Placeholder: In practice, check all cases and ensure they are valid channel operations
-        currentType_ = nullptr;
+        auto selectStmt = static_cast<ast::SelectStmt*>(stmt);
+        if (!selectStmt) {
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Check all cases in the select statement
+        for (const auto& caseStmt : selectStmt->cases) {
+            if (caseStmt->channelOperation) {
+                caseStmt->channelOperation->accept(*this);
+            }
+        }
+        
+        // Select statement returns void
+        currentType_ = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, "void", "", 0, 0));
     }
 
     // Implementation for channel-related visitor methods
@@ -92,16 +187,28 @@ namespace type_checker
         // Type check channel send (channel <- value)
         if (expr->channel) expr->channel->accept(*this);
         if (expr->value) expr->value->accept(*this);
-        // In practice, check channel type and value type compatibility
-        currentType_ = nullptr;
+        
+        // Channel send returns void
+        currentType_ = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, "void", "", 0, 0));
     }
 
     void TypeChecker::visitChannelReceiveExpr(ast::ChannelReceiveExpr *expr)
     {
         // Type check channel receive (<-channel)
-        if (expr->channel) expr->channel->accept(*this);
-        // In practice, set currentType_ to channel element type
-        currentType_ = nullptr;
+        if (expr->channel) {
+            expr->channel->accept(*this);
+            auto channelType = currentType_;
+            
+            if (channelType) {
+                // The type of a receive expression is the channel's element type
+                currentType_ = getChannelElementType(channelType);
+            } else {
+                currentType_ = nullptr;
+            }
+        } else {
+            currentType_ = nullptr;
+        }
     }
 
     void TypeChecker::visitSelectStmt(ast::SelectStmt *stmt)
@@ -507,6 +614,57 @@ namespace type_checker
         
         // Implementation statements don't have a type
         currentType_ = nullptr;
+    }
+
+    // Helper methods for type checking
+    bool TypeChecker::isMovableType(ast::TypePtr type) {
+        if (!type) return false;
+        
+        std::string typeStr = type->toString();
+        
+        // Basic types are movable
+        if (typeStr == "int" || typeStr == "float" || typeStr == "bool" || 
+            typeStr == "string" || typeStr == "char") {
+            return true;
+        }
+        
+        // Arrays and pointers are movable
+        if (typeStr.find("Array<") == 0 || typeStr.find("*") != std::string::npos) {
+            return true;
+        }
+        
+        // Check if it's a class with move semantics
+        if (auto classType = std::dynamic_pointer_cast<ast::ClassType>(type)) {
+            return classType->hasMoveConstructor();
+        }
+        
+        return false;
+    }
+
+    ast::TypePtr TypeChecker::getChannelElementType(ast::TypePtr channelType) {
+        if (!channelType) return nullptr;
+        
+        std::string typeStr = channelType->toString();
+        
+        // Extract element type from Channel<T>
+        if (typeStr.find("Channel<") == 0) {
+            size_t start = typeStr.find("<") + 1;
+            size_t end = typeStr.find_last_of(">");
+            if (start != std::string::npos && end != std::string::npos && end > start) {
+                std::string elementTypeStr = typeStr.substr(start, end - start);
+                return std::make_shared<ast::SimpleType>(
+                    lexer::Token(lexer::TokenType::IDENTIFIER, elementTypeStr, "", 0, 0));
+            }
+        }
+        
+        return nullptr;
+    }
+
+    bool TypeChecker::typesCompatible(ast::TypePtr type1, ast::TypePtr type2) {
+        if (!type1 || !type2) return false;
+        
+        // Simple type compatibility check
+        return type1->toString() == type2->toString();
     }
 
 } // namespace type_checker 

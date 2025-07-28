@@ -1,123 +1,280 @@
 #include "native_functions.h"
-#include "concurrency.h"
-#include <iostream> // For cout, cerr, endl
-#include <cmath>    // For sqrt, NAN
-#include <string>   // For std::string (used internally if needed)
-#include <cstring>  // For strlen, strcpy, strcat
-#include <cstdlib>  // For exit, getenv (if implementing system functions)
-#include <cstdio>   // For file operations (if implementing file I/O)
-#include <new>      // For std::nothrow (safer allocation if not using exceptions)
+#include <iostream>
+#include <cmath>
+#include <cstring>
+#include <cstdlib>
+#include <chrono>
+#include <thread>
+#include <sstream>
+#include <iomanip>
 
-// Define static const members to prevent multiple definition errors
-const std::string runtime::ChannelType::TYPE_NAME = "Chan";
+extern "C" {
 
-// --- Native Function Implementations ---
-
-extern "C"
-{
-
-    // --- Basic I/O Implementations ---
-
-    void native_print_string(const char *str)
-    {
-        // Check for null pointer for safety
-        if (str)
-        {
-            std::cout << str;
-        }
-        else
-        {
-            // Decide how to represent null in output
-            std::cout << "<null_string_ref>";
-        }
-        // Note: No newline is added automatically by this function.
-        // Use native_println() for that.
+// Basic I/O functions
+void native_print_string(const char* str) {
+    if (str) {
+        std::cout << str;
     }
+}
 
-    void native_print_int(int64_t value)
-    {
-        std::cout << value;
+void native_print_int(int64_t value) {
+    std::cout << value;
+}
+
+void native_print_float(double value) {
+    std::cout << std::fixed << std::setprecision(6) << value;
+}
+
+void native_print_bool(bool value) {
+    std::cout << (value ? "true" : "false");
+}
+
+void native_println() {
+    std::cout << std::endl;
+}
+
+// Mathematical functions
+double native_sqrt(double value) {
+    if (value < 0) {
+        return NAN;
     }
+    return std::sqrt(value);
+}
 
-    void native_print_float(double value)
-    {
-        // Consider using std::fixed or std::scientific for specific formatting if needed
-        std::cout << value;
+double native_pow(double base, double exponent) {
+    return std::pow(base, exponent);
+}
+
+double native_log(double value) {
+    if (value <= 0) {
+        return NAN;
     }
+    return std::log(value);
+}
 
-    void native_print_bool(bool value)
-    {
-        // Output "true" or "false" strings
-        std::cout << (value ? "true" : "false");
+double native_exp(double value) {
+    return std::exp(value);
+}
+
+double native_sin(double value) {
+    return std::sin(value);
+}
+
+double native_cos(double value) {
+    return std::cos(value);
+}
+
+double native_tan(double value) {
+    return std::tan(value);
+}
+
+double native_asin(double value) {
+    if (value < -1 || value > 1) {
+        return NAN;
     }
+    return std::asin(value);
+}
 
-    void native_println()
-    {
-        // Simply output a newline character and flush the stream
-        std::cout << std::endl;
+double native_acos(double value) {
+    if (value < -1 || value > 1) {
+        return NAN;
     }
+    return std::acos(value);
+}
 
-    // --- Basic Math Implementation (Example) ---
-    /*
-    double native_sqrt(double value) {
-        if (value < 0.0) {
-            // Tocin needs a defined way to handle errors from native calls.
-            // Option 1: Return a special value (NaN)
-            // Option 2: Set a global error flag/message (requires careful design)
-            // Option 3: If Tocin had exceptions, maybe throw one (complex FFI)
-            // For now, returning NaN is common for math functions.
-            return NAN; // Requires <cmath>
-        }
-        return std::sqrt(value);
+double native_atan(double value) {
+    return std::atan(value);
+}
+
+double native_atan2(double y, double x) {
+    return std::atan2(y, x);
+}
+
+// String manipulation functions
+int64_t native_string_length(const char* s) {
+    if (!s) return 0;
+    return static_cast<int64_t>(std::strlen(s));
+}
+
+const char* native_string_concat(const char* s1, const char* s2) {
+    if (!s1) s1 = "";
+    if (!s2) s2 = "";
+    
+    size_t len1 = std::strlen(s1);
+    size_t len2 = std::strlen(s2);
+    size_t total_len = len1 + len2 + 1;
+    
+    char* result = static_cast<char*>(std::malloc(total_len));
+    if (!result) return nullptr;
+    
+    std::strcpy(result, s1);
+    std::strcat(result, s2);
+    
+    return result;
+}
+
+const char* native_int_to_string(int64_t value) {
+    std::string str = std::to_string(value);
+    char* result = static_cast<char*>(std::malloc(str.length() + 1));
+    if (!result) return nullptr;
+    
+    std::strcpy(result, str.c_str());
+    return result;
+}
+
+const char* native_float_to_string(double value) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(6) << value;
+    std::string str = oss.str();
+    
+    char* result = static_cast<char*>(std::malloc(str.length() + 1));
+    if (!result) return nullptr;
+    
+    std::strcpy(result, str.c_str());
+    return result;
+}
+
+int64_t native_string_to_int(const char* str) {
+    if (!str) return 0;
+    try {
+        return std::stoll(str);
+    } catch (...) {
+        return 0;
     }
-    */
+}
 
-    // --- String Manipulation Implementation (Example - DANGER: Memory Leaks!) ---
-    /*
-    // WARNING: This is a simplified example and leaks memory badly.
-    // A real implementation MUST integrate with Tocin's memory management
-    // (e.g., a garbage collector, reference counting, or arena allocation).
-    // The Tocin runtime needs to know how to manage the memory returned here.
-    const char* native_string_concat(const char* s1, const char* s2) {
-        // Handle null inputs gracefully
-        if (!s1) s1 = "";
-        if (!s2) s2 = "";
-
-        size_t len1 = strlen(s1);
-        size_t len2 = strlen(s2);
-        // Use std::nothrow to avoid exceptions on allocation failure, check manually
-        char* result = new (std::nothrow) char[len1 + len2 + 1];
-
-        if (!result) {
-            // Allocation failed! How to report this back to Tocin?
-            // Option 1: Return null (caller must check)
-            // Option 2: Set a global error state
-            // Option 3: Terminate (if it's considered a fatal runtime error)
-            std::cerr << "FATAL RUNTIME ERROR: Memory allocation failed in native_string_concat." << std::endl;
-            // exit(EXIT_FAILURE); // Drastic, but an option
-            return nullptr; // Caller must handle null return
-        }
-
-        // Copy the strings
-        memcpy(result, s1, len1); // Use memcpy for potentially better performance
-        memcpy(result + len1, s2, len2);
-        result[len1 + len2] = '\0'; // Null-terminate
-
-        // The pointer 'result' now points to heap-allocated memory.
-        // WHO WILL FREE IT? This is the core memory management problem.
-        return result;
+double native_string_to_float(const char* str) {
+    if (!str) return 0.0;
+    try {
+        return std::stod(str);
+    } catch (...) {
+        return 0.0;
     }
+}
 
-    int64_t native_string_length(const char* s) {
-        // Return 0 for null pointer, otherwise use strlen
-        return s ? static_cast<int64_t>(strlen(s)) : 0;
+// Memory management
+void* native_malloc(size_t size) {
+    return std::malloc(size);
+}
+
+void native_free(void* ptr) {
+    if (ptr) {
+        std::free(ptr);
     }
-    */
+}
 
-    // --- Add implementations for other native functions here ---
-    // Remember to consider:
-    // - Error handling (return codes, special values, error flags)
-    // - Memory management (who allocates, who frees?)
-    // - Thread safety (if Tocin supports threads and they can call native functions)
+// System functions
+int64_t native_time() {
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+    return static_cast<int64_t>(seconds.count());
+}
+
+void native_sleep(int64_t milliseconds) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+}
+
+void native_exit(int64_t code) {
+    std::exit(static_cast<int>(code));
+}
+
+// Random number generation
+int64_t native_random_int(int64_t min, int64_t max) {
+    if (min > max) {
+        int64_t temp = min;
+        min = max;
+        max = temp;
+    }
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int64_t> dis(min, max);
+    return dis(gen);
+}
+
+double native_random_float(double min, double max) {
+    if (min > max) {
+        double temp = min;
+        min = max;
+        max = temp;
+    }
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dis(min, max);
+    return dis(gen);
+}
+
+// Type checking functions
+bool native_is_nan(double value) {
+    return std::isnan(value);
+}
+
+bool native_is_infinite(double value) {
+    return std::isinf(value);
+}
+
+bool native_is_finite(double value) {
+    return std::isfinite(value);
+}
+
+// Array/list operations (basic implementations)
+void* native_array_create(size_t size, size_t element_size) {
+    return std::calloc(size, element_size);
+}
+
+void native_array_set(void* array, size_t index, void* value, size_t element_size) {
+    if (array && value) {
+        char* ptr = static_cast<char*>(array);
+        std::memcpy(ptr + index * element_size, value, element_size);
+    }
+}
+
+void* native_array_get(void* array, size_t index, size_t element_size) {
+    if (!array) return nullptr;
+    char* ptr = static_cast<char*>(array);
+    return ptr + index * element_size;
+}
+
+size_t native_array_length(void* array) {
+    // This is a simplified implementation
+    // In a real implementation, you'd need to track array metadata
+    return 0;
+}
+
+// Dictionary/map operations (basic implementations)
+void* native_dict_create() {
+    // Simplified implementation - in practice would use std::unordered_map
+    return std::malloc(sizeof(void*));
+}
+
+void native_dict_set(void* dict, const char* key, void* value) {
+    // Simplified implementation
+    // In practice, this would use a proper hash map implementation
+}
+
+void* native_dict_get(void* dict, const char* key) {
+    // Simplified implementation
+    return nullptr;
+}
+
+bool native_dict_has(void* dict, const char* key) {
+    // Simplified implementation
+    return false;
+}
+
+// Error handling
+void native_panic(const char* message) {
+    std::cerr << "PANIC: " << (message ? message : "Unknown error") << std::endl;
+    std::exit(1);
+}
+
+void native_assert(bool condition, const char* message) {
+    if (!condition) {
+        std::cerr << "ASSERTION FAILED: " << (message ? message : "Unknown assertion") << std::endl;
+        std::exit(1);
+    }
+}
 
 } // extern "C"

@@ -2,13 +2,12 @@
 
 #include "ast.h"
 
-// This file is a compatibility header that redirects to ast.h
-// It ensures that code using the Statement class from stmt.h will use the one defined in ast.h
+// This file provides additional statement-related definitions
+// that complement the main ast.h file
 
-namespace ast
-{
-    // Use the Statement class defined in ast.h
-    // No redefinition needed
+namespace ast {
 
-    // Add any additional statement-related functionality here
-}
+// Additional statement utilities and helper functions can go here
+// For now, most statements are defined in ast.h
+
+} // namespace ast

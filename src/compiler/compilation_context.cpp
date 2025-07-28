@@ -1,389 +1,294 @@
 #include "compilation_context.h"
-#include "stdlib.h"
-#include <llvm/IR/Verifier.h>
-#include <filesystem>
-#include <fstream>
+#include <chrono>
 #include <iostream>
-
-// Include V8 headers first
-#include "../ffi/ffi_javascript.h"
-
-// Then undefine the problematic macro before including Python headers
-#ifdef COMPILER
-#undef COMPILER
-#endif
-
-// Now include Python headers
-#include "../ffi/ffi_python.h"
 
 namespace tocin {
 namespace compiler {
 
-    CompilationContext::CompilationContext(const std::string &filename)
-        : context(std::make_unique<llvm::LLVMContext>()),
-          module(std::make_unique<llvm::Module>("tocin_module", *context)),
-          builder(std::make_unique<llvm::IRBuilder<>>(*context)),
-          errorHandler(new ErrorHandler(filename)),
-          pythonFFI(std::make_unique<ffi::PythonFFI>()),
-          cppFFI(std::make_unique<ffi::CppFFI>()),
-          jsFFI(std::make_unique<ffi::JavaScriptFFI>()),
-          ffi(pythonFFI.get()),
-          currentFilename(filename),
-          ast_(std::make_unique<tocin::ast::Program>()),
-          jsEngine_(std::make_unique<ffi::DummyJavaScriptEngine>())
-    {
-        initializeTypes();
-        initializeFFI();
+CompilationContext::CompilationContext(const std::string& filename)
+    : filename_(filename), currentModule_("main"), hotHybridEnabled_(true),
+      jitEnabled_(true), optimizationLevel_(2), ffiEnabled_(true),
+      concurrencyEnabled_(true), advancedFeaturesEnabled_(true), isCompiling_(false) {
+}
 
-        // Initialize predefined module paths
-        modulePaths.push_back("./modules");
-        modulePaths.push_back("./src/modules");
+CompilationContext::~CompilationContext() = default;
 
-        // Add current directory
-        std::filesystem::path filePath(filename);
-        if (filePath.has_parent_path())
-        {
-            modulePaths.push_back(filePath.parent_path().string());
-        }
+void CompilationContext::enterScope() {
+    currentScopeLevel_++;
+    symbolTables_[currentScopeLevel_] = std::unordered_map<std::string, Symbol>();
+}
+
+void CompilationContext::exitScope() {
+    if (currentScopeLevel_ > 0) {
+        symbolTables_.erase(currentScopeLevel_);
+        currentScopeLevel_--;
     }
+}
 
-    CompilationContext::~CompilationContext()
-    {
-        delete errorHandler;
-    }
+bool CompilationContext::declareSymbol(const std::string& name, ast::TypePtr type, bool isConstant) {
+    Symbol symbol(name, type, isConstant, currentScopeLevel_ == 0);
+    symbol.scopeLevel = currentScopeLevel_;
+    return declareSymbol(symbol);
+}
 
-    void CompilationContext::initializeFFI()
-    {
-        tocin::compiler::StdLib::registerFunctions(*cppFFI);
-        // Additional FFI initialization can be added here
-    }
-
-    void CompilationContext::initializeTypes()
-    {
-        typeMap["int"] = llvm::Type::getInt32Ty(*context);
-        typeMap["float"] = llvm::Type::getDoubleTy(*context);
-        typeMap["double"] = llvm::Type::getDoubleTy(*context);
-        typeMap["string"] = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context));
-        typeMap["bool"] = llvm::Type::getInt1Ty(*context);
-        typeMap["List"] = getListType();
-        typeMap["Dict"] = getDictType();
-    }
-
-    llvm::Type *CompilationContext::getLLVMType(const ::ast::TypePtr &type)
-    {
-        if (!type)
-            return nullptr;
-        std::string typeName = type->toString();
-        auto it = typeMap.find(typeName);
-        if (it != typeMap.end())
-            return it->second;
-        if (auto *generic = dynamic_cast<::ast::GenericType *>(type.get()))
-        {
-            if (generic->name == "list")
-                return getListType();
-            if (generic->name == "dict")
-                return getDictType();
-        }
-        return nullptr;
-    }
-
-    llvm::StructType *CompilationContext::getListType()
-    {
-        if (!listType)
-        {
-            // Define list as a struct with a pointer to data, a length, and a capacity
-            listType = llvm::StructType::create(*context, "List");
-
-            // Create an array of the types for the struct fields
-            llvm::Type *elementTypes[] = {
-                llvm::PointerType::get(llvm::Type::getInt8Ty(*context), 0),
-                llvm::Type::getInt64Ty(*context),
-                llvm::Type::getInt64Ty(*context)};
-
-            // Pass the array as a single ArrayRef argument
-            listType->setBody(elementTypes);
-        }
-        return listType;
-    }
-
-    llvm::StructType *CompilationContext::getDictType()
-    {
-        if (!dictType)
-        {
-            // Define dict as a struct with a pointer to entries, a count, and a capacity
-            dictType = llvm::StructType::create(*context, "Dict");
-
-            // Create an array of the types for the struct fields
-            llvm::Type *elementTypes[] = {
-                llvm::PointerType::get(llvm::Type::getInt8Ty(*context), 0),
-                llvm::Type::getInt64Ty(*context),
-                llvm::Type::getInt64Ty(*context)};
-
-            // Pass the array as a single ArrayRef argument
-            dictType->setBody(elementTypes);
-        }
-        return dictType;
-    }
-
-    llvm::StructType *CompilationContext::getStringType()
-    {
-        if (!stringType)
-        {
-            // Define string as a struct with a pointer to char and a length
-            stringType = llvm::StructType::create(*context, "String");
-
-            // Create an array of the types for the struct fields
-            llvm::Type *elementTypes[] = {
-                llvm::PointerType::get(llvm::Type::getInt8Ty(*context), 0),
-                llvm::Type::getInt64Ty(*context)};
-
-            // Pass the array as a single ArrayRef argument
-            stringType->setBody(elementTypes);
-        }
-        return stringType;
-    }
-
-    // Module path management
-
-    void CompilationContext::addModulePath(const std::string &path)
-    {
-        modulePaths.push_back(path);
-    }
-
-    std::vector<std::string> CompilationContext::getModulePaths() const
-    {
-        return modulePaths;
-    }
-
-    // Module management
-
-    std::shared_ptr<ModuleInfo> CompilationContext::getModule(const std::string &name)
-    {
-        auto it = modules.find(name);
-        if (it != modules.end())
-        {
-            return it->second;
-        }
-        return nullptr;
-    }
-
-    std::shared_ptr<ModuleInfo> CompilationContext::loadModule(const std::string &name)
-    {
-        // Check if already loaded
-        auto existingModule = getModule(name);
-        if (existingModule)
-        {
-            return existingModule;
-        }
-
-        // Find the module file
-        std::string filePath = findModuleFile(name);
-        if (filePath.empty())
-        {
-            return nullptr;
-        }
-
-        // Create a new module
-        auto moduleInfo = std::make_shared<ModuleInfo>(name, filePath);
-        modules[name] = moduleInfo;
-
-        return moduleInfo;
-    }
-
-    bool CompilationContext::moduleExists(const std::string &name) const
-    {
-        return modules.find(name) != modules.end();
-    }
-
-    void CompilationContext::addModule(const std::string &name, std::shared_ptr<ModuleInfo> module)
-    {
-        modules[name] = module;
-    }
-
-    // Check for circular dependencies
-
-    bool CompilationContext::hasCircularDependency(const std::string &moduleName,
-                                                   std::vector<std::string> &path) const
-    {
-        // If we encounter this module again in the path, there's a circular dependency
-        if (std::find(path.begin(), path.end(), moduleName) != path.end())
-        {
-            path.push_back(moduleName); // Add it to complete the cycle for reporting
-            return true;
-        }
-
-        auto it = modules.find(moduleName);
-        if (it == modules.end())
-        {
-            return false; // Module not found, no circular dependency
-        }
-
-        // Add this module to the path
-        path.push_back(moduleName);
-
-        // Check all dependencies
-        for (const auto &dep : it->second->dependencies)
-        {
-            if (hasCircularDependency(dep, path))
-            {
-                return true;
-            }
-        }
-
-        // Remove this module from the path before returning
-        path.pop_back();
+bool CompilationContext::declareSymbol(const Symbol& symbol) {
+    auto& currentScope = symbolTables_[currentScopeLevel_];
+    if (currentScope.find(symbol.name) != currentScope.end()) {
+        addError("Symbol '" + symbol.name + "' already declared in current scope");
         return false;
     }
+    currentScope[symbol.name] = symbol;
+    return true;
+}
 
-    // Symbol management
-
-    void CompilationContext::addGlobalSymbol(const std::string &name, bool exported)
-    {
-        globalSymbols.insert(name);
-        if (exported)
-        {
-            exportedSymbols.insert(name);
-        }
-    }
-
-    bool CompilationContext::symbolExists(const std::string &name) const
-    {
-        return globalSymbols.count(name) > 0;
-    }
-
-    // Import symbol from a module
-
-    bool CompilationContext::importSymbol(const std::string &moduleName, const std::string &symbolName)
-    {
-        auto moduleInfo = getModule(moduleName);
-        if (!moduleInfo)
-        {
-            return false;
-        }
-
-        // Check if the symbol is exported by the module
-        if (!moduleInfo->isExported(symbolName))
-        {
-            return false;
-        }
-
-        // Add the symbol to global symbols
-        addGlobalSymbol(symbolName);
-        return true;
-    }
-
-    bool CompilationContext::importAllSymbols(const std::string &moduleName)
-    {
-        auto moduleInfo = getModule(moduleName);
-        if (!moduleInfo)
-        {
-            return false;
-        }
-
-        // Import all exported functions
-        for (const auto &func : moduleInfo->exportedFunctions)
-        {
-            addGlobalSymbol(func);
-        }
-
-        // Import all exported classes
-        for (const auto &cls : moduleInfo->exportedClasses)
-        {
-            addGlobalSymbol(cls);
-        }
-
-        // Import all exported variables
-        for (const auto &var : moduleInfo->exportedVariables)
-        {
-            addGlobalSymbol(var);
-        }
-
-        // Import all exported types
-        for (const auto &type : moduleInfo->exportedTypes)
-        {
-            addGlobalSymbol(type);
-        }
-
-        return true;
-    }
-
-    // Get a qualified name (module::symbol)
-
-    std::string CompilationContext::getQualifiedName(const std::string &moduleName,
-                                                     const std::string &symbolName) const
-    {
-        return moduleName + "::" + symbolName;
-    }
-
-    // Find module file
-
-    std::string CompilationContext::findModuleFile(const std::string &moduleName) const
-    {
-        // Replace dots with path separators for hierarchical modules
-        std::string moduleRelPath = moduleName;
-        std::replace(moduleRelPath.begin(), moduleRelPath.end(), '.', '/');
-
-        // Add file extension
-        moduleRelPath += ".to";
-
-        // Check all module paths
-        for (const auto &path : modulePaths)
-        {
-            std::filesystem::path fullPath = std::filesystem::path(path) / moduleRelPath;
-            if (std::filesystem::exists(fullPath))
-            {
-                return fullPath.string();
+CompilationContext::Symbol* CompilationContext::lookupSymbol(const std::string& name) {
+    // Search from current scope up to global scope
+    for (int level = static_cast<int>(currentScopeLevel_); level >= 0; --level) {
+        auto scopeIt = symbolTables_.find(level);
+        if (scopeIt != symbolTables_.end()) {
+            auto symbolIt = scopeIt->second.find(name);
+            if (symbolIt != scopeIt->second.end()) {
+                return &symbolIt->second;
             }
         }
-
-        return ""; // Module not found
     }
+    return nullptr;
+}
 
-    // Get module source
-
-    std::string CompilationContext::getModuleSource(const std::string &moduleName) const
-    {
-        // Find the module
-        auto it = modules.find(moduleName);
-        if (it == modules.end())
-        {
-            return "";
-        }
-
-        // Get the file path
-        const std::string &filePath = it->second->path;
-
-        // Read the file
-        std::ifstream file(filePath);
-        if (!file.is_open())
-        {
-            return "";
-        }
-
-        // Read the entire file into a string
-        std::string source;
-        file.seekg(0, std::ios::end);
-        source.reserve(file.tellg());
-        file.seekg(0, std::ios::beg);
-        source.assign((std::istreambuf_iterator<char>(file)),
-                      std::istreambuf_iterator<char>());
-
-        return source;
-    }
-
-    bool CompilationContext::compile(const std::string& source) {
-        try {
-            // TODO: Implement AST parsing
-            return true;
-        } catch (const std::exception& e) {
-            lastError_ = e.what();
-            return false;
+const CompilationContext::Symbol* CompilationContext::lookupSymbol(const std::string& name) const {
+    // Search from current scope up to global scope
+    for (int level = static_cast<int>(currentScopeLevel_); level >= 0; --level) {
+        auto scopeIt = symbolTables_.find(level);
+        if (scopeIt != symbolTables_.end()) {
+            auto symbolIt = scopeIt->second.find(name);
+            if (symbolIt != scopeIt->second.end()) {
+                return &symbolIt->second;
+            }
         }
     }
+    return nullptr;
+}
 
-    std::string CompilationContext::getLastError() const {
-        return lastError_;
+bool CompilationContext::isSymbolDeclared(const std::string& name) const {
+    return lookupSymbol(name) != nullptr;
+}
+
+bool CompilationContext::declareFunction(const FunctionInfo& function) {
+    if (functions_.find(function.name) != functions_.end()) {
+        // Check if this is an overload
+        overloadedFunctions_[function.name].push_back(function);
+    } else {
+        functions_[function.name] = function;
     }
+    return true;
+}
+
+CompilationContext::FunctionInfo* CompilationContext::lookupFunction(const std::string& name) {
+    auto it = functions_.find(name);
+    return (it != functions_.end()) ? &it->second : nullptr;
+}
+
+const CompilationContext::FunctionInfo* CompilationContext::lookupFunction(const std::string& name) const {
+    auto it = functions_.find(name);
+    return (it != functions_.end()) ? &it->second : nullptr;
+}
+
+std::vector<CompilationContext::FunctionInfo*> CompilationContext::lookupOverloadedFunctions(const std::string& name) {
+    std::vector<FunctionInfo*> result;
+    auto it = overloadedFunctions_.find(name);
+    if (it != overloadedFunctions_.end()) {
+        for (auto& func : it->second) {
+            result.push_back(&func);
+        }
+    }
+    return result;
+}
+
+bool CompilationContext::declareClass(const ClassInfo& classInfo) {
+    if (classes_.find(classInfo.name) != classes_.end()) {
+        addError("Class '" + classInfo.name + "' already declared");
+        return false;
+    }
+    classes_[classInfo.name] = classInfo;
+    return true;
+}
+
+CompilationContext::ClassInfo* CompilationContext::lookupClass(const std::string& name) {
+    auto it = classes_.find(name);
+    return (it != classes_.end()) ? &it->second : nullptr;
+}
+
+const CompilationContext::ClassInfo* CompilationContext::lookupClass(const std::string& name) const {
+    auto it = classes_.find(name);
+    return (it != classes_.end()) ? &it->second : nullptr;
+}
+
+bool CompilationContext::declareTrait(const TraitInfo& traitInfo) {
+    if (traits_.find(traitInfo.name) != traits_.end()) {
+        addError("Trait '" + traitInfo.name + "' already declared");
+        return false;
+    }
+    traits_[traitInfo.name] = traitInfo;
+    return true;
+}
+
+CompilationContext::TraitInfo* CompilationContext::lookupTrait(const std::string& name) {
+    auto it = traits_.find(name);
+    return (it != traits_.end()) ? &it->second : nullptr;
+}
+
+const CompilationContext::TraitInfo* CompilationContext::lookupTrait(const std::string& name) const {
+    auto it = traits_.find(name);
+    return (it != traits_.end()) ? &it->second : nullptr;
+}
+
+bool CompilationContext::importModule(const std::string& moduleName, const std::string& path) {
+    if (modules_.find(moduleName) != modules_.end()) {
+        return true; // Already imported
+    }
+    
+    ModuleInfo moduleInfo;
+    moduleInfo.name = moduleName;
+    moduleInfo.path = path;
+    moduleInfo.isLoaded = false;
+    
+    modules_[moduleName] = moduleInfo;
+    addDependency(moduleName);
+    return true;
+}
+
+CompilationContext::ModuleInfo* CompilationContext::lookupModule(const std::string& name) {
+    auto it = modules_.find(name);
+    return (it != modules_.end()) ? &it->second : nullptr;
+}
+
+const CompilationContext::ModuleInfo* CompilationContext::lookupModule(const std::string& name) const {
+    auto it = modules_.find(name);
+    return (it != modules_.end()) ? &it->second : nullptr;
+}
+
+bool CompilationContext::registerGenericInstantiation(const GenericInstantiation& instantiation) {
+    // Check if this instantiation already exists
+    for (const auto& existing : genericInstantiations_) {
+        if (existing.baseName == instantiation.baseName && 
+            existing.typeArguments.size() == instantiation.typeArguments.size()) {
+            bool same = true;
+            for (size_t i = 0; i < existing.typeArguments.size(); ++i) {
+                if (!existing.typeArguments[i]->equals(instantiation.typeArguments[i])) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                return true; // Already exists
+            }
+        }
+    }
+    
+    genericInstantiations_.push_back(instantiation);
+    return true;
+}
+
+ast::TypePtr CompilationContext::lookupGenericInstantiation(const std::string& baseName, 
+                                                           const std::vector<ast::TypePtr>& typeArguments) {
+    for (const auto& instantiation : genericInstantiations_) {
+        if (instantiation.baseName == baseName && 
+            instantiation.typeArguments.size() == typeArguments.size()) {
+            bool match = true;
+            for (size_t i = 0; i < typeArguments.size(); ++i) {
+                if (!instantiation.typeArguments[i]->equals(typeArguments[i])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                return instantiation.instantiatedType;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void CompilationContext::addError(const std::string& message, size_t line, size_t column) {
+    std::string fullMessage = filename_;
+    if (line > 0) {
+        fullMessage += ":" + std::to_string(line);
+        if (column > 0) {
+            fullMessage += ":" + std::to_string(column);
+        }
+    }
+    fullMessage += ": error: " + message;
+    errors_.push_back(fullMessage);
+}
+
+void CompilationContext::addWarning(const std::string& message, size_t line, size_t column) {
+    std::string fullMessage = filename_;
+    if (line > 0) {
+        fullMessage += ":" + std::to_string(line);
+        if (column > 0) {
+            fullMessage += ":" + std::to_string(column);
+        }
+    }
+    fullMessage += ": warning: " + message;
+    warnings_.push_back(fullMessage);
+}
+
+void CompilationContext::addDependency(const std::string& dependency) {
+    if (std::find(dependencies_.begin(), dependencies_.end(), dependency) == dependencies_.end()) {
+        dependencies_.push_back(dependency);
+    }
+}
+
+void CompilationContext::addSymbol(const std::string& name, void* symbol) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    symbols_[name] = symbol;
+}
+
+void* CompilationContext::getSymbol(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = symbols_.find(name);
+    return it != symbols_.end() ? it->second : nullptr;
+}
+
+bool CompilationContext::hasSymbol(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return symbols_.find(name) != symbols_.end();
+}
+
+void CompilationContext::addDependency(const std::string& moduleName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    dependencies_.insert(moduleName);
+}
+
+void CompilationContext::addError(const std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    errors_.push_back(error);
+}
+
+void CompilationContext::startTimer(const std::string& phase) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    timers_[phase] = std::chrono::high_resolution_clock::now();
+}
+
+double CompilationContext::endTimer(const std::string& phase) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = timers_.find(phase);
+    if (it == timers_.end()) {
+        return 0.0;
+    }
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - it->second);
+    double milliseconds = duration.count() / 1000.0;
+    timings_[phase] = milliseconds;
+    timers_.erase(it);
+    return milliseconds;
+}
+
+void CompilationContext::markForHotReload(const std::string& symbol) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    hotReloadSymbols_.insert(symbol);
+}
 
 } // namespace compiler
 } // namespace tocin

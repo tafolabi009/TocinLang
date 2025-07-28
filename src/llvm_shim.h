@@ -1,25 +1,10 @@
-/**
- * LLVM Shim Header
- *
- * This header provides fallback implementations for LLVM functionality
- * that might be missing in the current environment.
- * It's designed to allow the compiler to build even when certain LLVM headers
- * are unavailable.
- */
+#ifndef LLVM_SHIM_H
+#define LLVM_SHIM_H
 
-#ifndef TOCIN_LLVM_SHIM_H
-#define TOCIN_LLVM_SHIM_H
-
-#include <string>
-#include <vector>
-#include "target_info.h"
-
-// Try to include standard LLVM headers first
-#if __has_include(<llvm/Support/Host.h>)
+// LLVM shim header to handle different LLVM versions and include paths
 #include <llvm/Support/Host.h>
-#define LLVM_HOST_HEADER_AVAILABLE 1
-#else
-#define LLVM_HOST_HEADER_AVAILABLE 0
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/FileSystem.h>
 
 namespace llvm
 {

@@ -1,246 +1,205 @@
 #pragma once
 
-#include "../pch.h"
+#include "../ast/types.h"
 #include "../ast/ast.h"
 #include "../error/error_handler.h"
 #include "ownership.h"
 #include "result_option.h"
 #include "null_safety.h"
 #include "extension_functions.h"
-#include "traits.h"
 #include "move_semantics.h"
-#include "../runtime/concurrency.h"
+#include "traits.h"
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
-// Forward declaration to avoid circular dependency
-namespace runtime {
-    class ChannelType;
-}
+namespace type_checker {
 
-namespace type_checker
-{
+/**
+ * @brief Central manager for all advanced language features
+ */
+class FeatureManager {
+public:
+    FeatureManager(error::ErrorHandler& errorHandler);
+    ~FeatureManager();
 
-    /**
-     * @brief Main feature manager for the Tocin language
-     *
-     * Provides access to all language features in a unified interface.
-     */
-    class FeatureManager
-    {
-    public:
-        FeatureManager(error::ErrorHandler &errorHandler)
-            : errorHandler(errorHandler),
-              ownershipChecker(errorHandler),
-              resultOptionMatcher(errorHandler),
-              nullSafetyChecker(errorHandler),
-              extensionManager(errorHandler),
-              traitManager(errorHandler),
-              moveChecker(errorHandler, ownershipChecker) {}
+    // Initialization
+    bool initialize();
+    void finalize();
 
-        // Core feature checkers
-        OwnershipChecker ownershipChecker;
-        ResultOptionMatcher resultOptionMatcher;
-        NullSafetyChecker nullSafetyChecker;
-        ExtensionManager extensionManager;
-        TraitManager traitManager;
-        MoveChecker moveChecker;
+    // Feature component access
+    OwnershipChecker& getOwnershipChecker() { return *ownershipChecker_; }
+    const OwnershipChecker& getOwnershipChecker() const { return *ownershipChecker_; }
 
-        /**
-         * @brief Initialize all language features
-         *
-         * Registers standard library types, traits, and extension methods.
-         */
-        void initialize()
-        {
-            // Register standard result/option types
-            // Register standard traits
-            // Register standard extension methods
-            // etc.
-        }
+    ResultOptionChecker& getResultOptionChecker() { return *resultOptionChecker_; }
+    const ResultOptionChecker& getResultOptionChecker() const { return *resultOptionChecker_; }
 
-        /**
-         * @brief Enter a new scope for ownership tracking
-         */
-        void enterScope()
-        {
-            ownershipChecker.enterScope();
-        }
+    NullSafetyChecker& getNullSafetyChecker() { return *nullSafetyChecker_; }
+    const NullSafetyChecker& getNullSafetyChecker() const { return *nullSafetyChecker_; }
 
-        /**
-         * @brief Exit the current scope for ownership tracking
-         */
-        void exitScope()
-        {
-            ownershipChecker.exitScope();
-        }
+    ExtensionFunctionChecker& getExtensionFunctionChecker() { return *extensionFunctionChecker_; }
+    const ExtensionFunctionChecker& getExtensionFunctionChecker() const { return *extensionFunctionChecker_; }
 
-        /**
-         * @brief Check if type contains any of the advanced features
-         *
-         * @param type The type to check
-         * @return true if the type uses Result, Option, nullable, etc.
-         */
-        bool usesAdvancedFeatures(ast::TypePtr type)
-        {
-            // Check for Result type
-            if (type_checker::ResultType::isResultType(type))
-            {
-                return true;
-            }
+    MoveSemanticsChecker& getMoveSemanticsChecker() { return *moveSemanticsChecker_; }
+    const MoveSemanticsChecker& getMoveSemanticsChecker() const { return *moveSemanticsChecker_; }
 
-            // Check for Option type
-            if (type_checker::OptionType::isOptionType(type))
-            {
-                return true;
-            }
+    TraitChecker& getTraitChecker() { return *traitChecker_; }
+    const TraitChecker& getTraitChecker() const { return *traitChecker_; }
 
-            // Check for nullable type
-            if (nullSafetyChecker.isNullableType(type))
-            {
-                return true;
-            }
+    // Feature integration methods
+    bool checkExpression(ast::ExprPtr expr, ast::TypePtr expectedType = nullptr);
+    bool checkStatement(ast::StmtPtr stmt);
+    bool checkFunction(ast::FunctionDeclPtr function);
+    bool checkClass(ast::ClassDeclPtr classDecl);
+    bool checkTrait(ast::TraitDeclPtr traitDecl);
 
-            // Check for trait type
-            if (std::dynamic_pointer_cast<type_checker::DynTraitType>(type))
-            {
-                return true;
-            }
+    // Type system integration
+    ast::TypePtr resolveType(ast::TypePtr type);
+    bool isTypeCompatible(ast::TypePtr from, ast::TypePtr to);
+    ast::TypePtr getCommonType(ast::TypePtr type1, ast::TypePtr type2);
 
-            // Check for rvalue reference type
-            if (RValueReference::isRValueRefType(type))
-            {
-                return true;
-            }
+    // Advanced type operations
+    bool canImplicitlyConvert(ast::TypePtr from, ast::TypePtr to);
+    bool canExplicitlyConvert(ast::TypePtr from, ast::TypePtr to);
+    ast::TypePtr performTypeConversion(ast::TypePtr from, ast::TypePtr to, ast::ExprPtr expr);
 
-            // For generic types, check type arguments
-            if (auto genericType = std::dynamic_pointer_cast<ast::GenericType>(type))
-            {
-                for (const auto &typeArg : genericType->typeArguments)
-                {
-                    if (usesAdvancedFeatures(typeArg))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        /**
-         * @brief Analyze a function for advanced feature usage
-         *
-         * @param function The function to analyze
-         * @return true if the function uses any advanced features
-         */
-        bool analyzeFunctionFeatures(ast::FunctionStmt *function)
-        {
-            bool usesFeatures = false;
-
-            // Check return type
-            if (usesAdvancedFeatures(function->returnType))
-            {
-                usesFeatures = true;
-            }
-
-            // Check parameter types
-            for (const auto &param : function->parameters)
-            {
-                if (usesAdvancedFeatures(param.type))
-                {
-                    usesFeatures = true;
-                }
-
-                // Check for move semantics
-                if (param.isMoved)
-                {
-                    usesFeatures = true;
-                }
-            }
-
-            // In practice, would also analyze the function body for:
-            // - Move expressions
-            // - Channel operations
-            // - Defer statements
-            // - Safe call operators
-            // - etc.
-
-            return usesFeatures;
-        }
-
-        /**
-         * @brief Create an Option<T> type
-         *
-         * @param valueType The type of value to wrap
-         * @return ast::TypePtr The Option type
-         */
-        ast::TypePtr createOptionType(ast::TypePtr valueType)
-        {
-            return OptionType::createOptionType(valueType);
-        }
-
-        /**
-         * @brief Create a Result<T, E> type
-         *
-         * @param valueType The success type
-         * @param errorType The error type
-         * @return ast::TypePtr The Result type
-         */
-        ast::TypePtr createResultType(ast::TypePtr valueType, ast::TypePtr errorType)
-        {
-            return ResultType::createResultType(valueType, errorType);
-        }
-
-        /**
-         * @brief Create a nullable type
-         *
-         * @param baseType The type to make nullable
-         * @return ast::TypePtr The nullable type
-         */
-        ast::TypePtr createNullableType(ast::TypePtr baseType)
-        {
-            return nullSafetyChecker.makeNullable(baseType);
-        }
-
-        /**
-         * @brief Create a channel type
-         *
-         * @param elementType The type of elements in the channel
-         * @return ast::TypePtr The channel type
-         */
-        ast::TypePtr createChannelType(ast::TypePtr elementType)
-        {
-            // TODO: Fix circular dependency with runtime::ChannelType
-            // For now, return a generic type with "Chan" name
-            lexer::Token token; // Create a default token
-            return std::make_shared<ast::GenericType>(token, "Chan", std::vector<ast::TypePtr>{elementType});
-        }
-
-        /**
-         * @brief Create a dynamic trait object type
-         *
-         * @param traitType The trait interface
-         * @return ast::TypePtr The dynamic trait object type
-         */
-        ast::TypePtr createDynamicTraitType(ast::TypePtr traitType)
-        {
-            lexer::Token token; // Create a default token
-            return std::make_shared<type_checker::DynTraitType>(token, traitType);
-        }
-
-        /**
-         * @brief Create an rvalue reference type
-         *
-         * @param baseType The base type
-         * @return ast::TypePtr The rvalue reference type
-         */
-        ast::TypePtr createRValueRefType(ast::TypePtr baseType)
-        {
-            return RValueReference::createRValueRefType(baseType);
-        }
-
-    private:
-        error::ErrorHandler &errorHandler;
+    // Generic type support
+    struct GenericContext {
+        std::unordered_map<std::string, ast::TypePtr> typeBindings;
+        std::vector<std::string> constraints;
     };
+
+    bool instantiateGenericType(ast::TypePtr genericType, const GenericContext& context, ast::TypePtr& result);
+    bool checkGenericConstraints(const GenericContext& context);
+
+    // Trait implementation checking
+    bool checkTraitImplementation(ast::TypePtr type, ast::TypePtr traitType);
+    std::vector<std::string> getMissingTraitMethods(ast::TypePtr type, ast::TypePtr traitType);
+
+    // Ownership and lifetime analysis
+    struct LifetimeInfo {
+        std::string name;
+        size_t scopeLevel;
+        bool isStatic;
+        std::vector<std::string> dependencies;
+    };
+
+    bool analyzeLifetimes(ast::StmtPtr stmt, std::vector<LifetimeInfo>& lifetimes);
+    bool checkOwnershipTransfer(ast::ExprPtr from, ast::ExprPtr to);
+
+    // Error handling integration
+    bool isErrorType(ast::TypePtr type);
+    bool isOptionType(ast::TypePtr type);
+    bool isResultType(ast::TypePtr type);
+    ast::TypePtr extractInnerType(ast::TypePtr wrapperType);
+
+    // Null safety integration
+    bool isNullableType(ast::TypePtr type);
+    bool isNonNullType(ast::TypePtr type);
+    ast::TypePtr makeNullable(ast::TypePtr type);
+    ast::TypePtr makeNonNull(ast::TypePtr type);
+
+    // Extension function resolution
+    struct ExtensionCandidate {
+        ast::FunctionDeclPtr function;
+        ast::TypePtr receiverType;
+        int priority;
+        bool isExactMatch;
+    };
+
+    std::vector<ExtensionCandidate> findExtensionFunctions(ast::TypePtr receiverType, const std::string& methodName);
+    ast::FunctionDeclPtr resolveExtensionCall(ast::CallExprPtr call);
+
+    // Move semantics integration
+    bool canMove(ast::ExprPtr expr);
+    bool shouldMove(ast::ExprPtr expr);
+    ast::ExprPtr insertMoveOperation(ast::ExprPtr expr);
+
+    // Pattern matching support
+    struct PatternMatchInfo {
+        ast::ExprPtr pattern;
+        ast::TypePtr patternType;
+        std::unordered_map<std::string, ast::TypePtr> bindings;
+        bool isExhaustive;
+    };
+
+    bool checkPatternMatch(ast::ExprPtr value, const std::vector<PatternMatchInfo>& patterns);
+    bool isPatternExhaustive(ast::TypePtr type, const std::vector<PatternMatchInfo>& patterns);
+
+    // Async/await support
+    bool isAsyncFunction(ast::FunctionDeclPtr function);
+    bool isAwaitExpression(ast::ExprPtr expr);
+    ast::TypePtr getAsyncReturnType(ast::TypePtr functionType);
+
+    // LINQ integration
+    bool isLinqExpression(ast::ExprPtr expr);
+    ast::TypePtr inferLinqType(ast::ExprPtr expr);
+
+    // Feature flags
+    bool isFeatureEnabled(const std::string& featureName) const;
+    void enableFeature(const std::string& featureName);
+    void disableFeature(const std::string& featureName);
+
+    // Diagnostics and debugging
+    void dumpFeatureState() const;
+    std::vector<std::string> getActiveFeatures() const;
+    std::string getFeatureStatistics() const;
+
+private:
+    error::ErrorHandler& errorHandler_;
+    
+    // Feature components
+    std::unique_ptr<OwnershipChecker> ownershipChecker_;
+    std::unique_ptr<ResultOptionChecker> resultOptionChecker_;
+    std::unique_ptr<NullSafetyChecker> nullSafetyChecker_;
+    std::unique_ptr<ExtensionFunctionChecker> extensionFunctionChecker_;
+    std::unique_ptr<MoveSemanticsChecker> moveSemanticsChecker_;
+    std::unique_ptr<TraitChecker> traitChecker_;
+
+    // Feature flags
+    std::unordered_map<std::string, bool> featureFlags_;
+
+    // Integration state
+    bool initialized_;
+    std::unordered_map<std::string, ast::TypePtr> typeCache_;
+    std::vector<GenericContext> genericContextStack_;
+
+    // Helper methods
+    void initializeFeatureFlags();
+    bool validateFeatureInteraction(const std::string& feature1, const std::string& feature2);
+    void reportFeatureError(const std::string& message, ast::ASTNodePtr node = nullptr);
+};
+
+/**
+ * @brief Feature integration utilities
+ */
+class FeatureIntegrationUtils {
+public:
+    // Type system utilities
+    static bool isAdvancedType(ast::TypePtr type);
+    static std::string getAdvancedTypeDescription(ast::TypePtr type);
+    static ast::TypePtr simplifyAdvancedType(ast::TypePtr type);
+
+    // Expression utilities
+    static bool requiresSpecialHandling(ast::ExprPtr expr);
+    static std::vector<std::string> getRequiredFeatures(ast::ExprPtr expr);
+    static bool canOptimizeExpression(ast::ExprPtr expr);
+
+    // Statement utilities
+    static bool isAdvancedStatement(ast::StmtPtr stmt);
+    static std::vector<std::string> getStatementDependencies(ast::StmtPtr stmt);
+
+    // Compatibility checking
+    static bool areTypesCompatible(ast::TypePtr type1, ast::TypePtr type2, FeatureManager& manager);
+    static bool canCoexist(const std::string& feature1, const std::string& feature2);
+
+    // Performance analysis
+    static int getComplexityScore(ast::ExprPtr expr);
+    static std::vector<std::string> getOptimizationOpportunities(ast::StmtPtr stmt);
+
+private:
+    FeatureIntegrationUtils() = delete;
+};
 
 } // namespace type_checker

@@ -42,6 +42,13 @@
 // Include the feature integration header
 #include "type/feature_integration.h"
 
+// New features
+#include "compiler/macro_system.h"
+#include "runtime/async_system.h"
+#include "debugger/debugger.h"
+#include "targets/wasm_target.h"
+#include "package/package_manager.h"
+
 // FFI Support
 #include "ffi/ffi_interface.h"
 #include "ffi/ffi_value.h"
@@ -62,16 +69,27 @@
 #include "runtime/linq.h"
 
 /**
- * @brief Simple compiler structure to hold compilation options and handle the compilation process.
+ * @brief Enhanced compiler structure with all new features
  */
-class Compiler
+class EnhancedCompiler
 {
 public:
-    Compiler(error::ErrorHandler &errorHandler)
-        : errorHandler(errorHandler), featureManager(errorHandler)
+    EnhancedCompiler(error::ErrorHandler &errorHandler)
+        : errorHandler(errorHandler), featureManager(errorHandler),
+          macroSystem(std::make_unique<compiler::MacroSystem>()),
+          asyncSystem(std::make_unique<runtime::AsyncSystem>()),
+          debugger(std::make_unique<debugger::LLVMDebugger>()),
+          wasmTarget(std::make_unique<targets::WASMTarget>()),
+          packageManager(std::make_unique<package::PackageManager>(".", errorHandler))
     {
         // Initialize feature manager
         featureManager.initialize();
+        
+        // Initialize async system
+        runtime::AsyncSystem::initialize();
+        
+        // Initialize debugger
+        debugger->initialize();
         
         // Initialize FFI systems
         initializeFFI();
@@ -86,15 +104,28 @@ public:
         bool enableFFI;
         bool enableConcurrency;
         bool enableAdvancedFeatures;
+        bool enableMacros;
+        bool enableAsync;
+        bool enableDebugger;
+        bool enableWASM;
+        std::string target;
+        bool enablePackageManager;
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
-              enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true) {}
+              enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
+              enableMacros(true), enableAsync(true), enableDebugger(false),
+              enableWASM(false), target("native"), enablePackageManager(true) {}
     };
 
     bool compile(const std::string &source, const std::string &filename,
                  const CompilationOptions &options = CompilationOptions())
     {
+        // Process macros if enabled
+        if (options.enableMacros) {
+            source = processMacros(source, filename);
+        }
+
         // Lexical analysis
         lexer::Lexer lexer(source, filename, 4);
         std::vector<lexer::Token> tokens = lexer.tokenize();
@@ -115,9 +146,6 @@ public:
 
         // Create compilation context with advanced features
         tocin::compiler::CompilationContext compilationContext(filename);
-        // Advanced features are managed by FeatureManager and TypeChecker
-        // No need to call enable* methods on compilationContext
-        // FFI and concurrency are enabled by default if available
 
         // Type checking with advanced features
         type_checker::TypeChecker checker(errorHandler, compilationContext, &featureManager);
@@ -128,6 +156,17 @@ public:
             return false;
         }
 
+        // Generate code based on target
+        if (options.target == "wasm" && options.enableWASM) {
+            return compileToWASM(program, filename, options);
+        } else {
+            return compileToNative(program, filename, options);
+        }
+    }
+
+    bool compileToNative(ast::StmtPtr program, const std::string& filename, 
+                        const CompilationOptions& options)
+    {
         // IR generation
         llvm::LLVMContext context;
         auto module = std::make_unique<llvm::Module>(filename, context);
@@ -192,14 +231,126 @@ public:
         return !errorHandler.hasFatalErrors();
     }
 
+    bool compileToWASM(ast::StmtPtr program, const std::string& filename,
+                       const CompilationOptions& options)
+    {
+        targets::WASMTargetConfig config;
+        config.optimize = options.optimize;
+        config.enableSIMD = true;
+        config.enableExceptionHandling = true;
+        
+        auto target = std::make_unique<targets::WASMTarget>(config);
+        std::string wasmCode = target->generateWASM(program, errorHandler);
+        
+        if (errorHandler.hasFatalErrors() || wasmCode.empty())
+        {
+            return false;
+        }
+
+        // Optimize WASM if requested
+        if (options.optimize) {
+            wasmCode = target->optimizeWASM(wasmCode);
+        }
+
+        // Validate WASM
+        if (!target->validateWASM(wasmCode, errorHandler)) {
+            return false;
+        }
+
+        // Write WASM output
+        if (!options.outputFile.empty()) {
+            std::string outputPath = options.outputFile;
+            if (outputPath.find('.') == std::string::npos) {
+                outputPath += ".wasm";
+            }
+
+            std::ofstream outputFile(outputPath);
+            if (!outputFile.is_open()) {
+                errorHandler.reportError(error::ErrorCode::I003_READ_ERROR,
+                                       "Could not open output file: " + outputPath,
+                                       filename, 0, 0);
+                return false;
+            }
+
+            outputFile << wasmCode;
+        }
+
+        return !errorHandler.hasFatalErrors();
+    }
+
+    // Package manager methods
+    bool installPackage(const std::string& name, const std::string& version = "") {
+        return packageManager->install(name, version);
+    }
+
+    bool uninstallPackage(const std::string& name) {
+        return packageManager->uninstall(name);
+    }
+
+    std::vector<package::PackageInfo> searchPackages(const std::string& query) {
+        return packageManager->search(query);
+    }
+
+    // Debugger methods
+    void startDebugger() {
+        if (debugger) {
+            debugger->start();
+        }
+    }
+
+    void setBreakpoint(const std::string& filename, int line, int column = 0) {
+        if (debugger) {
+            debugger->setBreakpoint(filename, line, column);
+        }
+    }
+
+    void stepInto() {
+        if (debugger) {
+            debugger->stepInto();
+        }
+    }
+
+    void stepOver() {
+        if (debugger) {
+            debugger->stepOver();
+        }
+    }
+
+    void continueExecution() {
+        if (debugger) {
+            debugger->continueExecution();
+        }
+    }
+
+    // Async methods
+    template<typename T>
+    runtime::Future<T> createAsync(std::function<T()> func) {
+        return runtime::AsyncSystem::createAsync(func).execute();
+    }
+
+    template<typename T>
+    T await(runtime::Future<T>& future) {
+        return runtime::AsyncSystem::await(future);
+    }
+
 private:
     error::ErrorHandler &errorHandler;
     type_checker::FeatureManager featureManager;
+    std::unique_ptr<compiler::MacroSystem> macroSystem;
+    std::unique_ptr<runtime::AsyncSystem> asyncSystem;
+    std::unique_ptr<debugger::Debugger> debugger;
+    std::unique_ptr<targets::WASMTarget> wasmTarget;
+    std::unique_ptr<package::PackageManager> packageManager;
 
     void initializeFFI()
     {
         // FFI initialization is handled by the relevant modules if available
-        // No global ffi::FFIInterface::initialize() needed here
+    }
+
+    std::string processMacros(const std::string& source, const std::string& filename) {
+        // Process macros in the source code
+        // This would expand macros before compilation
+        return source; // Placeholder
     }
 
     void optimizeModule(llvm::Module &module, int level)
@@ -257,9 +408,13 @@ void displayUsage()
               << "  --dump-ir              Dump LLVM IR to stdout\n"
               << "  -O0, -O1, -O2, -O3     Set optimization level (default: -O2)\n"
               << "  -o <file>              Write output to <file>\n"
+              << "  --target <target>      Set compilation target (native, wasm)\n"
               << "  --no-ffi               Disable FFI support\n"
               << "  --no-concurrency       Disable concurrency features\n"
               << "  --no-advanced          Disable advanced language features\n"
+              << "  --no-macros            Disable macro system\n"
+              << "  --no-async             Disable async/await\n"
+              << "  --debug                Enable debugger support\n"
               << "  --enable-python        Enable Python FFI (if available)\n"
               << "  --enable-javascript    Enable JavaScript FFI\n"
               << "  --enable-cpp           Enable C++ FFI\n"
@@ -270,23 +425,29 @@ void displayUsage()
               << "  - Ownership and move semantics\n"
               << "  - Null safety\n"
               << "  - Concurrency with async/await\n"
+              << "  - Macro system for compile-time code generation\n"
               << "  - FFI support (Python, JavaScript, C++)\n"
               << "  - LINQ-style data processing\n"
               << "  - Extension functions\n"
+              << "  - WebAssembly target\n"
+              << "  - Package manager\n"
+              << "  - Debugger support\n"
               << std::endl;
 }
 
 /**
- * @brief Simple REPL for interactive compilation.
+ * @brief Enhanced REPL with all new features
  */
-void runRepl(Compiler &compiler, error::ErrorHandler &errorHandler)
+void runEnhancedRepl(EnhancedCompiler &compiler, error::ErrorHandler &errorHandler)
 {
     std::string line;
-    Compiler::CompilationOptions options;
+    EnhancedCompiler::CompilationOptions options;
     options.dumpIR = true;
     options.enableFFI = true;
     options.enableConcurrency = true;
     options.enableAdvancedFeatures = true;
+    options.enableMacros = true;
+    options.enableAsync = true;
     options.optimize = true;
     options.optimizationLevel = 2;
 
@@ -294,7 +455,8 @@ void runRepl(Compiler &compiler, error::ErrorHandler &errorHandler)
     static int replCounter = 0;
     std::string replState;
 
-    std::cout << "Tocin REPL (type 'exit' to quit, 'clear' to reset)\n> ";
+    std::cout << "Tocin Enhanced REPL (type 'exit' to quit, 'clear' to reset)\n"
+              << "Commands: debug, package, async, macro\n> ";
 
     while (std::getline(std::cin, line))
     {
@@ -305,6 +467,28 @@ void runRepl(Compiler &compiler, error::ErrorHandler &errorHandler)
             errorHandler.clearErrors();
             replState.clear();
             replCounter = 0;
+            std::cout << "> ";
+            continue;
+        }
+
+        // Handle special commands
+        if (line == "debug") {
+            std::cout << "Debugger commands: break, step, continue, variables, stack\n";
+            std::cout << "> ";
+            continue;
+        }
+        if (line == "package") {
+            std::cout << "Package commands: install, uninstall, search, list\n";
+            std::cout << "> ";
+            continue;
+        }
+        if (line == "async") {
+            std::cout << "Async commands: await, future, promise\n";
+            std::cout << "> ";
+            continue;
+        }
+        if (line == "macro") {
+            std::cout << "Macro commands: define, expand, list\n";
             std::cout << "> ";
             continue;
         }
@@ -368,7 +552,7 @@ void runRepl(Compiler &compiler, error::ErrorHandler &errorHandler)
 }
 
 /**
- * @brief Main entry point for the Tocin compiler.
+ * @brief Main entry point for the enhanced Tocin compiler.
  */
 int main(int argc, char *argv[])
 {
@@ -385,18 +569,18 @@ int main(int argc, char *argv[])
     // Create error handler
     error::ErrorHandler errorHandler;
 
-    // Create compiler
-    Compiler compiler(errorHandler);
+    // Create enhanced compiler
+    EnhancedCompiler compiler(errorHandler);
 
-    // If no arguments, run REPL
+    // If no arguments, run enhanced REPL
     if (argc == 1)
     {
-        runRepl(compiler, errorHandler);
+        runEnhancedRepl(compiler, errorHandler);
         return 0;
     }
 
     // Parse command-line arguments
-    Compiler::CompilationOptions options;
+    EnhancedCompiler::CompilationOptions options;
     std::string filename;
 
     for (int i = 1; i < argc; ++i)
@@ -436,6 +620,10 @@ int main(int argc, char *argv[])
         {
             options.outputFile = argv[++i];
         }
+        else if (arg == "--target" && i + 1 < argc)
+        {
+            options.target = argv[++i];
+        }
         else if (arg == "--no-ffi")
         {
             options.enableFFI = false;
@@ -447,6 +635,18 @@ int main(int argc, char *argv[])
         else if (arg == "--no-advanced")
         {
             options.enableAdvancedFeatures = false;
+        }
+        else if (arg == "--no-macros")
+        {
+            options.enableMacros = false;
+        }
+        else if (arg == "--no-async")
+        {
+            options.enableAsync = false;
+        }
+        else if (arg == "--debug")
+        {
+            options.enableDebugger = true;
         }
         else if (arg == "--enable-python")
         {

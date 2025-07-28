@@ -1,304 +1,180 @@
-#pragma once
+#ifndef NULL_SAFETY_H
+#define NULL_SAFETY_H
 
-#include "../pch.h"
+#include "../ast/types.h"
 #include "../ast/ast.h"
 #include "../error/error_handler.h"
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-namespace type_checker
-{
+namespace type_checker {
 
-    /**
-     * @brief Class for handling nullable types and null safety
-     *
-     * Implements Kotlin/Swift-like null safety features:
-     * - Nullable types (Type?)
-     * - Safe call operator (?.)
-     * - Elvis operator (?:)
-     * - Not-null assertion operator (!)
-     */
-    class NullSafetyChecker
-    {
-    public:
-        NullSafetyChecker(error::ErrorHandler &errorHandler)
-            : errorHandler(errorHandler) {}
+/**
+ * @brief Null safety checker for Kotlin-like null safety
+ */
+class NullSafetyChecker {
+public:
+    NullSafetyChecker(error::ErrorHandler& errorHandler);
+    ~NullSafetyChecker();
 
-        /**
-         * @brief Check if a type is nullable
-         *
-         * @param type The type to check
-         * @return true if the type is nullable
-         */
-        bool isNullableType(ast::TypePtr type)
-        {
-            return std::dynamic_pointer_cast<ast::NullableType>(type) != nullptr;
-        }
+    // Expression checking
+    bool checkExpression(ast::ExprPtr expr);
+    bool checkStatement(ast::StmtPtr stmt);
+    bool checkFunction(ast::FunctionDeclPtr function);
 
-        /**
-         * @brief Create a nullable version of a type
-         *
-         * @param type The base type
-         * @return ast::TypePtr The nullable type
-         */
-        ast::TypePtr makeNullable(ast::TypePtr type)
-        {
-            // Don't make already nullable types nullable again
-            if (isNullableType(type))
-            {
-                return type;
-            }
+    // Null safety analysis
+    bool isNullableType(ast::TypePtr type);
+    bool isNonNullType(ast::TypePtr type);
+    bool canBeNull(ast::ExprPtr expr);
+    bool isNullCheck(ast::ExprPtr expr);
+    bool isSafeCall(ast::ExprPtr expr);
+    bool isElvisOperator(ast::ExprPtr expr);
 
-            // Create a dummy token for the nullable type
-            lexer::Token token;
-            token.type = lexer::TokenType::IDENTIFIER;
-            token.value = type->toString() + "?";
+    // Type operations
+    ast::TypePtr makeNullable(ast::TypePtr type);
+    ast::TypePtr makeNonNull(ast::TypePtr type);
+    ast::TypePtr resolveType(ast::TypePtr type);
 
-            return std::make_shared<ast::NullableType>(token, type);
-        }
+    // Null safety operators
+    bool checkSafeCall(ast::ExprPtr expr);
+    bool checkElvisOperator(ast::ExprPtr expr);
+    bool checkNullAssertion(ast::ExprPtr expr);
+    bool checkNullCheck(ast::ExprPtr expr);
 
-        /**
-         * @brief Get the non-nullable base type from a nullable type
-         *
-         * @param type The nullable type
-         * @return ast::TypePtr The base type
-         */
-        ast::TypePtr getNonNullableType(ast::TypePtr type)
-        {
-            if (auto nullableType = std::dynamic_pointer_cast<ast::NullableType>(type))
-            {
-                return nullableType->baseType;
-            }
-            return type; // Already non-nullable
-        }
+    // Flow analysis
+    bool analyzeNullFlow(ast::StmtPtr stmt);
+    bool isNullGuarded(ast::ExprPtr expr);
+    bool isDefinitelyNull(ast::ExprPtr expr);
+    bool isDefinitelyNonNull(ast::ExprPtr expr);
 
-        /**
-         * @brief Validate a safe call expression (?.)
-         *
-         * @param expr The object expression
-         * @param objType The type of the object
-         * @param memberName The name of the member being accessed
-         * @return true if the safe call is valid
-         */
-        bool validateSafeCall(ast::ExprPtr expr, ast::TypePtr objType, const std::string &memberName)
-        {
-            // Safe calls can only be used on nullable types
-            if (!isNullableType(objType))
-            {
-                errorHandler.reportError(
-                    error::ErrorCode::T001_TYPE_MISMATCH,
-                    "Safe call operator (?.) can only be used on nullable types",
-                    "", 0, 0, error::ErrorSeverity::ERROR);
-                return false;
-            }
+    // Error reporting
+    void reportNullSafetyError(const std::string& message, ast::ASTNodePtr node = nullptr);
 
-            // Get the base type to check if it has the member
-            ast::TypePtr baseType = getNonNullableType(objType);
+private:
+    error::ErrorHandler& errorHandler_;
+    
+    // Null safety state tracking
+    std::unordered_map<std::string, bool> nullableVariables_;
+    std::unordered_map<std::string, bool> nullCheckedVariables_;
+    std::unordered_map<std::string, bool> safeCallVariables_;
+    
+    // Flow analysis state
+    std::unordered_set<std::string> definitelyNull_;
+    std::unordered_set<std::string> definitelyNonNull_;
+    std::unordered_set<std::string> nullGuarded_;
+    
+    // Helper methods
+    bool checkVariableNullSafety(const std::string& variableName);
+    bool checkExpressionNullSafety(ast::ExprPtr expr);
+    bool checkStatementNullSafety(ast::StmtPtr stmt);
+    
+    std::string getVariableName(ast::ExprPtr expr);
+    bool isVariableExpression(ast::ExprPtr expr);
+    bool isNullLiteral(ast::ExprPtr expr);
+    bool isNotNullLiteral(ast::ExprPtr expr);
+    
+    void markAsNullChecked(const std::string& variableName);
+    void markAsSafeCall(const std::string& variableName);
+    void markAsDefinitelyNull(const std::string& variableName);
+    void markAsDefinitelyNonNull(const std::string& variableName);
+    void markAsNullGuarded(const std::string& variableName);
+};
 
-            // Check if the member exists on the base type
-            // Enhanced: Check for member existence in class/struct/trait
-            bool memberFound = false;
-            if (auto classType = std::dynamic_pointer_cast<ast::SimpleType>(baseType)) {
-                // TODO: Integrate with class/struct/trait registry for real member lookup
-                // For now, assume member exists if name is not empty
-                memberFound = !memberName.empty();
-            }
-            if (!memberFound) {
-                errorHandler.reportError(
-                    error::ErrorCode::T002_UNDEFINED_VARIABLE,
-                    "Member '" + memberName + "' does not exist on type '" + baseType->toString() + "'",
-                    "", 0, 0, error::ErrorSeverity::ERROR);
-                return false;
-            }
-            return true;
-        }
+/**
+ * @brief Null safety utilities
+ */
+class NullSafetyUtils {
+public:
+    // Type analysis
+    static bool isNullableType(ast::TypePtr type);
+    static bool isNonNullType(ast::TypePtr type);
+    static ast::TypePtr makeNullable(ast::TypePtr type);
+    static ast::TypePtr makeNonNull(ast::TypePtr type);
+    static ast::TypePtr extractInnerType(ast::TypePtr nullableType);
+    
+    // Expression analysis
+    static bool isNullLiteral(ast::ExprPtr expr);
+    static bool isNotNullLiteral(ast::ExprPtr expr);
+    static bool isNullCheck(ast::ExprPtr expr);
+    static bool isSafeCall(ast::ExprPtr expr);
+    static bool isElvisOperator(ast::ExprPtr expr);
+    static bool isNullAssertion(ast::ExprPtr expr);
+    
+    // Operator utilities
+    static std::string getSafeCallOperator();
+    static std::string getElvisOperator();
+    static std::string getNullAssertionOperator();
+    static std::string getNullCheckOperator();
+    
+    // Error message utilities
+    static std::string formatNullPointerError(const std::string& variableName);
+    static std::string formatNullableAssignmentError(const std::string& variableName);
+    static std::string formatNullCheckError(const std::string& variableName);
+    static std::string formatSafeCallError(const std::string& variableName);
+    
+    // Flow analysis utilities
+    static bool canBeNull(ast::ExprPtr expr);
+    static bool isDefinitelyNull(ast::ExprPtr expr);
+    static bool isDefinitelyNonNull(ast::ExprPtr expr);
+    static bool isNullGuarded(ast::ExprPtr expr);
+    
+private:
+    NullSafetyUtils() = delete;
+};
 
-        /**
-         * @brief Validate a not-null assertion (!)
-         *
-         * @param expr The expression being asserted non-null
-         * @param exprType The type of the expression
-         * @return true if the assertion is valid
-         */
-        bool validateNotNullAssertion(ast::ExprPtr expr, ast::TypePtr exprType)
-        {
-            // Not-null assertions can only be used on nullable types
-            if (!isNullableType(exprType))
-            {
-                errorHandler.reportError(
-                    error::ErrorCode::T001_TYPE_MISMATCH,
-                    "Not-null assertion operator (!) can only be used on nullable types",
-                    "", 0, 0, error::ErrorSeverity::ERROR);
-                return false;
-            }
-
-            return true;
-        }
-
-        /**
-         * @brief Validate an Elvis operator expression (?:)
-         *
-         * @param expr The nullable expression
-         * @param exprType The type of the nullable expression
-         * @param defaultExpr The default expression
-         * @param defaultType The type of the default expression
-         * @return true if the Elvis operator expression is valid
-         */
-        bool validateElvisOperator(ast::ExprPtr expr, ast::TypePtr exprType,
-                                   ast::ExprPtr defaultExpr, ast::TypePtr defaultType)
-        {
-            // Elvis operator should typically be used with nullable types
-            if (!isNullableType(exprType))
-            {
-                errorHandler.reportError(
-                    error::ErrorCode::T001_TYPE_MISMATCH,
-                    "Elvis operator (?:) should be used with nullable types",
-                    "", 0, 0, error::ErrorSeverity::WARNING);
-                // Continue anyway - it's just a warning
-            }
-
-            // The default expression type should be compatible with the base type
-            ast::TypePtr baseType = getNonNullableType(exprType);
-
-            // Simple compatibility check - in practice would need more thorough checks
-            if (baseType->toString() != defaultType->toString() &&
-                !isNullableType(defaultType))
-            {
-                errorHandler.reportError(
-                    error::ErrorCode::T001_TYPE_MISMATCH,
-                    "Default expression type doesn't match nullable expression type",
-                    "", 0, 0, error::ErrorSeverity::ERROR);
-                return false;
-            }
-
-            return true;
-        }
-
-        /**
-         * @brief Get the result type of a safe call expression
-         *
-         * @param objType The object type
-         * @param memberType The member type
-         * @return ast::TypePtr The result type (always nullable)
-         */
-        ast::TypePtr getSafeCallResultType(ast::TypePtr objType, ast::TypePtr memberType)
-        {
-            // Result of safe call is always nullable, regardless of member type
-            return makeNullable(memberType);
-        }
-
-        /**
-         * @brief Get the result type of a not-null assertion
-         *
-         * @param exprType The expression type
-         * @return ast::TypePtr The result type (non-nullable)
-         */
-        ast::TypePtr getNotNullAssertionResultType(ast::TypePtr exprType)
-        {
-            return getNonNullableType(exprType);
-        }
-
-        /**
-         * @brief Get the result type of an Elvis operator expression
-         *
-         * @param exprType The nullable expression type
-         * @param defaultType The default expression type
-         * @return ast::TypePtr The result type
-         */
-        ast::TypePtr getElvisOperatorResultType(ast::TypePtr exprType, ast::TypePtr defaultType)
-        {
-            // If the default is nullable, result is nullable
-            // Otherwise, result is non-nullable
-            if (isNullableType(defaultType))
-            {
-                return defaultType;
-            }
-            else
-            {
-                return getNonNullableType(exprType);
-            }
-        }
-
-    private:
-        error::ErrorHandler &errorHandler;
+/**
+ * @brief Null safety flow analyzer
+ */
+class NullSafetyFlowAnalyzer {
+public:
+    struct FlowState {
+        bool isNullGuarded;
+        bool isDefinitelyNull;
+        bool isDefinitelyNonNull;
+        bool isNullable;
+        
+        FlowState() : isNullGuarded(false), isDefinitelyNull(false), 
+                     isDefinitelyNonNull(false), isNullable(true) {}
     };
 
-    /**
-     * @brief AST node for a safe call expression
-     *
-     * Represents a null-safe member access (obj?.member).
-     */
-    class SafeCallExpr : public ast::Expression
-    {
-    public:
-        ast::ExprPtr object;    // The object being accessed
-        std::string memberName; // The name of the member
+    NullSafetyFlowAnalyzer();
+    ~NullSafetyFlowAnalyzer();
 
-        SafeCallExpr(const lexer::Token &token, ast::ExprPtr object, std::string memberName)
-            : Expression(token), object(std::move(object)), memberName(std::move(memberName)) {}
+    // Flow analysis
+    bool analyzeFlow(ast::StmtPtr stmt);
+    bool analyzeExpressionFlow(ast::ExprPtr expr);
+    bool analyzeConditionalFlow(ast::ExprPtr condition, ast::StmtPtr thenStmt, ast::StmtPtr elseStmt);
+    
+    // State management
+    void enterScope();
+    void exitScope();
+    void addVariable(const std::string& name);
+    void removeVariable(const std::string& name);
+    
+    // State queries
+    bool isVariableNullGuarded(const std::string& name) const;
+    bool isVariableDefinitelyNull(const std::string& name) const;
+    bool isVariableDefinitelyNonNull(const std::string& name) const;
+    bool isVariableNullable(const std::string& name) const;
+    
+    // State updates
+    void markAsNullGuarded(const std::string& name);
+    void markAsDefinitelyNull(const std::string& name);
+    void markAsDefinitelyNonNull(const std::string& name);
+    void markAsNullable(const std::string& name);
+    
+    // Cleanup
+    void clear();
 
-        void accept(ast::Visitor &visitor) override
-        {
-            // This would be implemented when we add the visitor method
-            // visitor.visitSafeCallExpr(this);
-        }
-
-        ast::TypePtr getType() const override
-        {
-            // Implementation depends on type system
-            return nullptr;
-        }
-    };
-
-    /**
-     * @brief AST node for a not-null assertion
-     *
-     * Represents a not-null assertion (obj!).
-     */
-    class NotNullAssertExpr : public ast::Expression
-    {
-    public:
-        ast::ExprPtr expression; // The expression being asserted non-null
-
-        NotNullAssertExpr(const lexer::Token &token, ast::ExprPtr expression)
-            : Expression(token), expression(std::move(expression)) {}
-
-        void accept(ast::Visitor &visitor) override
-        {
-            // This would be implemented when we add the visitor method
-            // visitor.visitNotNullAssertExpr(this);
-        }
-
-        ast::TypePtr getType() const override
-        {
-            // Implementation depends on type system
-            return nullptr;
-        }
-    };
-
-    /**
-     * @brief AST node for an Elvis operator expression
-     *
-     * Represents an Elvis operator expression (expr ?: default).
-     */
-    class ElvisOperatorExpr : public ast::Expression
-    {
-    public:
-        ast::ExprPtr nullableExpr; // The nullable expression
-        ast::ExprPtr defaultExpr;  // The default expression to use if null
-
-        ElvisOperatorExpr(const lexer::Token &token, ast::ExprPtr nullableExpr, ast::ExprPtr defaultExpr)
-            : Expression(token), nullableExpr(std::move(nullableExpr)), defaultExpr(std::move(defaultExpr)) {}
-
-        void accept(ast::Visitor &visitor) override
-        {
-            // This would be implemented when we add the visitor method
-            // visitor.visitElvisOperatorExpr(this);
-        }
-
-        ast::TypePtr getType() const override
-        {
-            // Implementation depends on type system
-            return nullptr;
-        }
-    };
+private:
+    std::unordered_map<std::string, FlowState> flowStates_;
+    std::vector<std::unordered_set<std::string>> scopeVariables_;
+    size_t currentScopeLevel_;
+};
 
 } // namespace type_checker
+
+#endif // NULL_SAFETY_H

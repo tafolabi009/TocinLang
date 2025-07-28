@@ -25,6 +25,11 @@ option(WITH_PYTHON "Enable Python FFI" ON)
 option(WITH_V8 "Enable JavaScript (V8) FFI" ON)
 option(WITH_ZSTD "Enable zstd compression" ON)
 option(WITH_XML "Enable XML support (LibXml2)" ON)
+option(WITH_MACROS "Enable macro system" ON)
+option(WITH_ASYNC "Enable async/await support" ON)
+option(WITH_DEBUGGER "Enable debugger support" ON)
+option(WITH_WASM "Enable WebAssembly target" ON)
+option(WITH_PACKAGE_MANAGER "Enable package manager" ON)
 
 # -------------------------
 # ZLIB Integration
@@ -294,6 +299,11 @@ set(FEATURE_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/type/traits.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/type/move_semantics.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/type/feature_integration.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/macro_system.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_system.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debugger.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/targets/wasm_target.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/package/package_manager.h"
 )
 
 # Add the feature headers to the existing headers list
@@ -391,6 +401,34 @@ add_custom_target(ir_generator_direct
 
 # Add this to the main target dependencies
 add_dependencies(tocin ir_generator_direct)
+
+# -------------------------
+# Feature-specific definitions
+# -------------------------
+if(WITH_MACROS)
+    add_definitions(-DWITH_MACROS)
+    message(STATUS "Macro system enabled")
+endif()
+
+if(WITH_ASYNC)
+    add_definitions(-DWITH_ASYNC)
+    message(STATUS "Async/await support enabled")
+endif()
+
+if(WITH_DEBUGGER)
+    add_definitions(-DWITH_DEBUGGER)
+    message(STATUS "Debugger support enabled")
+endif()
+
+if(WITH_WASM)
+    add_definitions(-DWITH_WASM)
+    message(STATUS "WebAssembly target enabled")
+endif()
+
+if(WITH_PACKAGE_MANAGER)
+    add_definitions(-DWITH_PACKAGE_MANAGER)
+    message(STATUS "Package manager enabled")
+endif()
 
 # -------------------------
 # CPack Installer Setup
