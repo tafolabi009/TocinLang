@@ -41,7 +41,7 @@ include_directories(${ZLIB_INCLUDE_DIRS})
 # LLVM Integration
 # -------------------------
 # First try to find LLVM through standard paths
-set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm")
+set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
 find_package(LLVM REQUIRED CONFIG)
 
 if(LLVM_FOUND)
@@ -71,8 +71,8 @@ if(LLVM_FOUND)
 
         # Try finding the header manually in common locations
         file(GLOB_RECURSE LLVM_HOST_HEADER_PATH
-            "C:/msys64/mingw64/include/**/Host.h"
-            "C:/msys64/mingw64/lib/llvm/include/**/Host.h")
+            "D:/Downloads/msys64/mingw64/include/**/Host.h"
+            "D:/Downloads/msys64/mingw64/lib/llvm/include/**/Host.h")
 
         if(LLVM_HOST_HEADER_PATH)
             message(STATUS "Found LLVM Host.h at ${LLVM_HOST_HEADER_PATH}")
@@ -87,9 +87,9 @@ if(LLVM_FOUND)
 
             # Add alternative LLVM include directories
             include_directories(
-                "C:/msys64/mingw64/include/llvm"
-                "C:/msys64/mingw64/include/llvm-c"
-                "C:/msys64/usr/include/llvm"
+                "D:/Downloads/msys64/mingw64/include/llvm"
+                "D:/Downloads/msys64/mingw64/include/llvm-c"
+                "D:/Downloads/msys64/usr/include/llvm"
                 "/mingw64/include"
                 "/mingw64/include/llvm"
                 "/mingw64/include/llvm-c"
@@ -317,13 +317,13 @@ target_include_directories(tocin PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${LLVM_INCLUDE_DIRS}
     ${ZLIB_INCLUDE_DIRS}
-    C:/msys64/mingw64/include
-    C:/msys64/mingw64/include/c++/15.1.0
-    C:/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32
-    C:/msys64/mingw64/include/c++/15.1.0/backward
-    C:/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include
-    C:/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include-fixed
-    C:/msys64/mingw64/x86_64-w64-mingw32/include
+    D:/Downloads/msys64/mingw64/include
+    D:/Downloads/msys64/mingw64/include/c++/15.1.0
+    D:/Downloads/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32
+    D:/Downloads/msys64/mingw64/include/c++/15.1.0/backward
+    D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include
+    D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include-fixed
+    D:/Downloads/msys64/mingw64/x86_64-w64-mingw32/include
 )
 
 # Add optional includes
@@ -389,7 +389,7 @@ target_link_libraries(tocin PRIVATE ${LINK_LIBS})
 # Custom IR Generator Build
 # -------------------------
 add_custom_target(ir_generator_direct
-    COMMAND C:/msys64/mingw64/bin/g++.exe
+    COMMAND ${CMAKE_CXX_COMPILER}
     -c ${CMAKE_SOURCE_DIR}/src/codegen/ir_generator.cpp
     -o ${CMAKE_BINARY_DIR}/ir_generator.o
     -I${CMAKE_SOURCE_DIR}/src

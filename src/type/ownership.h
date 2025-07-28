@@ -63,14 +63,14 @@ public:
     bool checkMoveValidity(ast::ExprPtr from, ast::ExprPtr to);
     bool isMoveSafe(ast::ExprPtr expr);
     void markAsMoved(ast::ExprPtr expr);
-    void markAsBorrowed(ast::ExprPtr expr, bool mutable);
+    void markAsBorrowed(ast::ExprPtr expr, bool isMutable);
 
     // Ownership transfer
     bool canTransferOwnership(ast::ExprPtr from, ast::ExprPtr to);
     bool transferOwnership(ast::ExprPtr from, ast::ExprPtr to);
 
     // Error reporting
-    void reportOwnershipError(const std::string& message, ast::ASTNodePtr node = nullptr);
+    void reportOwnershipError(const std::string& message, ast::Node* node = nullptr);
 
 private:
     error::ErrorHandler& errorHandler_;
@@ -123,7 +123,7 @@ public:
     static bool isBorrowedType(ast::TypePtr type);
     static bool isMutableType(ast::TypePtr type);
     static ast::TypePtr makeOwnedType(ast::TypePtr type);
-    static ast::TypePtr makeBorrowedType(ast::TypePtr type, bool mutable);
+    static ast::TypePtr makeBorrowedType(ast::TypePtr type, bool isMutable);
     
     // Lifetime utilities
     static std::string generateLifetimeName();
@@ -143,7 +143,7 @@ public:
     
     // Error message utilities
     static std::string formatMoveError(const std::string& variableName);
-    static std::string formatBorrowError(const std::string& variableName, bool mutable);
+    static std::string formatBorrowError(const std::string& variableName, bool isMutable);
     static std::string formatLifetimeError(const std::string& lifetime);
     
 private:
@@ -178,7 +178,7 @@ public:
     
     // Variable state tracking
     void markAsMoved(const std::string& name);
-    void markAsBorrowed(const std::string& name, bool mutable);
+    void markAsBorrowed(const std::string& name, bool isMutable);
     void markAsUnborrowed(const std::string& name);
     
     // State queries
@@ -186,7 +186,7 @@ public:
     bool isVariableBorrowed(const std::string& name) const;
     bool isVariableMutableBorrowed(const std::string& name) const;
     bool canMoveVariable(const std::string& name) const;
-    bool canBorrowVariable(const std::string& name, bool mutable) const;
+    bool canBorrowVariable(const std::string& name, bool isMutable) const;
     
     // Helper methods for OwnershipUtils
     BorrowState getBorrowState(const std::string& variableName) const;

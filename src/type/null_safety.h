@@ -51,7 +51,7 @@ public:
     bool isDefinitelyNonNull(ast::ExprPtr expr);
 
     // Error reporting
-    void reportNullSafetyError(const std::string& message, ast::ASTNodePtr node = nullptr);
+    void reportNullSafetyError(const std::string& message, ast::Node* node = nullptr);
 
 private:
     error::ErrorHandler& errorHandler_;

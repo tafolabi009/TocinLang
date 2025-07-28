@@ -32,20 +32,20 @@ public:
     OwnershipChecker& getOwnershipChecker() { return *ownershipChecker_; }
     const OwnershipChecker& getOwnershipChecker() const { return *ownershipChecker_; }
 
-    ResultOptionChecker& getResultOptionChecker() { return *resultOptionChecker_; }
-    const ResultOptionChecker& getResultOptionChecker() const { return *resultOptionChecker_; }
+    ResultOptionMatcher& getResultOptionChecker() { return *resultOptionChecker_; }
+    const ResultOptionMatcher& getResultOptionChecker() const { return *resultOptionChecker_; }
 
     NullSafetyChecker& getNullSafetyChecker() { return *nullSafetyChecker_; }
     const NullSafetyChecker& getNullSafetyChecker() const { return *nullSafetyChecker_; }
 
-    ExtensionFunctionChecker& getExtensionFunctionChecker() { return *extensionFunctionChecker_; }
-    const ExtensionFunctionChecker& getExtensionFunctionChecker() const { return *extensionFunctionChecker_; }
+    ExtensionManager& getExtensionFunctionChecker() { return *extensionFunctionChecker_; }
+    const ExtensionManager& getExtensionFunctionChecker() const { return *extensionFunctionChecker_; }
 
-    MoveSemanticsChecker& getMoveSemanticsChecker() { return *moveSemanticsChecker_; }
-    const MoveSemanticsChecker& getMoveSemanticsChecker() const { return *moveSemanticsChecker_; }
+    MoveChecker& getMoveSemanticsChecker() { return *moveSemanticsChecker_; }
+    const MoveChecker& getMoveSemanticsChecker() const { return *moveSemanticsChecker_; }
 
-    TraitChecker& getTraitChecker() { return *traitChecker_; }
-    const TraitChecker& getTraitChecker() const { return *traitChecker_; }
+    TraitSolver& getTraitChecker() { return *traitChecker_; }
+    const TraitSolver& getTraitChecker() const { return *traitChecker_; }
 
     // Feature integration methods
     bool checkExpression(ast::ExprPtr expr, ast::TypePtr expectedType = nullptr);
@@ -109,7 +109,7 @@ public:
     };
 
     std::vector<ExtensionCandidate> findExtensionFunctions(ast::TypePtr receiverType, const std::string& methodName);
-    ast::FunctionDeclPtr resolveExtensionCall(ast::CallExprPtr call);
+    ast::FunctionDeclPtr resolveExtensionCall(ast::CallExpr* call);
 
     // Move semantics integration
     bool canMove(ast::ExprPtr expr);
@@ -151,11 +151,11 @@ private:
     
     // Feature components
     std::unique_ptr<OwnershipChecker> ownershipChecker_;
-    std::unique_ptr<ResultOptionChecker> resultOptionChecker_;
+    std::unique_ptr<ResultOptionMatcher> resultOptionChecker_;
     std::unique_ptr<NullSafetyChecker> nullSafetyChecker_;
-    std::unique_ptr<ExtensionFunctionChecker> extensionFunctionChecker_;
-    std::unique_ptr<MoveSemanticsChecker> moveSemanticsChecker_;
-    std::unique_ptr<TraitChecker> traitChecker_;
+    std::unique_ptr<ExtensionManager> extensionFunctionChecker_;
+    std::unique_ptr<MoveChecker> moveSemanticsChecker_;
+    std::unique_ptr<TraitSolver> traitChecker_;
 
     // Feature flags
     std::unordered_map<std::string, bool> featureFlags_;
@@ -168,7 +168,7 @@ private:
     // Helper methods
     void initializeFeatureFlags();
     bool validateFeatureInteraction(const std::string& feature1, const std::string& feature2);
-    void reportFeatureError(const std::string& message, ast::ASTNodePtr node = nullptr);
+    void reportFeatureError(const std::string& message, ast::Node* node = nullptr);
 };
 
 /**
