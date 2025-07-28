@@ -395,6 +395,12 @@ add_custom_target(ir_generator_direct
     -I${CMAKE_SOURCE_DIR}/src
     -std=c++17
     -I${LLVM_INCLUDE_DIRS}
+    -I${CMAKE_SOURCE_DIR}/src/ast
+    -I${CMAKE_SOURCE_DIR}/src/lexer
+    -I${CMAKE_SOURCE_DIR}/src/type
+    -I${CMAKE_SOURCE_DIR}/src/error
+    -I${CMAKE_SOURCE_DIR}/src/runtime
+    -I${CMAKE_SOURCE_DIR}/src/compiler
     ${LLVM_DEFINITIONS}
     COMMENT "Building IR generator directly with g++"
 )

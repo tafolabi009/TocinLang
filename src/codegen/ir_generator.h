@@ -201,6 +201,7 @@ namespace codegen
         // Variable handling
         bool handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *rhs);
         llvm::AllocaInst *lookupVariable(const std::string &name);
+        llvm::Value *getVariable(const std::string &name);
         void addModuleSymbol(const std::string &moduleName, const std::string &symbolName, llvm::Value *value);
         
         // Utility methods
