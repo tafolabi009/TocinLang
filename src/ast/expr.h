@@ -2,13 +2,12 @@
 
 #include "ast.h"
 
-// This file is a compatibility header that redirects to ast.h
-// It ensures that code using the Expression class from expr.h will use the one defined in ast.h
+// This file provides additional expression-related definitions
+// that complement the main ast.h file
 
-namespace ast
-{
-    // Use the Expression class defined in ast.h
-    // No redefinition needed
+namespace ast {
 
-    // Add any additional expression-related functionality here
-}
+// Additional expression utilities and helper functions can go here
+// For now, most expressions are defined in ast.h
+
+} // namespace ast

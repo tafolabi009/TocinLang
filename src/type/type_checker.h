@@ -1,7 +1,7 @@
 #ifndef TYPE_CHECKER_H
 #define TYPE_CHECKER_H
 
-#include "ast/ast.h"
+#include "../ast/ast.h"
 #include "../error/error_handler.h"
 #include "feature_integration.h"
 #include <memory>

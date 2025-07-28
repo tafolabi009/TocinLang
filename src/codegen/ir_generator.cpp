@@ -1011,97 +1011,122 @@ std::string IRGenerator::inferTypeNameFromValue(llvm::Value *value)
 
 void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
 {
-    // Evaluate the operand
-    expr->right->accept(*this);
-    llvm::Value *operand = lastValue;
-
-    if (!operand)
-        return;
-
-    using lexer::TokenType;
-    switch (expr->op.type)
-    {
-    case TokenType::PLUS:
-        // Unary plus is a no-op
-        lastValue = operand;
-        break;
-    case TokenType::MINUS:
-        if (operand->getType()->isIntegerTy())
-        {
-            lastValue = builder.CreateNeg(operand, "negtmp");
-        }
-        else if (operand->getType()->isFloatTy() || operand->getType()->isDoubleTy())
-        {
-            lastValue = builder.CreateFNeg(operand, "fnegtmp");
-        }
-        else
-        {
-            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
-                                     "Invalid operand to unary -",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            lastValue = nullptr;
-        }
-        break;
-    case TokenType::BANG:
-        if (operand->getType()->isIntegerTy(1))
-        {
-            // Boolean negation
-            lastValue = builder.CreateNot(operand, "nottmp");
-        }
-        else if (operand->getType()->isIntegerTy())
-        {
-            // Compare with zero for integers
-            lastValue = builder.CreateICmpEQ(
-                operand,
-                llvm::ConstantInt::get(operand->getType(), 0),
-                "nottmp");
-        }
-        else if (operand->getType()->isFloatTy() || operand->getType()->isDoubleTy())
-        {
-            // Compare with zero for floating point
-            lastValue = builder.CreateFCmpOEQ(
-                operand,
-                llvm::ConstantFP::get(operand->getType(), 0.0),
-                "nottmp");
-        }
-        else if (operand->getType()->isPointerTy())
-        {
-            // Compare with null for pointers
-            lastValue = builder.CreateICmpEQ(
-                operand,
-                llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(operand->getType())),
-                "nottmp");
-        }
-        else
-        {
-            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
-                                     "Invalid operand to unary !",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            lastValue = nullptr;
-        }
-        break;
-    case TokenType::BITWISE_NOT:
-        if (operand->getType()->isIntegerTy())
-        {
-            lastValue = builder.CreateNot(operand, "bitnot");
-        }
-        else
-        {
-            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
-                                     "Invalid operand to unary ~ (bitwise not)",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            lastValue = nullptr;
-        }
-        break;
-    case TokenType::INCREMENT:
-    case TokenType::DECREMENT:
-        // ++x and --x are not true unary operators in LLVM IR; they require an lvalue (variable)
-        // For now, report as unimplemented
+    if (!expr->operand) {
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
-                                 "Increment/decrement operators require lvalue support (not implemented)",
+                                 "Unary expression missing operand",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
+        return;
+    }
+
+    // Evaluate the operand first
+    expr->operand->accept(*this);
+    llvm::Value *operand = lastValue;
+
+    if (!operand) {
+        lastValue = nullptr;
+        return;
+    }
+
+    switch (expr->op.type)
+    {
+    case TokenType::MINUS:
+        if (operand->getType()->isIntegerTy()) {
+            lastValue = builder->CreateNeg(operand, "neg");
+        } else if (operand->getType()->isFloatTy() || operand->getType()->isDoubleTy()) {
+            lastValue = builder->CreateFNeg(operand, "fneg");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                     "Cannot apply unary minus to non-numeric type",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
         break;
+
+    case TokenType::BANG:
+        if (operand->getType()->isIntegerTy(1)) {
+            lastValue = builder->CreateNot(operand, "not");
+        } else {
+            // Convert to boolean if needed
+            llvm::Value *boolVal = builder->CreateICmpNE(operand, 
+                llvm::ConstantInt::get(operand->getType(), 0), "tobool");
+            lastValue = builder->CreateNot(boolVal, "not");
+        }
+        break;
+
+    case TokenType::BITWISE_NOT:
+        if (operand->getType()->isIntegerTy()) {
+            lastValue = builder->CreateNot(operand, "bitnot");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                     "Cannot apply bitwise NOT to non-integer type",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::INCREMENT:
+    case TokenType::DECREMENT:
+        // Handle increment/decrement with proper lvalue support
+        if (auto varExpr = dynamic_cast<ast::VariableExpr*>(expr->operand.get())) {
+            // Get the variable's current value
+            llvm::Value* varPtr = getVariable(varExpr->name);
+            if (!varPtr) {
+                errorHandler.reportError(error::ErrorCode::V001_UNDEFINED_VARIABLE,
+                                         "Variable '" + varExpr->name + "' not found",
+                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                lastValue = nullptr;
+                return;
+            }
+
+            llvm::Value* currentValue = builder->CreateLoad(operand->getType(), varPtr, "load");
+            
+            // Create the new value
+            llvm::Value* newValue;
+            if (expr->op.type == TokenType::INCREMENT) {
+                if (currentValue->getType()->isIntegerTy()) {
+                    newValue = builder->CreateAdd(currentValue, 
+                        llvm::ConstantInt::get(currentValue->getType(), 1), "inc");
+                } else if (currentValue->getType()->isFloatTy() || currentValue->getType()->isDoubleTy()) {
+                    newValue = builder->CreateFAdd(currentValue, 
+                        llvm::ConstantFP::get(currentValue->getType(), 1.0), "finc");
+                } else {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                             "Cannot increment non-numeric type",
+                                             "", 0, 0, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr;
+                    return;
+                }
+            } else { // DECREMENT
+                if (currentValue->getType()->isIntegerTy()) {
+                    newValue = builder->CreateSub(currentValue, 
+                        llvm::ConstantInt::get(currentValue->getType(), 1), "dec");
+                } else if (currentValue->getType()->isFloatTy() || currentValue->getType()->isDoubleTy()) {
+                    newValue = builder->CreateFSub(currentValue, 
+                        llvm::ConstantFP::get(currentValue->getType(), 1.0), "fdec");
+                } else {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                             "Cannot decrement non-numeric type",
+                                             "", 0, 0, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr;
+                    return;
+                }
+            }
+
+            // Store the new value
+            builder->CreateStore(newValue, varPtr);
+            
+            // Return the new value for prefix operators, old value for postfix
+            // For now, we'll return the new value (prefix behavior)
+            lastValue = newValue;
+        } else {
+            errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                     "Increment/decrement requires lvalue (variable)",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
     default:
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Unhandled or unsupported unary operator",
@@ -2415,7 +2440,8 @@ llvm::AllocaInst *IRGenerator::lookupVariable(const std::string &name)
  * This method handles different types of assignment targets:
  * - Variable assignment (e.g., x = 5)
  * - Property assignment (e.g., obj.prop = 5)
- * - Indexed assignment (e.g., arr[0] = 5) - not implemented yet
+ * - Indexed assignment (e.g., arr[0] = 5)
+ * - Array element assignment (e.g., arr[i] = value)
  *
  * @param expr The assignment expression to generate code for
  */
@@ -2466,6 +2492,75 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
 
         // Visit the SetExpr to generate property assignment code
         visitSetExpr(setExpr.get());
+        return;
+    }
+
+    // Handle indexed assignment (arr[index] = value)
+    if (auto indexExpr = dynamic_cast<ast::IndexExpr *>(expr->target.get()))
+    {
+        // Evaluate the array/object
+        indexExpr->object->accept(*this);
+        if (!lastValue)
+        {
+            return;
+        }
+        llvm::Value *object = lastValue;
+
+        // Evaluate the index
+        indexExpr->index->accept(*this);
+        if (!lastValue)
+        {
+            return;
+        }
+        llvm::Value *index = lastValue;
+
+        // Generate array element assignment
+        if (object->getType()->isPointerTy() && 
+            object->getType()->getPointerElementType()->isArrayTy())
+        {
+            // Array type - get element pointer
+            std::vector<llvm::Value*> indices = {
+                llvm::ConstantInt::get(builder->getInt32Ty(), 0),
+                index
+            };
+            llvm::Value *elementPtr = builder->CreateGEP(
+                object->getType()->getPointerElementType(), object, indices, "array_elem_ptr");
+            
+            // Store the value
+            builder->CreateStore(rhs, elementPtr);
+            lastValue = rhs;
+            return;
+        }
+        else if (object->getType()->isPointerTy() && 
+                 object->getType()->getPointerElementType()->isPointerTy())
+        {
+            // Pointer to pointer (dynamic array) - get element pointer
+            llvm::Value *elementPtr = builder->CreateGEP(
+                object->getType()->getPointerElementType(), object, index, "ptr_elem_ptr");
+            
+            // Store the value
+            builder->CreateStore(rhs, elementPtr);
+            lastValue = rhs;
+            return;
+        }
+        else
+        {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                     "Cannot index non-array type",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+            return;
+        }
+    }
+
+    // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
+    if (auto binaryExpr = dynamic_cast<ast::BinaryExpr *>(expr->target.get()))
+    {
+        // This would handle cases like (x + y) = z, which should be an error
+        errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                                 "Cannot assign to expression result",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
         return;
     }
 
@@ -2681,12 +2776,278 @@ llvm::Function *IRGenerator::transformAsyncFunction(ast::FunctionStmt *stmt)
 // Visitor method implementations - basic stubs
 void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 {
-    // Visit left and right operands
-    if (expr->left) expr->left->accept(*this);
-    if (expr->right) expr->right->accept(*this);
-    
-    // For now, just set lastValue to a constant
-    lastValue = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0);
+    if (!expr->left || !expr->right) {
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Binary expression missing operands",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        return;
+    }
+
+    // Evaluate left operand
+    expr->left->accept(*this);
+    llvm::Value *left = lastValue;
+    if (!left) {
+        lastValue = nullptr;
+        return;
+    }
+
+    // Evaluate right operand
+    expr->right->accept(*this);
+    llvm::Value *right = lastValue;
+    if (!right) {
+        lastValue = nullptr;
+        return;
+    }
+
+    // Handle different operators
+    switch (expr->op.type) {
+    case TokenType::PLUS:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateAdd(left, right, "add");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFAdd(left, right, "fadd");
+        } else if (left->getType()->isPointerTy() && right->getType()->isIntegerTy()) {
+            // Pointer arithmetic
+            lastValue = builder.CreateGEP(left->getType()->getPointerElementType(), left, right, "ptr_add");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot add incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::MINUS:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateSub(left, right, "sub");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFSub(left, right, "fsub");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot subtract incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::STAR:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateMul(left, right, "mul");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFMul(left, right, "fmul");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot multiply incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::SLASH:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateSDiv(left, right, "div");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFDiv(left, right, "fdiv");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot divide incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::MODULO:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateSRem(left, right, "mod");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Modulo only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::EQUAL_EQUAL:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpEQ(left, right, "eq");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpOEQ(left, right, "feq");
+        } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+            lastValue = builder.CreateICmpEQ(left, right, "ptr_eq");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::BANG_EQUAL:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpNE(left, right, "ne");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpONE(left, right, "fne");
+        } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+            lastValue = builder.CreateICmpNE(left, right, "ptr_ne");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::LESS:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpSLT(left, right, "lt");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpOLT(left, right, "flt");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::LESS_EQUAL:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpSLE(left, right, "le");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpOLE(left, right, "fle");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::GREATER:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpSGT(left, right, "gt");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpOGT(left, right, "fgt");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::GREATER_EQUAL:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateICmpSGE(left, right, "ge");
+        } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+                   (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+            lastValue = builder.CreateFCmpOGE(left, right, "fge");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Cannot compare incompatible types",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::AND:
+        if (left->getType()->isIntegerTy(1) && right->getType()->isIntegerTy(1)) {
+            lastValue = builder.CreateAnd(left, right, "and");
+        } else {
+            // Convert to boolean if needed
+            llvm::Value *leftBool = builder.CreateICmpNE(left, 
+                llvm::ConstantInt::get(left->getType(), 0), "left_bool");
+            llvm::Value *rightBool = builder.CreateICmpNE(right, 
+                llvm::ConstantInt::get(right->getType(), 0), "right_bool");
+            lastValue = builder.CreateAnd(leftBool, rightBool, "and");
+        }
+        break;
+
+    case TokenType::OR:
+        if (left->getType()->isIntegerTy(1) && right->getType()->isIntegerTy(1)) {
+            lastValue = builder.CreateOr(left, right, "or");
+        } else {
+            // Convert to boolean if needed
+            llvm::Value *leftBool = builder.CreateICmpNE(left, 
+                llvm::ConstantInt::get(left->getType(), 0), "left_bool");
+            llvm::Value *rightBool = builder.CreateICmpNE(right, 
+                llvm::ConstantInt::get(right->getType(), 0), "right_bool");
+            lastValue = builder.CreateOr(leftBool, rightBool, "or");
+        }
+        break;
+
+    case TokenType::BITWISE_AND:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateAnd(left, right, "bitand");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Bitwise AND only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::BITWISE_OR:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateOr(left, right, "bitor");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Bitwise OR only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::BITWISE_XOR:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateXor(left, right, "bitxor");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Bitwise XOR only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::LEFT_SHIFT:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateShl(left, right, "shl");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Left shift only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    case TokenType::RIGHT_SHIFT:
+        if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            lastValue = builder.CreateAShr(left, right, "shr");
+        } else {
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                                     "Right shift only supported for integers",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            lastValue = nullptr;
+        }
+        break;
+
+    default:
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Unsupported binary operator",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        break;
+    }
 }
 
 void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
