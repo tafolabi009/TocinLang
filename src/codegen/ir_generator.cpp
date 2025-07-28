@@ -1031,20 +1031,20 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
 
     switch (expr->op.type)
     {
-    case TokenType::MINUS:
+    case lexer::TokenType::MINUS:
         if (operand->getType()->isIntegerTy()) {
             lastValue = builder.CreateNeg(operand, "neg");
         } else if (operand->getType()->isFloatTy() || operand->getType()->isDoubleTy()) {
             lastValue = builder.CreateFNeg(operand, "fneg");
         } else {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot apply unary minus to non-numeric type",
                                      "", 0, 0, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
 
-    case TokenType::BANG:
+    case lexer::TokenType::BANG:
         if (operand->getType()->isIntegerTy(1)) {
             lastValue = builder.CreateNot(operand, "not");
         } else {
@@ -1055,25 +1055,25 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         }
         break;
 
-    case TokenType::BITWISE_NOT:
+    case lexer::TokenType::BITWISE_NOT:
         if (operand->getType()->isIntegerTy()) {
             lastValue = builder.CreateNot(operand, "bitnot");
         } else {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot apply bitwise NOT to non-integer type",
                                      "", 0, 0, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
 
-    case TokenType::INCREMENT:
-    case TokenType::DECREMENT:
+    case lexer::TokenType::INCREMENT:
+    case lexer::TokenType::DECREMENT:
         // Handle increment/decrement with proper lvalue support
         if (auto varExpr = dynamic_cast<ast::VariableExpr*>(expr->right.get())) {
             // Get the variable's current value
             llvm::Value* varPtr = getVariable(varExpr->name);
             if (!varPtr) {
-                errorHandler.reportError(error::ErrorCode::V001_UNDEFINED_VARIABLE,
+                errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
                                          "Variable '" + varExpr->name + "' not found",
                                          "", 0, 0, error::ErrorSeverity::ERROR);
                 lastValue = nullptr;
@@ -1084,15 +1084,15 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             
             // Create the new value
             llvm::Value* newValue;
-            if (expr->op.type == TokenType::INCREMENT) {
+            if (expr->op.type == lexer::TokenType::INCREMENT) {
                 if (currentValue->getType()->isIntegerTy()) {
                     newValue = builder.CreateAdd(currentValue, 
                         llvm::ConstantInt::get(currentValue->getType(), 1), "inc");
                 } else if (currentValue->getType()->isFloatTy() || currentValue->getType()->isDoubleTy()) {
-                    newValue = builder->CreateFAdd(currentValue, 
+                    newValue = builder.CreateFAdd(currentValue, 
                         llvm::ConstantFP::get(currentValue->getType(), 1.0), "finc");
                 } else {
-                    errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                              "Cannot increment non-numeric type",
                                              "", 0, 0, error::ErrorSeverity::ERROR);
                     lastValue = nullptr;
@@ -1100,13 +1100,13 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
                 }
             } else { // DECREMENT
                 if (currentValue->getType()->isIntegerTy()) {
-                    newValue = builder->CreateSub(currentValue, 
+                    newValue = builder.CreateSub(currentValue, 
                         llvm::ConstantInt::get(currentValue->getType(), 1), "dec");
                 } else if (currentValue->getType()->isFloatTy() || currentValue->getType()->isDoubleTy()) {
-                    newValue = builder->CreateFSub(currentValue, 
+                    newValue = builder.CreateFSub(currentValue, 
                         llvm::ConstantFP::get(currentValue->getType(), 1.0), "fdec");
                 } else {
-                    errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                              "Cannot decrement non-numeric type",
                                              "", 0, 0, error::ErrorSeverity::ERROR);
                     lastValue = nullptr;
@@ -1115,7 +1115,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             }
 
             // Store the new value
-            builder->CreateStore(newValue, varPtr);
+            builder.CreateStore(newValue, varPtr);
             
             // Return the new value for prefix operators, old value for postfix
             // For now, we'll return the new value (prefix behavior)
@@ -2497,7 +2497,7 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
     }
 
     // Handle indexed assignment (arr[index] = value)
-    if (auto indexExpr = dynamic_cast<ast::IndexExpr *>(expr->target.get()))
+    if (auto getExpr = dynamic_cast<ast::GetExpr *>(expr->target.get()))
     {
         // Evaluate the array/object
         indexExpr->object->accept(*this);
@@ -2521,14 +2521,14 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
         {
             // Array type - get element pointer
             std::vector<llvm::Value*> indices = {
-                llvm::ConstantInt::get(builder->getInt32Ty(), 0),
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
                 index
             };
-            llvm::Value *elementPtr = builder->CreateGEP(
+            llvm::Value *elementPtr = builder.CreateGEP(
                 object->getType()->getPointerElementType(), object, indices, "array_elem_ptr");
             
             // Store the value
-            builder->CreateStore(rhs, elementPtr);
+            builder.CreateStore(rhs, elementPtr);
             lastValue = rhs;
             return;
         }
@@ -2536,17 +2536,17 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
                  object->getType()->getPointerElementType()->isPointerTy())
         {
             // Pointer to pointer (dynamic array) - get element pointer
-            llvm::Value *elementPtr = builder->CreateGEP(
+            llvm::Value *elementPtr = builder.CreateGEP(
                 object->getType()->getPointerElementType(), object, index, "ptr_elem_ptr");
             
             // Store the value
-            builder->CreateStore(rhs, elementPtr);
+            builder.CreateStore(rhs, elementPtr);
             lastValue = rhs;
             return;
         }
         else
         {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot index non-array type",
                                      "", 0, 0, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
@@ -2558,7 +2558,7 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
     if (auto binaryExpr = dynamic_cast<ast::BinaryExpr *>(expr->target.get()))
     {
         // This would handle cases like (x + y) = z, which should be an error
-        errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
+        errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                  "Cannot assign to expression result",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
@@ -2803,7 +2803,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 
     // Handle different operators
     switch (expr->op.type) {
-    case TokenType::PLUS:
+    case lexer::TokenType::PLUS:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateAdd(left, right, "add");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2820,7 +2820,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::MINUS:
+    case lexer::TokenType::MINUS:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateSub(left, right, "sub");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2834,7 +2834,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::STAR:
+    case lexer::TokenType::STAR:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateMul(left, right, "mul");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2848,7 +2848,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::SLASH:
+    case lexer::TokenType::SLASH:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateSDiv(left, right, "div");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2862,7 +2862,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::MODULO:
+    case lexer::TokenType::MODULO:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateSRem(left, right, "mod");
         } else {
@@ -2873,7 +2873,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::EQUAL_EQUAL:
+    case lexer::TokenType::EQUAL_EQUAL:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpEQ(left, right, "eq");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2889,7 +2889,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::BANG_EQUAL:
+    case lexer::TokenType::BANG_EQUAL:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpNE(left, right, "ne");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2905,7 +2905,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::LESS:
+    case lexer::TokenType::LESS:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpSLT(left, right, "lt");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2919,7 +2919,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::LESS_EQUAL:
+    case lexer::TokenType::LESS_EQUAL:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpSLE(left, right, "le");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2933,7 +2933,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::GREATER:
+    case lexer::TokenType::GREATER:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpSGT(left, right, "gt");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2947,7 +2947,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::GREATER_EQUAL:
+    case lexer::TokenType::GREATER_EQUAL:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateICmpSGE(left, right, "ge");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
@@ -2961,7 +2961,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::AND:
+    case lexer::TokenType::AND:
         if (left->getType()->isIntegerTy(1) && right->getType()->isIntegerTy(1)) {
             lastValue = builder.CreateAnd(left, right, "and");
         } else {
@@ -2974,7 +2974,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::OR:
+    case lexer::TokenType::OR:
         if (left->getType()->isIntegerTy(1) && right->getType()->isIntegerTy(1)) {
             lastValue = builder.CreateOr(left, right, "or");
         } else {
@@ -2987,7 +2987,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::BITWISE_AND:
+    case lexer::TokenType::BITWISE_AND:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateAnd(left, right, "bitand");
         } else {
@@ -2998,7 +2998,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::BITWISE_OR:
+    case lexer::TokenType::BITWISE_OR:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateOr(left, right, "bitor");
         } else {
@@ -3009,7 +3009,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::BITWISE_XOR:
+    case lexer::TokenType::BITWISE_XOR:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateXor(left, right, "bitxor");
         } else {
@@ -3020,7 +3020,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::LEFT_SHIFT:
+    case lexer::TokenType::LEFT_SHIFT:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateShl(left, right, "shl");
         } else {
@@ -3031,7 +3031,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case TokenType::RIGHT_SHIFT:
+    case lexer::TokenType::RIGHT_SHIFT:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateAShr(left, right, "shr");
         } else {
@@ -3426,6 +3426,23 @@ void codegen::IRGenerator::visitImplStmt(ast::ImplStmt* stmt) {
     
     // Implementation statements don't have a return value
     lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+}
+
+llvm::Value *IRGenerator::getVariable(const std::string &name) {
+    // Look up the variable in the current scope
+    llvm::AllocaInst *alloca = lookupVariable(name);
+    if (alloca) {
+        return alloca;
+    }
+    
+    // If not found in current scope, check if it's a global variable
+    llvm::GlobalVariable *global = module->getGlobalVariable(name);
+    if (global) {
+        return global;
+    }
+    
+    // If not found, return nullptr
+    return nullptr;
 }
 
 } // namespace codegen

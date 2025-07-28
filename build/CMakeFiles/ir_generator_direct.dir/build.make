@@ -70,7 +70,7 @@ include CMakeFiles/ir_generator_direct.dir/progress.make
 
 CMakeFiles/ir_generator_direct:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building IR generator directly with g++"
-	D:\Downloads\msys64\mingw64\bin\c++.exe -c D:/Downloads/tocin-compiler/src/codegen/ir_generator.cpp -o D:/Downloads/tocin-compiler/build/ir_generator.o -ID:/Downloads/tocin-compiler/src -std=c++17 -ID:/Downloads/msys64/mingw64/include "-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
+	D:\Downloads\msys64\mingw64\bin\c++.exe -c D:/Downloads/tocin-compiler/src/codegen/ir_generator.cpp -o D:/Downloads/tocin-compiler/build/ir_generator.o -ID:/Downloads/tocin-compiler/src -std=c++17 -ID:/Downloads/msys64/mingw64/include -ID:/Downloads/tocin-compiler/src/ast -ID:/Downloads/tocin-compiler/src/lexer -ID:/Downloads/tocin-compiler/src/type -ID:/Downloads/tocin-compiler/src/error -ID:/Downloads/tocin-compiler/src/runtime -ID:/Downloads/tocin-compiler/src/compiler "-D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS"
 
 CMakeFiles/ir_generator_direct.dir/codegen:
 .PHONY : CMakeFiles/ir_generator_direct.dir/codegen
