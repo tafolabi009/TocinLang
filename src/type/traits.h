@@ -337,7 +337,7 @@ class TraitRegistry {
 private:
     std::unordered_map<std::string, std::shared_ptr<Trait>> traits;
     std::unordered_map<std::string, std::vector<std::shared_ptr<TraitImpl>>> implementations;
-    std::mutex registry_mutex;
+    mutable std::mutex registry_mutex;
 
 public:
     /**

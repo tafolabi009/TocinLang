@@ -1,5 +1,6 @@
 #include "ir_generator.h"
 #include "../ast/ast.h"
+#include "../lexer/token.h"
 #include "../type/type_checker.h"
 #include "../error/error_handler.h"
 #include "../compiler/compilation_context.h"
@@ -1011,7 +1012,7 @@ std::string IRGenerator::inferTypeNameFromValue(llvm::Value *value)
 
 void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
 {
-    if (!expr->operand) {
+    if (!expr->right) {
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Unary expression missing operand",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
@@ -1020,7 +1021,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     }
 
     // Evaluate the operand first
-    expr->operand->accept(*this);
+    expr->right->accept(*this);
     llvm::Value *operand = lastValue;
 
     if (!operand) {
@@ -1032,9 +1033,9 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     {
     case TokenType::MINUS:
         if (operand->getType()->isIntegerTy()) {
-            lastValue = builder->CreateNeg(operand, "neg");
+            lastValue = builder.CreateNeg(operand, "neg");
         } else if (operand->getType()->isFloatTy() || operand->getType()->isDoubleTy()) {
-            lastValue = builder->CreateFNeg(operand, "fneg");
+            lastValue = builder.CreateFNeg(operand, "fneg");
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
                                      "Cannot apply unary minus to non-numeric type",
@@ -1045,18 +1046,18 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
 
     case TokenType::BANG:
         if (operand->getType()->isIntegerTy(1)) {
-            lastValue = builder->CreateNot(operand, "not");
+            lastValue = builder.CreateNot(operand, "not");
         } else {
             // Convert to boolean if needed
-            llvm::Value *boolVal = builder->CreateICmpNE(operand, 
+            llvm::Value *boolVal = builder.CreateICmpNE(operand, 
                 llvm::ConstantInt::get(operand->getType(), 0), "tobool");
-            lastValue = builder->CreateNot(boolVal, "not");
+            lastValue = builder.CreateNot(boolVal, "not");
         }
         break;
 
     case TokenType::BITWISE_NOT:
         if (operand->getType()->isIntegerTy()) {
-            lastValue = builder->CreateNot(operand, "bitnot");
+            lastValue = builder.CreateNot(operand, "bitnot");
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_ERROR,
                                      "Cannot apply bitwise NOT to non-integer type",
@@ -1068,7 +1069,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     case TokenType::INCREMENT:
     case TokenType::DECREMENT:
         // Handle increment/decrement with proper lvalue support
-        if (auto varExpr = dynamic_cast<ast::VariableExpr*>(expr->operand.get())) {
+        if (auto varExpr = dynamic_cast<ast::VariableExpr*>(expr->right.get())) {
             // Get the variable's current value
             llvm::Value* varPtr = getVariable(varExpr->name);
             if (!varPtr) {
@@ -1079,13 +1080,13 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
                 return;
             }
 
-            llvm::Value* currentValue = builder->CreateLoad(operand->getType(), varPtr, "load");
+            llvm::Value* currentValue = builder.CreateLoad(operand->getType(), varPtr, "load");
             
             // Create the new value
             llvm::Value* newValue;
             if (expr->op.type == TokenType::INCREMENT) {
                 if (currentValue->getType()->isIntegerTy()) {
-                    newValue = builder->CreateAdd(currentValue, 
+                    newValue = builder.CreateAdd(currentValue, 
                         llvm::ConstantInt::get(currentValue->getType(), 1), "inc");
                 } else if (currentValue->getType()->isFloatTy() || currentValue->getType()->isDoubleTy()) {
                     newValue = builder->CreateFAdd(currentValue, 

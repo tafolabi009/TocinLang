@@ -17,9 +17,9 @@
 namespace runtime {
 
 // Forward declarations
-class Channel;
-class Future;
-class Promise;
+template<typename T> class Channel;
+template<typename T> class Future;
+template<typename T> class Promise;
 class Scheduler;
 
 /**
@@ -196,9 +196,9 @@ class ThreadPool {
 private:
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;
-    std::mutex queue_mutex;
+    mutable std::mutex queue_mutex;
     std::condition_variable condition;
-    std::atomic<bool> stop{false};
+    std::atomic<bool> should_stop{false};
     std::atomic<size_t> active_threads{0};
 
 public:
@@ -209,8 +209,8 @@ public:
                     std::function<void()> task;
                     {
                         std::unique_lock<std::mutex> lock(queue_mutex);
-                        condition.wait(lock, [this] { return stop.load() || !tasks.empty(); });
-                        if (stop.load() && tasks.empty()) {
+                        condition.wait(lock, [this] { return should_stop.load() || !tasks.empty(); });
+                        if (should_stop.load() && tasks.empty()) {
                             return;
                         }
                         task = std::move(tasks.front());
@@ -238,7 +238,7 @@ public:
         std::future<return_type> res = task->get_future();
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
-            if (stop.load()) {
+            if (should_stop.load()) {
                 throw std::runtime_error("ThreadPool is stopped");
             }
             tasks.emplace([task]() { (*task)(); });
@@ -266,7 +266,7 @@ public:
      * @brief Stop the thread pool
      */
     void stop() {
-        stop.store(true);
+        should_stop.store(true);
         condition.notify_all();
         for (auto& worker : workers) {
             if (worker.joinable()) {
@@ -310,9 +310,9 @@ public:
         auto promise = std::make_shared<Promise<return_type>>();
         auto future = promise->getFuture();
         
-        thread_pool->submit([promise, f = std::forward<F>(f), ...args = std::forward<Args>(args)]() mutable {
+        thread_pool->submit([promise, f = std::forward<F>(f), args_tuple = std::make_tuple(std::forward<Args>(args)...)]() mutable {
             try {
-                auto result = std::invoke(f, args...);
+                auto result = std::apply(f, args_tuple);
                 promise->setValue(result);
             } catch (...) {
                 promise->setException(std::current_exception());
@@ -338,7 +338,7 @@ template<typename... Channels>
 class Select {
 private:
     std::tuple<Channels&...> channels;
-    std::function<void(size_t, typename Channels::value_type)> onReceive;
+    std::function<void(size_t, typename std::tuple_element_t<0, std::tuple<Channels...>>::value_type)> onReceive;
     std::function<void(size_t)> onSend;
 
 public:

@@ -392,7 +392,7 @@ namespace ast
 
         std::string toString() const override
         {
-            return "&" + (isMutable ? "mut " : "") + referencedType->toString();
+            return std::string("&") + (isMutable ? "mut " : "") + referencedType->toString();
         }
 
         bool equals(const TypePtr &other) const override
