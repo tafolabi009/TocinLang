@@ -2,38 +2,24 @@
 #define LLVM_SHIM_H
 
 // LLVM shim header to handle different LLVM versions and include paths
+#if __has_include(<llvm/Support/Host.h>)
 #include <llvm/Support/Host.h>
+#define LLVM_HOST_HEADER_AVAILABLE 1
+#else
+#define LLVM_HOST_HEADER_AVAILABLE 0
+#endif
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/FileSystem.h>
 
-namespace llvm
-{
-    namespace sys
-    {
-        // Fallback implementation for getDefaultTargetTriple
-        inline std::string getDefaultTargetTriple()
-        {
-            return tocin::system::getTargetTriple();
-        }
-
-        // Fallback implementation for getProcessTriple
-        inline std::string getProcessTriple()
-        {
-            return getDefaultTargetTriple();
-        }
-
-        // Fallback implementation for getHostCPUName
-        inline std::string getHostCPUName()
-        {
-            return tocin::system::getCPUName();
-        }
-
-        // Fallback implementation for getHostCPUFeatures
-        inline std::string getHostCPUFeatures()
-        {
-            return "";
-        }
-    } // namespace sys
+// If Host.h is not available, provide minimal fallbacks
+#if !LLVM_HOST_HEADER_AVAILABLE
+namespace llvm {
+namespace sys {
+    inline std::string getDefaultTargetTriple() { return "x86_64-unknown-linux-gnu"; }
+    inline std::string getProcessTriple() { return getDefaultTargetTriple(); }
+    inline std::string getHostCPUName() { return "generic"; }
+    inline std::string getHostCPUFeatures() { return ""; }
+} // namespace sys
 } // namespace llvm
 #endif
 

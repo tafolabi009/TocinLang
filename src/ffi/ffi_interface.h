@@ -15,7 +15,7 @@ namespace ffi {
 class FFIValue;
 class PythonFFI;
 class JavaScriptFFI;
-class CppFFI;
+class CppFFI; // defined in cpp_ffi.h
 
 /**
  * @brief FFI value types supported by Tocin
@@ -31,73 +31,7 @@ enum class FFIType {
     FUNCTION
 };
 
-/**
- * @brief FFI value representation
- */
-class FFIValue {
-private:
-    FFIType type_;
-    std::variant<std::monostate, bool, int64_t, double, std::string, 
-                 std::vector<FFIValue>, std::unordered_map<std::string, FFIValue>> value_;
-
-public:
-    FFIValue() : type_(FFIType::NIL) {}
-    FFIValue(bool value) : type_(FFIType::BOOL), value_(value) {}
-    FFIValue(int64_t value) : type_(FFIType::INT), value_(value) {}
-    FFIValue(double value) : type_(FFIType::FLOAT), value_(value) {}
-    FFIValue(const std::string& value) : type_(FFIType::STRING), value_(value) {}
-    FFIValue(const std::vector<FFIValue>& value) : type_(FFIType::ARRAY), value_(value) {}
-    FFIValue(const std::unordered_map<std::string, FFIValue>& value) : type_(FFIType::OBJECT), value_(value) {}
-
-    FFIType getType() const { return type_; }
-
-    bool asBool() const {
-        if (type_ == FFIType::BOOL) return std::get<bool>(value_);
-        if (type_ == FFIType::INT) return std::get<int64_t>(value_) != 0;
-        if (type_ == FFIType::FLOAT) return std::get<double>(value_) != 0.0;
-        return false;
-    }
-
-    int64_t asInt() const {
-        if (type_ == FFIType::INT) return std::get<int64_t>(value_);
-        if (type_ == FFIType::FLOAT) return static_cast<int64_t>(std::get<double>(value_));
-        if (type_ == FFIType::BOOL) return std::get<bool>(value_) ? 1 : 0;
-        return 0;
-    }
-
-    double asFloat() const {
-        if (type_ == FFIType::FLOAT) return std::get<double>(value_);
-        if (type_ == FFIType::INT) return static_cast<double>(std::get<int64_t>(value_));
-        if (type_ == FFIType::BOOL) return std::get<bool>(value_) ? 1.0 : 0.0;
-        return 0.0;
-    }
-
-    std::string asString() const {
-        if (type_ == FFIType::STRING) return std::get<std::string>(value_);
-        if (type_ == FFIType::INT) return std::to_string(std::get<int64_t>(value_));
-        if (type_ == FFIType::FLOAT) return std::to_string(std::get<double>(value_));
-        if (type_ == FFIType::BOOL) return std::get<bool>(value_) ? "true" : "false";
-        return "";
-    }
-
-    std::vector<FFIValue> asArray() const {
-        if (type_ == FFIType::ARRAY) return std::get<std::vector<FFIValue>>(value_);
-        return {};
-    }
-
-    std::unordered_map<std::string, FFIValue> asObject() const {
-        if (type_ == FFIType::OBJECT) return std::get<std::unordered_map<std::string, FFIValue>>(value_);
-        return {};
-    }
-
-    bool isNil() const { return type_ == FFIType::NIL; }
-    bool isBool() const { return type_ == FFIType::BOOL; }
-    bool isInt() const { return type_ == FFIType::INT; }
-    bool isFloat() const { return type_ == FFIType::FLOAT; }
-    bool isString() const { return type_ == FFIType::STRING; }
-    bool isArray() const { return type_ == FFIType::ARRAY; }
-    bool isObject() const { return type_ == FFIType::OBJECT; }
-};
+// Note: FFIValue is defined in ffi_value.h. We forward-declare it here.
 
 /**
  * @brief Base FFI interface
@@ -230,7 +164,7 @@ public:
      * @brief Register a C++ variable
      */
     void registerVariable(const std::string& name, const FFIValue& value) {
-        variables_[name] = value;
+        variables_.insert_or_assign(name, value);
     }
 };
 

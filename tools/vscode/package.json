@@ -1,5 +1,6 @@
 {
     "name": "tocin-language",
+
     "displayName": "Tocin Language Support",
     "description": "Language support for the Tocin programming language",
     "version": "0.1.0",

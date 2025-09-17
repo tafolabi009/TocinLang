@@ -40,8 +40,15 @@ include_directories(${ZLIB_INCLUDE_DIRS})
 # -------------------------
 # LLVM Integration
 # -------------------------
+<<<<<<< Current (Your changes)
 # First try to find LLVM through standard paths
-set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
+set(`LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
+=======
+# First try to find LLVM through standard paths; on Windows allow a fallback hint
+if(WIN32 AND NOT DEFINED LLVM_DIR)
+    set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
+endif()
+>>>>>>> Incoming (Background Agent changes)
 find_package(LLVM REQUIRED CONFIG)
 
 if(LLVM_FOUND)
@@ -58,47 +65,60 @@ if(LLVM_FOUND)
     add_definitions(${LLVM_DEFINITIONS})
     link_directories(${LLVM_LIBRARY_DIRS})
 
-    # Create header tests to check if we can find LLVM headers
-    file(WRITE "${CMAKE_BINARY_DIR}/llvm_host_test.cpp" "#include <llvm/Support/Host.h>\nint main() { return 0; }")
+    # Optional header test for Windows environments only
+    if(WIN32)
+        # Create header tests to check if we can find LLVM headers
+        file(WRITE "${CMAKE_BINARY_DIR}/llvm_host_test.cpp" "#include <llvm/Support/Host.h>\nint main() { return 0; }")
 
-    try_compile(LLVM_HOST_HEADER_TEST
-        ${CMAKE_BINARY_DIR}
-        ${CMAKE_BINARY_DIR}/llvm_host_test.cpp
-        CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${LLVM_INCLUDE_DIRS}")
+        try_compile(LLVM_HOST_HEADER_TEST
+            ${CMAKE_BINARY_DIR}
+            ${CMAKE_BINARY_DIR}/llvm_host_test.cpp
+            CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${LLVM_INCLUDE_DIRS}")
 
-    if(NOT LLVM_HOST_HEADER_TEST)
-        message(WARNING "LLVM Host.h header not found in standard include paths, trying additional locations")
+        if(NOT LLVM_HOST_HEADER_TEST)
+            message(WARNING "LLVM Host.h header not found in standard include paths, trying additional locations")
 
-        # Try finding the header manually in common locations
-        file(GLOB_RECURSE LLVM_HOST_HEADER_PATH
-            "D:/Downloads/msys64/mingw64/include/**/Host.h"
-            "D:/Downloads/msys64/mingw64/lib/llvm/include/**/Host.h")
+            # Try finding the header manually in common locations
+            file(GLOB_RECURSE LLVM_HOST_HEADER_PATH
+                "D:/Downloads/msys64/mingw64/include/**/Host.h"
+                "D:/Downloads/msys64/mingw64/lib/llvm/include/**/Host.h")
 
-        if(LLVM_HOST_HEADER_PATH)
-            message(STATUS "Found LLVM Host.h at ${LLVM_HOST_HEADER_PATH}")
-            get_filename_component(LLVM_HOST_HEADER_DIR "${LLVM_HOST_HEADER_PATH}" DIRECTORY)
-            get_filename_component(LLVM_SUPPORT_DIR "${LLVM_HOST_HEADER_DIR}" DIRECTORY)
-            get_filename_component(LLVM_INCLUDE_DIR "${LLVM_SUPPORT_DIR}" DIRECTORY)
+            if(LLVM_HOST_HEADER_PATH)
+                message(STATUS "Found LLVM Host.h at ${LLVM_HOST_HEADER_PATH}")
+                get_filename_component(LLVM_HOST_HEADER_DIR "${LLVM_HOST_HEADER_PATH}" DIRECTORY)
+                get_filename_component(LLVM_SUPPORT_DIR "${LLVM_HOST_HEADER_DIR}" DIRECTORY)
+                get_filename_component(LLVM_INCLUDE_DIR "${LLVM_SUPPORT_DIR}" DIRECTORY)
 
-            # Add this directory to includes
-            include_directories(${LLVM_INCLUDE_DIR})
-        else()
-            message(STATUS "Could not find LLVM Host.h, trying alternative LLVM includes")
+                # Add this directory to includes
+                include_directories(${LLVM_INCLUDE_DIR})
+            else()
+                message(STATUS "Could not find LLVM Host.h, trying alternative LLVM includes")
 
-            # Add alternative LLVM include directories
-            include_directories(
-                "D:/Downloads/msys64/mingw64/include/llvm"
-                "D:/Downloads/msys64/mingw64/include/llvm-c"
-                "D:/Downloads/msys64/usr/include/llvm"
-                "/mingw64/include"
-                "/mingw64/include/llvm"
-                "/mingw64/include/llvm-c"
-            )
+                # Add alternative LLVM include directories
+                include_directories(
+                    "D:/Downloads/msys64/mingw64/include/llvm"
+                    "D:/Downloads/msys64/mingw64/include/llvm-c"
+                    "D:/Downloads/msys64/usr/include/llvm"
+                    "/mingw64/include"
+                    "/mingw64/include/llvm"
+                    "/mingw64/include/llvm-c"
+                )
+            endif()
         endif()
     endif()
 
-    # Use a single LLVM library instead of individual components
-    set(llvm_libs LLVM-20)
+    # Resolve LLVM libraries: prefer monolithic libLLVM when available
+    if(LLVM_LINK_LLVM_DYLIB)
+        set(LLVM_LIBS LLVM)
+    else()
+        llvm_map_components_to_libnames(LLVM_LIBS
+            Core
+            IRReader
+            Support
+            Passes
+            OrcJIT
+        )
+    endif()
 else()
     message(FATAL_ERROR "LLVM not found. Please ensure LLVM is installed.")
 endif()
@@ -310,21 +330,27 @@ set(FEATURE_HEADERS
 list(APPEND HEADERS ${FEATURE_HEADERS})
 
 # Create executable
-add_executable(tocin ${SOURCES})
+add_executable(tocin ${SOURCES}
+        src/error/error_handler.cpp
+        src/main.cpp)
 
 # Include Project Headers
 target_include_directories(tocin PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${LLVM_INCLUDE_DIRS}
     ${ZLIB_INCLUDE_DIRS}
-    D:/Downloads/msys64/mingw64/include
-    D:/Downloads/msys64/mingw64/include/c++/15.1.0
-    D:/Downloads/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32
-    D:/Downloads/msys64/mingw64/include/c++/15.1.0/backward
-    D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include
-    D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include-fixed
-    D:/Downloads/msys64/mingw64/x86_64-w64-mingw32/include
 )
+if(WIN32)
+    target_include_directories(tocin PRIVATE
+        D:/Downloads/msys64/mingw64/include
+        D:/Downloads/msys64/mingw64/include/c++/15.1.0
+        D:/Downloads/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32
+        D:/Downloads/msys64/mingw64/include/c++/15.1.0/backward
+        D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include
+        D:/Downloads/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.1.0/include-fixed
+        D:/Downloads/msys64/mingw64/x86_64-w64-mingw32/include
+    )
+endif()
 
 # Add optional includes
 if(Python_FOUND)
@@ -347,24 +373,39 @@ endif()
 # Linking Libraries
 # -------------------------
 set(LINK_LIBS
-    -lmingw32
-    -l${llvm_libs} # Use the single LLVM library
     ${ZLIB_LIBRARIES}
     ${FFI_LIBRARIES}
-    -lstdc++
-    -lpthread
-    -lws2_32
-    -ladvapi32
-    -lshell32
-    -luser32
-    -lkernel32
-    -lole32
-    -loleaut32
-    -luuid
-    -lversion
-    -lz
-    ${CMAKE_THREAD_LIBS_INIT}
 )
+
+# Link against LLVM (monolithic libLLVM preferred)
+if(LLVM_LINK_LLVM_DYLIB)
+    list(APPEND LINK_LIBS LLVM)
+else()
+    list(APPEND LINK_LIBS ${LLVM_LIBS})
+endif()
+
+# Threads
+find_package(Threads REQUIRED)
+if(Threads_FOUND)
+    list(APPEND LINK_LIBS Threads::Threads)
+endif()
+
+# Platform-specific system libraries
+if(WIN32)
+    list(APPEND LINK_LIBS
+        mingw32
+        ws2_32
+        advapi32
+        shell32
+        user32
+        kernel32
+        ole32
+        oleaut32
+        uuid
+        version
+        z
+    )
+endif()
 
 # Add optional libraries
 if(Python_FOUND)
@@ -451,8 +492,8 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_MODIFY_PATH ON)
     set(CPACK_NSIS_MENU_LINKS
-        "https://tocin.dev" "Website"
-        "https://github.com/tocin/tocin" "GitHub"
+        "https://tocin.vercel.app" "Website"
+        "https://github.com/tafolabi009/tocin_compiler" "GitHub"
     )
     set(CPACK_PACKAGE_INSTALL_DIRECTORY "Tocin Compiler")
     set(CPACK_PACKAGE_VERSION "1.0.0")
@@ -482,7 +523,7 @@ elseif(APPLE)
     set(CPACK_PACKAGE_VERSION_PATCH "0")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Tocin Programming Language Compiler")
     set(CPACK_PACKAGE_VENDOR "Tocin Team")
-    set(CPACK_PACKAGE_CONTACT "contact@tocin.dev")
+    set(CPACK_PACKAGE_CONTACT "afolabi@genovotech.com")
     include(CPack)
 endif()
 
@@ -491,77 +532,79 @@ endif()
 # -------------------------
 install(TARGETS tocin DESTINATION bin COMPONENT Applications)
 
-# Base system DLLs
-install(FILES
-    "C:/msys64/mingw64/bin/libwinpthread-1.dll"
-    "C:/msys64/mingw64/bin/libstdc++-6.dll"
-    "C:/msys64/mingw64/bin/libgcc_s_seh-1.dll"
-    DESTINATION bin COMPONENT Applications
-)
-
-# Python DLLs (if Python is found)
-if(Python_FOUND)
-    if(EXISTS ${Python_EXECUTABLE})
-        get_filename_component(PYTHON_DIR ${Python_EXECUTABLE} DIRECTORY)
-        file(GLOB PYTHON_DLLS "${PYTHON_DIR}/python*.dll")
-        install(FILES ${PYTHON_DLLS} DESTINATION bin COMPONENT Applications)
-    endif()
-endif()
-
-# V8 DLLs (if V8 is found)
-if(V8_FOUND)
+if(WIN32)
+    # Base system DLLs
     install(FILES
-        "C:/msys64/mingw64/bin/libv8.dll"
+        "C:/msys64/mingw64/bin/libwinpthread-1.dll"
+        "C:/msys64/mingw64/bin/libstdc++-6.dll"
+        "C:/msys64/mingw64/bin/libgcc_s_seh-1.dll"
         DESTINATION bin COMPONENT Applications
     )
 
-    # Try to find additional V8 DLLs
-    if(EXISTS "C:/msys64/mingw64/bin/libv8_libbase.dll")
-        install(FILES "C:/msys64/mingw64/bin/libv8_libbase.dll" DESTINATION bin COMPONENT Applications)
+    # Python DLLs (if Python is found)
+    if(Python_FOUND)
+        if(EXISTS ${Python_EXECUTABLE})
+            get_filename_component(PYTHON_DIR ${Python_EXECUTABLE} DIRECTORY)
+            file(GLOB PYTHON_DLLS "${PYTHON_DIR}/python*.dll")
+            install(FILES ${PYTHON_DLLS} DESTINATION bin COMPONENT Applications)
+        endif()
     endif()
 
-    if(EXISTS "C:/msys64/mingw64/bin/libv8_libplatform.dll")
-        install(FILES "C:/msys64/mingw64/bin/libv8_libplatform.dll" DESTINATION bin COMPONENT Applications)
+    # V8 DLLs (if V8 is found)
+    if(V8_FOUND)
+        install(FILES
+            "C:/msys64/mingw64/bin/libv8.dll"
+            DESTINATION bin COMPONENT Applications
+        )
+
+        # Try to find additional V8 DLLs
+        if(EXISTS "C:/msys64/mingw64/bin/libv8_libbase.dll")
+            install(FILES "C:/msys64/mingw64/bin/libv8_libbase.dll" DESTINATION bin COMPONENT Applications)
+        endif()
+
+        if(EXISTS "C:/msys64/mingw64/bin/libv8_libplatform.dll")
+            install(FILES "C:/msys64/mingw64/bin/libv8_libplatform.dll" DESTINATION bin COMPONENT Applications)
+        endif()
     endif()
-endif()
 
-# ICU DLLs (for V8)
-if(EXISTS "C:/msys64/mingw64/bin/libicudt*.dll")
-    file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicudt*.dll")
-    install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
-endif()
-
-if(EXISTS "C:/msys64/mingw64/bin/libicuin*.dll")
-    file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuin*.dll")
-    install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
-endif()
-
-if(EXISTS "C:/msys64/mingw64/bin/libicuuc*.dll")
-    file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuuc*.dll")
-    install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
-endif()
-
-# zlib DLLs
-install(FILES "C:/msys64/mingw64/bin/libzlib.dll" DESTINATION bin COMPONENT Applications)
-
-# zstd DLLs (if zstd is found)
-if(zstd_FOUND)
-    if(EXISTS "C:/msys64/mingw64/bin/libzstd.dll")
-        install(FILES "C:/msys64/mingw64/bin/libzstd.dll" DESTINATION bin COMPONENT Applications)
+    # ICU DLLs (for V8)
+    if(EXISTS "C:/msys64/mingw64/bin/libicudt*.dll")
+        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicudt*.dll")
+        install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
-endif()
 
-# LibXml2 DLLs (if LibXml2 is found)
-if(LibXml2_FOUND)
-    if(EXISTS "C:/msys64/mingw64/bin/libxml2-2.dll")
-        install(FILES "C:/msys64/mingw64/bin/libxml2-2.dll" DESTINATION bin COMPONENT Applications)
+    if(EXISTS "C:/msys64/mingw64/bin/libicuin*.dll")
+        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuin*.dll")
+        install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
-endif()
 
-# FFI DLLs
-if(EXISTS "C:/msys64/mingw64/bin/libffi-*.dll")
-    file(GLOB FFI_DLLS "C:/msys64/mingw64/bin/libffi-*.dll")
-    install(FILES ${FFI_DLLS} DESTINATION bin COMPONENT Applications)
+    if(EXISTS "C:/msys64/mingw64/bin/libicuuc*.dll")
+        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuuc*.dll")
+        install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
+    endif()
+
+    # zlib DLLs
+    install(FILES "C:/msys64/mingw64/bin/libzlib.dll" DESTINATION bin COMPONENT Applications)
+
+    # zstd DLLs (if zstd is found)
+    if(zstd_FOUND)
+        if(EXISTS "C:/msys64/mingw64/bin/libzstd.dll")
+            install(FILES "C:/msys64/mingw64/bin/libzstd.dll" DESTINATION bin COMPONENT Applications)
+        endif()
+    endif()
+
+    # LibXml2 DLLs (if LibXml2 is found)
+    if(LibXml2_FOUND)
+        if(EXISTS "C:/msys64/mingw64/bin/libxml2-2.dll")
+            install(FILES "C:/msys64/mingw64/bin/libxml2-2.dll" DESTINATION bin COMPONENT Applications)
+        endif()
+    endif()
+
+    # FFI DLLs
+    if(EXISTS "C:/msys64/mingw64/bin/libffi-*.dll")
+        file(GLOB FFI_DLLS "C:/msys64/mingw64/bin/libffi-*.dll")
+        install(FILES ${FFI_DLLS} DESTINATION bin COMPONENT Applications)
+    endif()
 endif()
 
 # Additional documentation and examples

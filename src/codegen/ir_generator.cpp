@@ -2496,63 +2496,8 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
         return;
     }
 
-    // Handle indexed assignment (arr[index] = value)
-    if (auto getExpr = dynamic_cast<ast::GetExpr *>(expr->target.get()))
-    {
-        // Evaluate the array/object
-        indexExpr->object->accept(*this);
-        if (!lastValue)
-        {
-            return;
-        }
-        llvm::Value *object = lastValue;
-
-        // Evaluate the index
-        indexExpr->index->accept(*this);
-        if (!lastValue)
-        {
-            return;
-        }
-        llvm::Value *index = lastValue;
-
-        // Generate array element assignment
-        if (object->getType()->isPointerTy() && 
-            object->getType()->getPointerElementType()->isArrayTy())
-        {
-            // Array type - get element pointer
-            std::vector<llvm::Value*> indices = {
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
-                index
-            };
-            llvm::Value *elementPtr = builder.CreateGEP(
-                object->getType()->getPointerElementType(), object, indices, "array_elem_ptr");
-            
-            // Store the value
-            builder.CreateStore(rhs, elementPtr);
-            lastValue = rhs;
-            return;
-        }
-        else if (object->getType()->isPointerTy() && 
-                 object->getType()->getPointerElementType()->isPointerTy())
-        {
-            // Pointer to pointer (dynamic array) - get element pointer
-            llvm::Value *elementPtr = builder.CreateGEP(
-                object->getType()->getPointerElementType(), object, index, "ptr_elem_ptr");
-            
-            // Store the value
-            builder.CreateStore(rhs, elementPtr);
-            lastValue = rhs;
-            return;
-        }
-        else
-        {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
-                                     "Cannot index non-array type",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            lastValue = nullptr;
-            return;
-        }
-    }
+    // Note: Indexed assignments are not supported in current AST (no IndexExpr)
+    // If needed, implement when parser produces index nodes.
 
     // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
     if (auto binaryExpr = dynamic_cast<ast::BinaryExpr *>(expr->target.get()))
@@ -2810,8 +2755,15 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
             lastValue = builder.CreateFAdd(left, right, "fadd");
         } else if (left->getType()->isPointerTy() && right->getType()->isIntegerTy()) {
-            // Pointer arithmetic
-            lastValue = builder.CreateGEP(left->getType()->getPointerElementType(), left, right, "ptr_add");
+            // Pointer arithmetic - use element type if available, else i8
+            llvm::Type* elemTy = nullptr;
+            if (auto* ptrTy = llvm::dyn_cast<llvm::PointerType>(left->getType())) {
+                elemTy = ptrTy->getArrayElementType();
+            }
+            if (elemTy == nullptr) {
+                elemTy = llvm::Type::getInt8Ty(context);
+            }
+            lastValue = builder.CreateGEP(elemTy, left, right, "ptr_add");
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot add incompatible types",
@@ -2862,7 +2814,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         }
         break;
 
-    case lexer::TokenType::MODULO:
+    case lexer::TokenType::PERCENT:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
             lastValue = builder.CreateSRem(left, right, "mod");
         } else {
@@ -3444,5 +3396,8 @@ llvm::Value *IRGenerator::getVariable(const std::string &name) {
     // If not found, return nullptr
     return nullptr;
 }
+<<<<<<< Current (Your changes)
 
 } // namespace codegen
+=======
+>>>>>>> Incoming (Background Agent changes)
