@@ -126,6 +126,9 @@ namespace type_checker
         void pushScope();
         void popScope();
         bool isAssignable(ast::TypePtr from, ast::TypePtr to);
+        bool isMovableType(ast::TypePtr type);
+        ast::TypePtr getChannelElementType(ast::TypePtr channelType);
+        bool typesCompatible(ast::TypePtr type1, ast::TypePtr type2);
         ast::TypePtr resolveType(ast::TypePtr type);
         void registerBuiltins();
 

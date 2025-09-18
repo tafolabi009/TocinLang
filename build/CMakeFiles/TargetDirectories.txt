@@ -6,7 +6,6 @@ D:/Downloads/tocin-compiler/build/CMakeFiles/ARMTargetParserTableGen.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/AArch64TargetParserTableGen.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/RISCVTargetParserTableGen.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/tocin.dir
-D:/Downloads/tocin-compiler/build/CMakeFiles/ir_generator_direct.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/uninstall.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/package.dir
 D:/Downloads/tocin-compiler/build/CMakeFiles/package_source.dir

@@ -44,8 +44,8 @@ public:
     MoveChecker& getMoveSemanticsChecker() { return *moveSemanticsChecker_; }
     const MoveChecker& getMoveSemanticsChecker() const { return *moveSemanticsChecker_; }
 
-    type::TraitSolver& getTraitChecker() { return *traitChecker_; }
-    const type::TraitSolver& getTraitChecker() const { return *traitChecker_; }
+    type_checker::TraitChecker& getTraitChecker() { return *traitChecker_; }
+    const type_checker::TraitChecker& getTraitChecker() const { return *traitChecker_; }
 
     // Feature integration methods
     bool checkExpression(ast::ExprPtr expr, ast::TypePtr expectedType = nullptr);
@@ -155,7 +155,7 @@ private:
     std::unique_ptr<NullSafetyChecker> nullSafetyChecker_;
     std::unique_ptr<ExtensionManager> extensionFunctionChecker_;
     std::unique_ptr<MoveChecker> moveSemanticsChecker_;
-    std::unique_ptr<type::TraitSolver> traitChecker_;
+    std::unique_ptr<type_checker::TraitChecker> traitChecker_;
 
     // Feature flags
     std::unordered_map<std::string, bool> featureFlags_;

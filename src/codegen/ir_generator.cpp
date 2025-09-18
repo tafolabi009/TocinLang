@@ -3395,9 +3395,4 @@ llvm::Value *IRGenerator::getVariable(const std::string &name) {
     
     // If not found, return nullptr
     return nullptr;
-}
-<<<<<<< Current (Your changes)
-
 } // namespace codegen
-=======
->>>>>>> Incoming (Background Agent changes)

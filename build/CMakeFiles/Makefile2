@@ -85,7 +85,6 @@ clean: CMakeFiles/ARMTargetParserTableGen.dir/clean
 clean: CMakeFiles/AArch64TargetParserTableGen.dir/clean
 clean: CMakeFiles/RISCVTargetParserTableGen.dir/clean
 clean: CMakeFiles/tocin.dir/clean
-clean: CMakeFiles/ir_generator_direct.dir/clean
 clean: CMakeFiles/uninstall.dir/clean
 .PHONY : clean
 
@@ -317,15 +316,15 @@ CMakeFiles/RISCVTargetParserTableGen.dir/clean:
 # Target rules for target CMakeFiles/tocin.dir
 
 # All Build rule for target.
-CMakeFiles/tocin.dir/all: CMakeFiles/ir_generator_direct.dir/all
+CMakeFiles/tocin.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26 "Built target tocin"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24 "Built target tocin"
 .PHONY : CMakeFiles/tocin.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/tocin.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start D:\Downloads\tocin-compiler\build\CMakeFiles 26
+	$(CMAKE_COMMAND) -E cmake_progress_start D:\Downloads\tocin-compiler\build\CMakeFiles 24
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 CMakeFiles/tocin.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start D:\Downloads\tocin-compiler\build\CMakeFiles 0
 .PHONY : CMakeFiles/tocin.dir/rule
@@ -335,47 +334,15 @@ tocin: CMakeFiles/tocin.dir/rule
 .PHONY : tocin
 
 # codegen rule for target.
-CMakeFiles/tocin.dir/codegen: CMakeFiles/ir_generator_direct.dir/all
+CMakeFiles/tocin.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26 "Finished codegen for target tocin"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24 "Finished codegen for target tocin"
 .PHONY : CMakeFiles/tocin.dir/codegen
 
 # clean rule for target.
 CMakeFiles/tocin.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/clean
 .PHONY : CMakeFiles/tocin.dir/clean
-
-#=============================================================================
-# Target rules for target CMakeFiles/ir_generator_direct.dir
-
-# All Build rule for target.
-CMakeFiles/ir_generator_direct.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\ir_generator_direct.dir\build.make CMakeFiles/ir_generator_direct.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\ir_generator_direct.dir\build.make CMakeFiles/ir_generator_direct.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=1 "Built target ir_generator_direct"
-.PHONY : CMakeFiles/ir_generator_direct.dir/all
-
-# Build rule for subdir invocation for target.
-CMakeFiles/ir_generator_direct.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start D:\Downloads\tocin-compiler\build\CMakeFiles 1
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 CMakeFiles/ir_generator_direct.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start D:\Downloads\tocin-compiler\build\CMakeFiles 0
-.PHONY : CMakeFiles/ir_generator_direct.dir/rule
-
-# Convenience name for target.
-ir_generator_direct: CMakeFiles/ir_generator_direct.dir/rule
-.PHONY : ir_generator_direct
-
-# codegen rule for target.
-CMakeFiles/ir_generator_direct.dir/codegen:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\ir_generator_direct.dir\build.make CMakeFiles/ir_generator_direct.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=D:\Downloads\tocin-compiler\build\CMakeFiles --progress-num=1 "Finished codegen for target ir_generator_direct"
-.PHONY : CMakeFiles/ir_generator_direct.dir/codegen
-
-# clean rule for target.
-CMakeFiles/ir_generator_direct.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\ir_generator_direct.dir\build.make CMakeFiles/ir_generator_direct.dir/clean
-.PHONY : CMakeFiles/ir_generator_direct.dir/clean
 
 #=============================================================================
 # Target rules for target CMakeFiles/uninstall.dir

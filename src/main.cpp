@@ -121,13 +121,15 @@ public:
     bool compile(const std::string &source, const std::string &filename,
                  const CompilationOptions &options = CompilationOptions())
     {
+        std::string processedSource = source;
+        
         // Process macros if enabled
         if (options.enableMacros) {
-            source = processMacros(source, filename);
+            processedSource = processMacros(source, filename);
         }
 
         // Lexical analysis
-        lexer::Lexer lexer(source, filename, 4);
+        lexer::Lexer lexer(processedSource, filename, 4);
         std::vector<lexer::Token> tokens = lexer.tokenize();
 
         if (errorHandler.hasFatalErrors())

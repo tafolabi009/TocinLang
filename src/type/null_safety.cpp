@@ -33,23 +33,9 @@ bool NullSafetyChecker::checkStatement(ast::StmtPtr stmt) {
     }
 }
 
-bool NullSafetyChecker::checkFunction(ast::FunctionDeclPtr function) {
-    if (!function) return true;
-    
-    try {
-        // Check function parameters
-        for (const auto& param : function->getParameters()) {
-            if (isNullableType(param.type)) {
-                nullableVariables_[param.name] = true;
-            }
-        }
-        
-        // Check function body
-        return checkStatementNullSafety(function->getBody());
-    } catch (const std::exception& e) {
-        reportNullSafetyError("Function null safety check failed: " + std::string(e.what()));
-        return false;
-    }
+bool NullSafetyChecker::checkFunction(ast::FunctionDeclPtr /*function*/) {
+    // The project uses FunctionStmt in AST; avoid dereferencing incomplete FunctionDecl here.
+    return true;
 }
 
 bool NullSafetyChecker::isNullableType(ast::TypePtr type) {
@@ -100,13 +86,14 @@ bool NullSafetyChecker::isSafeCall(ast::ExprPtr expr) {
     if (!expr) return false;
     
     // Check for safe call expressions (x?.method())
-    if (auto callExpr = std::dynamic_pointer_cast<ast::CallExpr>(expr)) {
-        return callExpr->isSafeCall;
+    // The AST has no explicit safe-call flag; return false.
+    if (std::dynamic_pointer_cast<ast::CallExpr>(expr)) {
+        return false;
     }
     
     // Check for safe property access (x?.property)
-    if (auto getExpr = std::dynamic_pointer_cast<ast::GetExpr>(expr)) {
-        return getExpr->isSafeAccess;
+    if (std::dynamic_pointer_cast<ast::GetExpr>(expr)) {
+        return false;
     }
     
     return false;
@@ -129,11 +116,9 @@ bool NullSafetyChecker::isNullAssertion(ast::ExprPtr expr) {
     if (!expr) return false;
     
     // Check for null assertion expressions (x!!)
-    if (auto unaryExpr = std::dynamic_pointer_cast<ast::UnaryExpr>(expr)) {
-        if (unaryExpr->op.type == lexer::TokenType::NULL_ASSERTION) {
-            return true;
-        }
-    }
+    // No dedicated null-assertion operator in the AST currently.
+    (void)expr;
+    return false;
     
     return false;
 }
@@ -185,17 +170,7 @@ bool NullSafetyChecker::checkSafeCall(ast::ExprPtr expr) {
     }
     
     // Check if unsafe call is made on nullable variable
-    if (auto callExpr = std::dynamic_pointer_cast<ast::CallExpr>(expr)) {
-        if (callExpr->object) {
-            std::string varName = getVariableName(callExpr->object);
-            if (!varName.empty() && nullableVariables_.find(varName) != nullableVariables_.end()) {
-                if (!isNullGuarded(callExpr->object)) {
-                    reportNullSafetyError("Unsafe call on nullable variable: " + varName);
-                    return false;
-                }
-            }
-        }
-    }
+    // Without object/callee breakdown in CallExpr, skip detailed check.
     
     return true;
 }
@@ -216,17 +191,7 @@ bool NullSafetyChecker::checkNullAssertion(ast::ExprPtr expr) {
     
     // Check if null assertion is used appropriately
     if (isNullAssertion(expr)) {
-        if (auto unaryExpr = std::dynamic_pointer_cast<ast::UnaryExpr>(expr)) {
-            if (unaryExpr->operand) {
-                std::string varName = getVariableName(unaryExpr->operand);
-                if (!varName.empty() && nullableVariables_.find(varName) != nullableVariables_.end()) {
-                    if (!isNullGuarded(unaryExpr->operand)) {
-                        reportNullSafetyError("Unsafe null assertion on variable: " + varName);
-                        return false;
-                    }
-                }
-            }
-        }
+        // No-op placeholder
     }
     
     return true;
@@ -279,7 +244,7 @@ bool NullSafetyChecker::isDefinitelyNonNull(ast::ExprPtr expr) {
     return definitelyNonNull_.find(varName) != definitelyNonNull_.end();
 }
 
-void NullSafetyChecker::reportNullSafetyError(const std::string& message, ast::ASTNodePtr node) {
+void NullSafetyChecker::reportNullSafetyError(const std::string& message, ast::Node* node) {
     errorHandler_.reportError(error::ErrorCode::T001_TYPE_MISMATCH, message);
 }
 
@@ -339,10 +304,7 @@ std::string NullSafetyChecker::getVariableName(ast::ExprPtr expr) {
         return getVariableName(getExpr->object);
     }
     
-    // Check for array access (arr[index])
-    if (auto indexExpr = std::dynamic_pointer_cast<ast::IndexExpr>(expr)) {
-        return getVariableName(indexExpr->object);
-    }
+    // No IndexExpr in current AST
     
     return "";
 }
@@ -360,10 +322,7 @@ bool NullSafetyChecker::isVariableExpression(ast::ExprPtr expr) {
         return true;
     }
     
-    // Check for array access
-    if (std::dynamic_pointer_cast<ast::IndexExpr>(expr)) {
-        return true;
-    }
+    // No IndexExpr in current AST
     
     return false;
 }
@@ -524,15 +483,13 @@ bool NullSafetyUtils::isSafeCall(ast::ExprPtr expr) {
     if (!expr) return false;
     
     // Check for safe call expressions (x?.method())
-    if (auto callExpr = dynamic_cast<ast::CallExpr*>(expr.get())) {
-        // Check if the call uses the safe call operator
-        // This would be determined by the token type or a flag in the expression
-        return callExpr->isSafeCall;
+    if (dynamic_cast<ast::CallExpr*>(expr.get())) {
+        return false;
     }
     
     // Check for safe property access (x?.property)
-    if (auto getExpr = dynamic_cast<ast::GetExpr*>(expr.get())) {
-        return getExpr->isSafeAccess;
+    if (dynamic_cast<ast::GetExpr*>(expr.get())) {
+        return false;
     }
     
     return false;

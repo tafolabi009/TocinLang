@@ -195,6 +195,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/AArch64TargetParserTableGen.dir/DependInfo.cmake"
   "CMakeFiles/RISCVTargetParserTableGen.dir/DependInfo.cmake"
   "CMakeFiles/tocin.dir/DependInfo.cmake"
-  "CMakeFiles/ir_generator_direct.dir/DependInfo.cmake"
   "CMakeFiles/uninstall.dir/DependInfo.cmake"
   )

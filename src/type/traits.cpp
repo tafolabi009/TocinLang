@@ -210,7 +210,7 @@ ast::TypePtr TraitChecker::createTraitObjectType(const std::string& traitName) {
         lexer::Token(lexer::TokenType::IDENTIFIER, "TraitObject<" + traitName + ">", "", 0, 0));
 }
 
-void TraitChecker::reportTraitError(const std::string& message, ast::ASTNodePtr node) {
+void TraitChecker::reportTraitError(const std::string& message, ast::Node* node) {
     errorHandler_.reportError(error::ErrorCode::T017_INVALID_TRAIT_IMPLEMENTATION, message);
 }
 

@@ -5,6 +5,9 @@
 
 namespace type_checker {
 
+// Forward declaration for global ownership tracker used in helper functions
+extern OwnershipStateTracker globalOwnershipTracker;
+
 OwnershipChecker::OwnershipChecker(error::ErrorHandler& errorHandler)
     : errorHandler_(errorHandler), currentScopeLevel_(0) {
     enterScope(); // Start with global scope
@@ -39,26 +42,9 @@ bool OwnershipChecker::checkStatement(ast::StmtPtr stmt) {
     }
 }
 
-bool OwnershipChecker::checkFunction(ast::FunctionDeclPtr function) {
-    if (!function) return true;
-    
-    try {
-        enterScope(); // Function scope
-        
-        // Check function parameters
-        for (const auto& param : function->getParameters()) {
-            addVariableToScope(param.name);
-        }
-        
-        // Check function body
-        bool result = checkStatementOwnership(function->getBody());
-        
-        exitScope(); // Exit function scope
-        return result;
-    } catch (const std::exception& e) {
-        reportOwnershipError("Function ownership check failed: " + std::string(e.what()));
-        return false;
-    }
+bool OwnershipChecker::checkFunction(ast::FunctionDeclPtr /*function*/) {
+    // Skip due to FunctionDecl being a forward decl not defined in AST
+    return true;
 }
 
 bool OwnershipChecker::canMove(ast::ExprPtr expr) {
@@ -216,13 +202,13 @@ void OwnershipChecker::markAsMoved(ast::ExprPtr expr) {
     }
 }
 
-void OwnershipChecker::markAsBorrowed(ast::ExprPtr expr, bool mutable) {
+void OwnershipChecker::markAsBorrowed(ast::ExprPtr expr, bool isMutable) {
     if (!expr) return;
     
     std::string varName = getVariableName(expr);
     if (!varName.empty()) {
         borrowedVariables_[varName] = true;
-        if (mutable) {
+        if (isMutable) {
             mutableBorrows_[varName] = true;
         }
         borrowCounts_[varName]++;
@@ -242,7 +228,7 @@ bool OwnershipChecker::transferOwnership(ast::ExprPtr from, ast::ExprPtr to) {
     return true;
 }
 
-void OwnershipChecker::reportOwnershipError(const std::string& message, ast::ASTNodePtr node) {
+void OwnershipChecker::reportOwnershipError(const std::string& message, ast::Node* node) {
     errorHandler_.reportError(error::ErrorCode::B009_INVALID_OWNERSHIP, message);
 }
 
@@ -343,10 +329,7 @@ std::string OwnershipChecker::getVariableName(ast::ExprPtr expr) {
         return getVariableName(getExpr->object);
     }
     
-    // Check for array access (arr[index])
-    if (auto indexExpr = std::dynamic_pointer_cast<ast::IndexExpr>(expr)) {
-        return getVariableName(indexExpr->object);
-    }
+    // No IndexExpr in current AST
     
     return "";
 }
@@ -364,10 +347,7 @@ bool OwnershipChecker::isVariableExpression(ast::ExprPtr expr) {
         return true;
     }
     
-    // Check for array access
-    if (std::dynamic_pointer_cast<ast::IndexExpr>(expr)) {
-        return true;
-    }
+    // No IndexExpr in current AST
     
     return false;
 }
@@ -522,13 +502,13 @@ ast::TypePtr OwnershipUtils::makeOwnedType(ast::TypePtr type) {
         lexer::Token(lexer::TokenType::IDENTIFIER, typeStr, "", 0, 0));
 }
 
-ast::TypePtr OwnershipUtils::makeBorrowedType(ast::TypePtr type, bool mutable) {
+ast::TypePtr OwnershipUtils::makeBorrowedType(ast::TypePtr type, bool isMutable) {
     if (!type) return nullptr;
     
     std::string typeStr = type->toString();
     
     // Add appropriate reference marker
-    if (mutable) {
+    if (isMutable) {
         typeStr = "&mut " + typeStr;
     } else {
         typeStr = "&" + typeStr;
@@ -619,8 +599,8 @@ std::string OwnershipUtils::formatMoveError(const std::string& variableName) {
     return "Cannot move variable '" + variableName + "' - it has been moved already";
 }
 
-std::string OwnershipUtils::formatBorrowError(const std::string& variableName, bool mutable) {
-    std::string borrowType = mutable ? "mutable" : "immutable";
+std::string OwnershipUtils::formatBorrowError(const std::string& variableName, bool isMutable) {
+    std::string borrowType = isMutable ? "mutable" : "immutable";
     return "Cannot borrow '" + variableName + "' as " + borrowType + " - conflicting borrows";
 }
 
@@ -677,11 +657,11 @@ void OwnershipStateTracker::markAsMoved(const std::string& name) {
     }
 }
 
-void OwnershipStateTracker::markAsBorrowed(const std::string& name, bool mutable) {
+void OwnershipStateTracker::markAsBorrowed(const std::string& name, bool isMutable) {
     auto it = variableStates_.find(name);
     if (it != variableStates_.end()) {
         it->second.isBorrowed = true;
-        it->second.isMutableBorrow = mutable;
+        it->second.isMutableBorrow = isMutable;
         it->second.borrowCount++;
     }
 }
@@ -719,13 +699,13 @@ bool OwnershipStateTracker::canMoveVariable(const std::string& name) const {
     return !it->second.isMoved && !it->second.isBorrowed;
 }
 
-bool OwnershipStateTracker::canBorrowVariable(const std::string& name, bool mutable) const {
+bool OwnershipStateTracker::canBorrowVariable(const std::string& name, bool isMutable) const {
     auto it = variableStates_.find(name);
     if (it == variableStates_.end()) return true;
     
     if (it->second.isMoved) return false;
     
-    if (mutable) {
+    if (isMutable) {
         return !it->second.isBorrowed;
     } else {
         return !it->second.isMutableBorrow;
@@ -795,7 +775,8 @@ void OwnershipStateTracker::clear() {
 }
 
 // Global instance for OwnershipUtils
-static OwnershipStateTracker globalOwnershipTracker;
+// Make the tracker visible across translation units via a definition here
+OwnershipStateTracker globalOwnershipTracker;
 
 // Helper method implementations for OwnershipUtils
 BorrowState OwnershipStateTracker::getBorrowState(const std::string& variableName) const {

@@ -32,6 +32,7 @@ public:
     bool isNullCheck(ast::ExprPtr expr);
     bool isSafeCall(ast::ExprPtr expr);
     bool isElvisOperator(ast::ExprPtr expr);
+    bool isNullAssertion(ast::ExprPtr expr);
 
     // Type operations
     ast::TypePtr makeNullable(ast::TypePtr type);

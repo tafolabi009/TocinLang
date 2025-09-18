@@ -1,2 +1,0 @@
-C:\msys64\mingw64\bin\ar.exe qc libtocin_lib.a CMakeFiles/tocin_lib.dir/src/Interpreter.cpp.obj CMakeFiles/tocin_lib.dir/src/Builtins.cpp.obj CMakeFiles/tocin_lib.dir/src/Runtime.cpp.obj CMakeFiles/tocin_lib.dir/src/Environment.cpp.obj CMakeFiles/tocin_lib.dir/src/Repl.cpp.obj
-C:\msys64\mingw64\bin\ranlib.exe libtocin_lib.a

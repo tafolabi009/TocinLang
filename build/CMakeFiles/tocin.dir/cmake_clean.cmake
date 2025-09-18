@@ -39,8 +39,6 @@ file(REMOVE_RECURSE
   "CMakeFiles/tocin.dir/src/type/feature_integration.cpp.obj.d"
   "CMakeFiles/tocin.dir/src/type/null_safety.cpp.obj"
   "CMakeFiles/tocin.dir/src/type/null_safety.cpp.obj.d"
-  "CMakeFiles/tocin.dir/src/type/option_result_types.cpp.obj"
-  "CMakeFiles/tocin.dir/src/type/option_result_types.cpp.obj.d"
   "CMakeFiles/tocin.dir/src/type/ownership.cpp.obj"
   "CMakeFiles/tocin.dir/src/type/ownership.cpp.obj.d"
   "CMakeFiles/tocin.dir/src/type/traits.cpp.obj"

@@ -5,9 +5,27 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
+<<<<<<< Current (Your changes)
+=======
+#include <unordered_set>
+>>>>>>> Incoming (Background Agent changes)
 #include <functional>
 #include <type_traits>
 #include <variant>
+<<<<<<< Current (Your changes)
+#include <mutex>
+#include <algorithm>
+=======
+#include <unordered_set>
+#include <algorithm>
+#include <mutex>
+
+#include "../ast/ast.h"
+#include "../ast/types.h"
+#include "../lexer/token.h"
+#include "../error/error_handler.h"
+>>>>>>> Incoming (Background Agent changes)
 
 namespace type {
 
@@ -524,5 +542,169 @@ std::shared_ptr<TraitBound> createTraitBound(const std::string& type_name);
 std::shared_ptr<TypeConstraint> createTypeConstraint(const std::string& trait_name);
 
 } // namespace type
+
+// Declarations for the trait system implemented in traits.cpp
+namespace type_checker {
+
+// Lightweight trait model used by the checker/registry in traits.cpp
+struct TraitDefinition {
+    struct Method {
+        std::string name;
+        bool hasDefaultImpl = false;
+    };
+
+    struct AssociatedTypeDef {
+        std::string name;
+    };
+
+    std::string name;
+    bool isObjectSafe = true;
+    std::vector<std::string> typeParameters;
+    std::vector<std::string> superTraits;
+    std::vector<Method> methods;
+    std::vector<AssociatedTypeDef> associatedTypes;
+};
+
+struct TraitImplementation {
+    std::string traitName;
+    ast::TypePtr implementingType;
+    struct ImplMethod { std::string name; };
+    std::vector<ImplMethod> methodImpls;
+    struct AssocTypeImpl { std::string name; };
+    std::vector<AssocTypeImpl> associatedTypeImpls;
+};
+
+class TraitChecker {
+public:
+    explicit TraitChecker(error::ErrorHandler& errorHandler);
+    ~TraitChecker();
+
+    bool registerTrait(ast::TraitDeclPtr traitDecl);
+    bool isTraitRegistered(const std::string& traitName) const;
+    ast::TraitDeclPtr getTrait(const std::string& traitName) const;
+
+    bool checkTraitImplementation(ast::TypePtr type, const std::string& traitName);
+    bool checkTraitImplementation(ast::ClassDeclPtr classDecl, const std::string& traitName);
+
+    std::vector<std::string> getMissingMethods(ast::TypePtr type, const std::string& traitName);
+    bool hasRequiredMethod(ast::TypePtr type, const std::string& methodName, ast::TypePtr methodType);
+
+    bool checkTraitBounds(ast::TypePtr type, const std::vector<std::string>& requiredTraits);
+    bool satisfiesTraitBound(ast::TypePtr type, const std::string& traitName);
+    bool checkTraitInheritance(const std::string& derivedTrait, const std::string& baseTrait);
+    std::vector<std::string> getTraitHierarchy(const std::string& traitName);
+
+    bool checkAssociatedTypes(ast::TypePtr type, const std::string& traitName);
+    ast::TypePtr resolveAssociatedType(ast::TypePtr type, const std::string& traitName,
+                                       const std::string& associatedTypeName);
+
+    bool hasDefaultImplementation(const std::string& traitName, const std::string& methodName);
+    ast::FunctionDeclPtr getDefaultImplementation(const std::string& traitName, const std::string& methodName);
+
+    bool canCreateTraitObject(const std::string& traitName);
+    ast::TypePtr createTraitObjectType(const std::string& traitName);
+
+private:
+    void reportTraitError(const std::string& message, ast::ASTNodePtr node = nullptr);
+    std::unordered_map<std::string, ast::TypePtr> getTypeMethods(const std::string& typeKey) const;
+    bool checkMethodSignatureCompatibility(ast::TypePtr method1, ast::TypePtr method2) const;
+    std::vector<std::string> getImplementedTraits(ast::TypePtr type) const;
+
+    error::ErrorHandler& errorHandler_;
+    std::unordered_map<std::string, ast::TraitDeclPtr> traits_;
+    std::unordered_map<std::string, std::unordered_map<std::string, ast::TypePtr>> typeMethods_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> implementedTraits_;
+};
+
+class TraitRegistry {
+public:
+    static TraitRegistry& getInstance();
+
+    bool registerTraitDefinition(const TraitDefinition& traitDef);
+    bool hasTraitDefinition(const std::string& traitName) const;
+    const TraitDefinition* getTraitDefinition(const std::string& traitName) const;
+    std::vector<std::string> getAllTraitNames() const;
+
+    bool registerTraitImplementation(const TraitImplementation& impl);
+    bool hasTraitImplementation(ast::TypePtr type, const std::string& traitName) const;
+    const TraitImplementation* getTraitImplementation(ast::TypePtr type, const std::string& traitName) const;
+    std::vector<std::string> getImplementedTraits(ast::TypePtr type) const;
+    bool canImplementTrait(ast::TypePtr type, const std::string& traitName) const;
+    std::vector<std::string> getMissingRequirements(ast::TypePtr type, const std::string& traitName) const;
+
+    bool satisfiesTraitBounds(ast::TypePtr type, const std::vector<std::string>& bounds) const;
+    std::vector<std::string> getUnsatisfiedBounds(ast::TypePtr type, const std::vector<std::string>& bounds) const;
+
+    bool isGenericTrait(const std::string& traitName) const;
+    std::vector<std::string> getTraitTypeParameters(const std::string& traitName) const;
+    bool isSubTrait(const std::string& subTrait, const std::string& superTrait) const;
+    std::vector<std::string> getSuperTraits(const std::string& traitName) const;
+    std::vector<std::string> getSubTraits(const std::string& traitName) const;
+
+    bool isObjectSafe(const std::string& traitName) const;
+    std::vector<std::string> getObjectSafetyViolations(const std::string& traitName) const;
+
+    void clear();
+
+private:
+    std::unordered_map<std::string, TraitDefinition> traitDefinitions_;
+    std::unordered_map<std::string, std::vector<TraitImplementation>> traitImplementations_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> typeTraitMap_;
+};
+
+struct TraitUtils {
+    static std::string mangleTraitName(const std::string& traitName, const std::vector<ast::TypePtr>& typeArgs);
+    static bool isValidTraitName(const std::string& name);
+    static std::string normalizeTraitName(const std::string& name);
+    static bool areMethodSignaturesCompatible(ast::TypePtr sig1, ast::TypePtr sig2);
+    static std::string getMethodSignatureString(ast::TypePtr signature);
+    static bool isMethodObjectSafe(const TraitDefinition::Method& method);
+    static bool areTypeParametersCompatible(const std::vector<std::string>& params1,
+                                            const std::vector<std::string>& params2);
+    static std::string substituteTypeParameters(const std::string& type,
+                                                const std::unordered_map<std::string, std::string>& substitutions);
+    static std::vector<std::string> parseTraitBounds(const std::string& boundsStr);
+    static std::string formatTraitBounds(const std::vector<std::string>& bounds);
+    static bool isTraitBoundSatisfied(ast::TypePtr type, const std::string& bound, TraitRegistry& registry);
+    static bool isTraitImplementationComplete(const TraitImplementation& impl, const TraitDefinition& traitDef);
+    static std::vector<std::string> getMissingMethodImplementations(const TraitImplementation& impl,
+                                                                    const TraitDefinition& traitDef);
+    static std::vector<std::string> getMissingAssociatedTypes(const TraitImplementation& impl,
+                                                              const TraitDefinition& traitDef);
+    static std::string formatTraitError(const std::string& traitName, const std::string& typeName,
+                                        const std::string& issue);
+    static std::string formatMissingMethodError(const std::string& traitName, const std::string& methodName,
+                                                const std::string& typeName);
+};
+
+class TraitConstraints {
+public:
+    struct Constraint {
+        std::string typeParameter;
+        std::vector<std::string> requiredTraits;
+        std::vector<std::string> excludedTraits;
+        bool isSatisfiedBy(ast::TypePtr type, TraitRegistry& registry) const;
+    };
+
+    TraitConstraints();
+    ~TraitConstraints();
+
+    void addConstraint(const Constraint& constraint);
+    void removeConstraint(const std::string& typeParameter);
+    bool hasConstraint(const std::string& typeParameter) const;
+    const Constraint* getConstraint(const std::string& typeParameter) const;
+
+    bool checkConstraints(const std::unordered_map<std::string, ast::TypePtr>& typeBindings,
+                          TraitRegistry& registry) const;
+    std::vector<std::string> getViolatedConstraints(const std::unordered_map<std::string, ast::TypePtr>& typeBindings,
+                                                    TraitRegistry& registry) const;
+    bool inferConstraints(const std::vector<ast::TypePtr>& types, TraitRegistry& registry);
+    std::vector<Constraint> getInferredConstraints() const;
+
+private:
+    std::unordered_map<std::string, Constraint> constraints_;
+};
+
+} // namespace type_checker
 
 #endif // TOCIN_TRAITS_H

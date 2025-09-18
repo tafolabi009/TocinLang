@@ -46,7 +46,7 @@ set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "
 set(CPACK_NSIS_INSTALLER_ICON_CODE "")
 set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "")
 set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
-set(CPACK_NSIS_MENU_LINKS "https://tocin.dev;Website;https://github.com/tocin/tocin;GitHub")
+set(CPACK_NSIS_MENU_LINKS "https://tocin.vercel.app;Website;https://github.com/tafolabi009/tocin_compiler;GitHub")
 set(CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_NSIS_MUI_ICON "D:/Downloads/tocin-compiler/Tocin_Logo.ico")
 set(CPACK_NSIS_MUI_UNIICON "D:/Downloads/tocin-compiler/Tocin_Logo.ico")

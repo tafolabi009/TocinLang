@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <functional>
+#include <utility>
 
 namespace type_checker {
 
@@ -80,8 +81,8 @@ public:
 
     // Functional operations
     template<typename F>
-    auto map(F func) const -> Option<decltype(func(value_))> {
-        using ReturnType = decltype(func(value_));
+    auto map(F func) const -> Option<decltype(func(std::declval<T>()))> {
+        using ReturnType = decltype(func(std::declval<T>()));
         if (hasValue_) {
             return Option<ReturnType>::Some(func(value_));
         }
@@ -89,11 +90,11 @@ public:
     }
 
     template<typename F>
-    auto flatMap(F func) const -> decltype(func(value_)) {
+    auto flatMap(F func) const -> decltype(func(std::declval<T>())) {
         if (hasValue_) {
             return func(value_);
         }
-        return decltype(func(value_))::None();
+        return decltype(func(std::declval<T>()))::None();
     }
 
     template<typename F>
@@ -224,8 +225,8 @@ public:
 
     // Functional operations
     template<typename F>
-    auto map(F func) const -> Result<decltype(func(value_)), E> {
-        using ReturnType = decltype(func(value_));
+    auto map(F func) const -> Result<decltype(func(std::declval<T>())), E> {
+        using ReturnType = decltype(func(std::declval<T>()));
         if (isOk_) {
             return Result<ReturnType, E>::Ok(func(value_));
         }
@@ -233,8 +234,8 @@ public:
     }
 
     template<typename F>
-    auto mapErr(F func) const -> Result<T, decltype(func(error_))> {
-        using ErrorType = decltype(func(error_));
+    auto mapErr(F func) const -> Result<T, decltype(func(std::declval<E>()))> {
+        using ErrorType = decltype(func(std::declval<E>()));
         if (isOk_) {
             return Result<T, ErrorType>::Ok(value_);
         }
@@ -242,11 +243,11 @@ public:
     }
 
     template<typename F>
-    auto flatMap(F func) const -> decltype(func(value_)) {
+    auto flatMap(F func) const -> decltype(func(std::declval<T>())) {
         if (isOk_) {
             return func(value_);
         }
-        return decltype(func(value_))::Err(error_);
+        return decltype(func(std::declval<T>()))::Err(error_);
     }
 
     // Conversion to Option

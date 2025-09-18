@@ -2,7 +2,6 @@
 
 #include "ffi_interface.h"
 #include "ffi_value.h"
-#include "cpp_ffi.h"
 #include "../ast/types.h"
 #include "../error/error_handler.h"
 #include <memory>
@@ -44,6 +43,11 @@ public:
     std::vector<std::string> getSupportedFeatures() const override;
     bool supportsFeature(const std::string& feature) const override;
 
+    FFIValue eval(const std::string& code) override;
+    FFIValue getVariable(const std::string& name) override;
+    void setVariable(const std::string& name, const FFIValue& value) override;
+    bool isAvailable() const override;
+
     // C++-specific methods
     bool loadLibrary(const std::string& libraryPath);
     bool unloadLibrary(const std::string& libraryPath);
@@ -53,12 +57,12 @@ public:
     bool hasSymbol(const std::string& libraryPath, const std::string& symbolName) const;
 
     // Function registration and calling
-    bool registerFunction(const std::string& libraryPath, const CppFFI::FunctionSignature& signature);
-    FFIValue callFunctionPtr(void* functionPtr, const CppFFI::FunctionSignature& signature, 
+    bool registerFunction(const std::string& libraryPath, const std::string& functionName);
+    FFIValue callFunctionPtr(void* functionPtr, const std::string& functionName, 
                             const std::vector<FFIValue>& args);
 
     // Class operations
-    bool registerClass(const std::string& libraryPath, const CppFFI::ClassInfo& classInfo);
+    bool registerClass(const std::string& libraryPath, const std::string& className);
     FFIValue createInstance(const std::string& className, const std::vector<FFIValue>& constructorArgs);
     bool destroyInstance(const std::string& className, FFIValue& instance);
     
@@ -70,7 +74,7 @@ public:
                              const std::vector<FFIValue>& args);
 
     // Template support
-    bool registerTemplate(const std::string& libraryPath, const CppFFI::TemplateInfo& templateInfo);
+    bool registerTemplate(const std::string& libraryPath, const std::string& templateName);
     std::string instantiateTemplate(const std::string& templateName, const std::vector<std::string>& typeArgs);
 
     // STL container support
@@ -87,7 +91,7 @@ public:
 
     // Exception handling
     bool hasException() const;
-    CppFFI::CppException getLastException() const;
+    std::string getLastException() const;
     void clearException();
 
 private:
@@ -95,8 +99,8 @@ private:
     std::unique_ptr<CppFFI> cppFFI_;
     
     // Conversion helpers
-    CppFFI::CppValue ffiValueToCpp(const FFIValue& value);
-    FFIValue cppValueToFFI(const CppFFI::CppValue& value);
+    FFIValue ffiValueToCpp(const FFIValue& value);
+    FFIValue cppValueToFFI(const FFIValue& value);
 };
 
 /**
@@ -114,9 +118,9 @@ public:
     void* getSymbol(const std::string& symbolName);
     bool hasSymbol(const std::string& symbolName) const;
 
-    bool registerFunction(const CppFFI::FunctionSignature& signature);
-    bool registerClass(const CppFFI::ClassInfo& classInfo);
-    bool registerTemplate(const CppFFI::TemplateInfo& templateInfo);
+    bool registerFunction(const std::string& functionName);
+    bool registerClass(const std::string& className);
+    bool registerTemplate(const std::string& templateName);
 
     const std::string& getPath() const { return path_; }
 
@@ -151,7 +155,6 @@ private:
     std::string className_;
     std::string libraryPath_;
     CppFFIImpl* ffi_;
-    CppFFI::ClassInfo classInfo_;
 };
 
 /**
@@ -197,7 +200,6 @@ private:
     std::string templateName_;
     std::string libraryPath_;
     CppFFIImpl* ffi_;
-    CppFFI::TemplateInfo templateInfo_;
 };
 
 /**

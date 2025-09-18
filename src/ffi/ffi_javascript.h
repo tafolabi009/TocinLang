@@ -2,7 +2,6 @@
 
 #include "ffi_interface.h"
 #include "ffi_value.h"
-#include "js_ffi.h"
 #include "../ast/types.h"
 #include "../error/error_handler.h"
 #include <memory>
@@ -43,6 +42,11 @@ public:
 
     std::vector<std::string> getSupportedFeatures() const override;
     bool supportsFeature(const std::string& feature) const override;
+
+    FFIValue eval(const std::string& code) override;
+    FFIValue getVariable(const std::string& name) override;
+    void setVariable(const std::string& name, const FFIValue& value) override;
+    bool isAvailable() const override;
 
     // JavaScript-specific methods
     FFIValue executeCode(const std::string& code);
@@ -94,8 +98,8 @@ private:
     std::unique_ptr<JavaScriptFFI> jsFFI_;
     
     // Conversion helpers
-    JavaScriptFFI::JSValue ffiValueToJS(const FFIValue& value);
-    FFIValue jsValueToFFI(const JavaScriptFFI::JSValue& value);
+    FFIValue ffiValueToJS(const FFIValue& value);
+    FFIValue jsValueToFFI(const FFIValue& value);
 };
 
 /**

@@ -288,19 +288,6 @@ tocin/fast:
 .PHONY : tocin/fast
 
 #=============================================================================
-# Target rules for targets named ir_generator_direct
-
-# Build rule for target.
-ir_generator_direct: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\Makefile2 ir_generator_direct
-.PHONY : ir_generator_direct
-
-# fast build rule for target.
-ir_generator_direct/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\ir_generator_direct.dir\build.make CMakeFiles/ir_generator_direct.dir/build
-.PHONY : ir_generator_direct/fast
-
-#=============================================================================
 # Target rules for targets named uninstall
 
 # Build rule for target.
@@ -793,30 +780,6 @@ src/type/null_safety.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/src/type/null_safety.cpp.s
 .PHONY : src/type/null_safety.cpp.s
 
-src/type/option_result_types.obj: src/type/option_result_types.cpp.obj
-.PHONY : src/type/option_result_types.obj
-
-# target to build an object file
-src/type/option_result_types.cpp.obj:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/src/type/option_result_types.cpp.obj
-.PHONY : src/type/option_result_types.cpp.obj
-
-src/type/option_result_types.i: src/type/option_result_types.cpp.i
-.PHONY : src/type/option_result_types.i
-
-# target to preprocess a source file
-src/type/option_result_types.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/src/type/option_result_types.cpp.i
-.PHONY : src/type/option_result_types.cpp.i
-
-src/type/option_result_types.s: src/type/option_result_types.cpp.s
-.PHONY : src/type/option_result_types.s
-
-# target to generate assembly for a file
-src/type/option_result_types.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles\tocin.dir\build.make CMakeFiles/tocin.dir/src/type/option_result_types.cpp.s
-.PHONY : src/type/option_result_types.cpp.s
-
 src/type/ownership.obj: src/type/ownership.cpp.obj
 .PHONY : src/type/ownership.obj
 
@@ -908,7 +871,6 @@ help:
 	@echo ... RISCVTargetParserTableGen
 	@echo ... acc_gen
 	@echo ... intrinsics_gen
-	@echo ... ir_generator_direct
 	@echo ... omp_gen
 	@echo ... uninstall
 	@echo ... vt_gen
@@ -973,9 +935,6 @@ help:
 	@echo ... src/type/null_safety.obj
 	@echo ... src/type/null_safety.i
 	@echo ... src/type/null_safety.s
-	@echo ... src/type/option_result_types.obj
-	@echo ... src/type/option_result_types.i
-	@echo ... src/type/option_result_types.s
 	@echo ... src/type/ownership.obj
 	@echo ... src/type/ownership.i
 	@echo ... src/type/ownership.s

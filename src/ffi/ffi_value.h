@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <variant>
 #include <cstdint>
+#include <functional>
 
 namespace ffi {
 
