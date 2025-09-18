@@ -40,15 +40,10 @@ include_directories(${ZLIB_INCLUDE_DIRS})
 # -------------------------
 # LLVM Integration
 # -------------------------
-
-# First try to find LLVM through standard paths
-set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
-
 # First try to find LLVM through standard paths; on Windows allow a fallback hint
 if(WIN32 AND NOT DEFINED LLVM_DIR)
     set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
 endif()
-
 find_package(LLVM REQUIRED CONFIG)
 
 if(LLVM_FOUND)
@@ -427,8 +422,27 @@ endif()
 target_link_libraries(tocin PRIVATE ${LINK_LIBS})
 
 # -------------------------
-# IR Generator is now built as part of the main target
+# Custom IR Generator Build
 # -------------------------
+add_custom_target(ir_generator_direct
+    COMMAND ${CMAKE_CXX_COMPILER}
+    -c ${CMAKE_SOURCE_DIR}/src/codegen/ir_generator.cpp
+    -o ${CMAKE_BINARY_DIR}/ir_generator.o
+    -I${CMAKE_SOURCE_DIR}/src
+    -std=c++17
+    -I${LLVM_INCLUDE_DIRS}
+    -I${CMAKE_SOURCE_DIR}/src/ast
+    -I${CMAKE_SOURCE_DIR}/src/lexer
+    -I${CMAKE_SOURCE_DIR}/src/type
+    -I${CMAKE_SOURCE_DIR}/src/error
+    -I${CMAKE_SOURCE_DIR}/src/runtime
+    -I${CMAKE_SOURCE_DIR}/src/compiler
+    ${LLVM_DEFINITIONS}
+    COMMENT "Building IR generator directly with g++"
+)
+
+# Add this to the main target dependencies
+add_dependencies(tocin ir_generator_direct)
 
 # -------------------------
 # Feature-specific definitions

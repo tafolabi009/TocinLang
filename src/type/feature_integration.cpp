@@ -1,6 +1,7 @@
 #include "feature_integration.h"
 #include <iostream>
 #include <sstream>
+#include "traits.h"
 
 namespace type_checker {
 
@@ -22,17 +23,8 @@ bool FeatureManager::initialize() {
         resultOptionChecker_ = std::make_unique<ResultOptionMatcher>(errorHandler_);
         nullSafetyChecker_ = std::make_unique<NullSafetyChecker>(errorHandler_);
         extensionFunctionChecker_ = std::make_unique<ExtensionManager>(errorHandler_);
-
         moveSemanticsChecker_ = std::make_unique<MoveChecker>(errorHandler_, *ownershipChecker_);
-        if (!type::global_trait_registry) {
-            type::initializeTraitRegistry();
-        }
-
-        moveSemanticsChecker_ = std::make_unique<MoveChecker>(errorHandler_);
-
-        // Initialize trait registry and solver
         type::initializeTraitRegistry();
-
         traitChecker_ = std::make_unique<type::TraitSolver>(type::global_trait_registry);
         
         initialized_ = true;
@@ -85,7 +77,10 @@ bool FeatureManager::checkExpression(ast::ExprPtr expr, ast::TypePtr expectedTyp
             }
         }
         
-        // Move semantics and result/option specific expression checks are not performed here
+        // Validate move if applicable (non-fatal)
+        if (isFeatureEnabled("move_semantics")) {
+            TOCIN_UNUSED(moveSemanticsChecker_->validateMove(expr));
+        }
         
         return true;
     } catch (const std::exception& e) {
@@ -136,7 +131,11 @@ bool FeatureManager::checkFunction(ast::FunctionDeclPtr function) {
             }
         }
         
-        // Move semantics are validated via ownership where applicable
+        if (isFeatureEnabled("move_semantics")) {
+            if (!moveSemanticsChecker_->checkFunction(function)) {
+                return false;
+            }
+        }
         
         return true;
     } catch (const std::exception& e) {
@@ -149,7 +148,7 @@ bool FeatureManager::checkClass(ast::ClassDeclPtr classDecl) {
     if (!initialized_) return false;
     
     try {
-        // Traits: no structural class checking here
+        TOCIN_UNUSED(classDecl);
         
         return true;
     } catch (const std::exception& e) {
@@ -162,7 +161,7 @@ bool FeatureManager::checkTrait(ast::TraitDeclPtr traitDecl) {
     if (!initialized_) return false;
     
     try {
-        // Traits: no structural trait checking here
+        TOCIN_UNUSED(traitDecl);
         
         return true;
     } catch (const std::exception& e) {
@@ -187,6 +186,10 @@ ast::TypePtr FeatureManager::resolveType(ast::TypePtr type) {
         resolved = nullSafetyChecker_->resolveType(resolved);
     }
     
+    if (isFeatureEnabled("result_option")) {
+        resolved = resultOptionChecker_->resolveType(resolved);
+    }
+    
     // Cache the result
     typeCache_[type->toString()] = resolved;
     return resolved;
@@ -198,7 +201,14 @@ bool FeatureManager::isTypeCompatible(ast::TypePtr from, ast::TypePtr to) {
     // Basic type compatibility
     if (from->toString() == to->toString()) return true;
     
-    // Additional compatibility checks for advanced features are not implemented here
+    // Check null safety compatibility
+    if (isFeatureEnabled("null_safety")) {
+        if (nullSafetyChecker_->isTypeCompatible(from, to)) {
+            return true;
+        }
+    }
+    
+    // Extend for Result/Option as needed
     
     return false;
 }
@@ -206,32 +216,35 @@ bool FeatureManager::isTypeCompatible(ast::TypePtr from, ast::TypePtr to) {
 bool FeatureManager::canImplicitlyConvert(ast::TypePtr from, ast::TypePtr to) {
     if (!from || !to) return false;
     
-    // No implicit conversions are defined here beyond identity
+    // Check null safety conversions
+    if (isFeatureEnabled("null_safety")) {
+        if (nullSafetyChecker_->canImplicitlyConvert(from, to)) {
+            return true;
+        }
+    }
+    
+    // Extend for Result/Option as needed
+    
     return false;
 }
 
 bool FeatureManager::isErrorType(ast::TypePtr type) {
     if (!type) return false;
     
-    // No dedicated error type check available in this layer
-    
+    TOCIN_UNUSED(type);
     return false;
 }
 
 bool FeatureManager::isOptionType(ast::TypePtr type) {
     if (!type) return false;
     
-    return OptionType::isOptionType(type);
-    
-    return false;
+    return type_checker::OptionType::isOptionType(type);
 }
 
 bool FeatureManager::isResultType(ast::TypePtr type) {
     if (!type) return false;
     
-    return ResultType::isResultType(type);
-    
-    return false;
+    return type_checker::ResultType::isResultType(type);
 }
 
 bool FeatureManager::isNullableType(ast::TypePtr type) {
@@ -258,7 +271,7 @@ bool FeatureManager::canMove(ast::ExprPtr expr) {
     if (!expr) return false;
     
     if (isFeatureEnabled("move_semantics")) {
-        return ownershipChecker_->canMove(expr);
+        return moveSemanticsChecker_->canMove(expr);
     }
     
     return false;
@@ -268,7 +281,7 @@ bool FeatureManager::shouldMove(ast::ExprPtr expr) {
     if (!expr) return false;
     
     if (isFeatureEnabled("move_semantics")) {
-        return ownershipChecker_->shouldMove(expr);
+        return moveSemanticsChecker_->shouldMove(expr);
     }
     
     return false;
@@ -303,7 +316,7 @@ void FeatureManager::disableFeature(const std::string& featureName) {
     featureFlags_[featureName] = false;
 }
 
-void FeatureManager::reportFeatureError(const std::string& message, ast::Node* node) {
+void FeatureManager::reportFeatureError(const std::string& message, ast::ASTNode* node) {
     errorHandler_.reportError(error::ErrorCode::T001_TYPE_MISMATCH, message);
 }
 
