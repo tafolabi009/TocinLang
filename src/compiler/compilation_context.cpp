@@ -1,6 +1,7 @@
 #include "compilation_context.h"
 #include <chrono>
 #include <iostream>
+#include <algorithm>
 
 namespace tocin {
 namespace compiler {
@@ -34,7 +35,7 @@ bool CompilationContext::declareSymbol(const std::string& name, ast::TypePtr typ
 bool CompilationContext::declareSymbol(const Symbol& symbol) {
     auto& currentScope = symbolTables_[currentScopeLevel_];
     if (currentScope.find(symbol.name) != currentScope.end()) {
-        addError("Symbol '" + symbol.name + "' already declared in current scope");
+        addError("Symbol '" + symbol.name + "' already declared in current scope", 0, 0);
         return false;
     }
     currentScope[symbol.name] = symbol;
@@ -106,7 +107,7 @@ std::vector<CompilationContext::FunctionInfo*> CompilationContext::lookupOverloa
 
 bool CompilationContext::declareClass(const ClassInfo& classInfo) {
     if (classes_.find(classInfo.name) != classes_.end()) {
-        addError("Class '" + classInfo.name + "' already declared");
+        addError("Class '" + classInfo.name + "' already declared", 0, 0);
         return false;
     }
     classes_[classInfo.name] = classInfo;
@@ -125,7 +126,7 @@ const CompilationContext::ClassInfo* CompilationContext::lookupClass(const std::
 
 bool CompilationContext::declareTrait(const TraitInfo& traitInfo) {
     if (traits_.find(traitInfo.name) != traits_.end()) {
-        addError("Trait '" + traitInfo.name + "' already declared");
+        addError("Trait '" + traitInfo.name + "' already declared", 0, 0);
         return false;
     }
     traits_[traitInfo.name] = traitInfo;
@@ -255,10 +256,6 @@ bool CompilationContext::hasSymbol(const std::string& name) const {
     return symbols_.find(name) != symbols_.end();
 }
 
-void CompilationContext::addDependency(const std::string& moduleName) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    dependencies_.insert(moduleName);
-}
 
 void CompilationContext::addError(const std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);

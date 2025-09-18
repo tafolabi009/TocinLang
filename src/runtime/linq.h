@@ -17,6 +17,7 @@ namespace runtime {
 template<typename T>
 class Queryable;
 class QueryExpression;
+template<typename T>
 class QueryBuilder;
 
 /**
@@ -516,7 +517,7 @@ public:
 
     template<typename U>
     QueryBuilder<U> select(const std::string& selector) {
-        return QueryBuilder<U>(queryable.select<U>(selector));
+        return QueryBuilder<U>(queryable.template select<U>(selector));
     }
 
     QueryBuilder<T> orderBy(const std::string& key_selector) {

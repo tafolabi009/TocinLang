@@ -142,6 +142,70 @@ public:
     std::shared_ptr<std::future<T>> getFuture() const {
         return future;
     }
+
+    /**
+     * @brief Alias for setValue (for async_system compatibility)
+     */
+    void resolve(const T& value) {
+        setValue(value);
+    }
+
+    /**
+     * @brief Set an exception (for async_system compatibility)
+     */
+    void reject(const std::string& reason) {
+        promise->set_exception(std::make_exception_ptr(std::runtime_error(reason)));
+    }
+};
+
+/**
+ * @brief Promise specialization for void
+ */
+template<>
+class Promise<void> {
+private:
+    std::shared_ptr<std::promise<void>> promise;
+    std::shared_ptr<std::future<void>> future;
+
+public:
+    Promise() : promise(std::make_shared<std::promise<void>>()) {
+        future = std::make_shared<std::future<void>>(promise->get_future());
+    }
+
+    /**
+     * @brief Set the value (complete the promise)
+     */
+    void setValue() {
+        promise->set_value();
+    }
+
+    /**
+     * @brief Set an exception
+     */
+    void setException(std::exception_ptr ex) {
+        promise->set_exception(ex);
+    }
+
+    /**
+     * @brief Get the future
+     */
+    std::shared_ptr<std::future<void>> getFuture() const {
+        return future;
+    }
+
+    /**
+     * @brief Alias for setValue (for async_system compatibility)
+     */
+    void resolve() {
+        setValue();
+    }
+
+    /**
+     * @brief Set an exception (for async_system compatibility)
+     */
+    void reject(const std::string& reason) {
+        promise->set_exception(std::make_exception_ptr(std::runtime_error(reason)));
+    }
 };
 
 /**
@@ -177,6 +241,51 @@ public:
 
     /**
      * @brief Wait for the future to complete
+     */
+    void wait() const {
+        future->wait();
+    }
+
+    /**
+     * @brief Wait for the future with timeout
+     */
+    template<typename Rep, typename Period>
+    bool waitFor(const std::chrono::duration<Rep, Period>& timeout) const {
+        return future->wait_for(timeout) == std::future_status::ready;
+    }
+};
+
+/**
+ * @brief Future specialization for void
+ */
+template<>
+class Future<void> {
+private:
+    std::shared_ptr<std::future<void>> future;
+    bool has_cached = false;
+
+public:
+    explicit Future(std::shared_ptr<std::future<void>> f) : future(f) {}
+
+    /**
+     * @brief Get the result (blocking)
+     */
+    void get() {
+        if (!has_cached) {
+            future->get();
+            has_cached = true;
+        }
+    }
+
+    /**
+     * @brief Check if the future is ready
+     */
+    bool isReady() const {
+        return future->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
+
+    /**
+     * @brief Wait for the future
      */
     void wait() const {
         future->wait();

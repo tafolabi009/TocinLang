@@ -7,6 +7,7 @@
 #include <thread>
 #include <sstream>
 #include <iomanip>
+#include <random>
 
 extern "C" {
 

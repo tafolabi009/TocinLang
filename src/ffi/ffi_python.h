@@ -2,7 +2,6 @@
 
 #include "ffi_interface.h"
 #include "ffi_value.h"
-#include "python_ffi.h"
 #include "../ast/types.h"
 #include "../error/error_handler.h"
 #include <memory>
@@ -44,6 +43,11 @@ public:
     std::vector<std::string> getSupportedFeatures() const override;
     bool supportsFeature(const std::string& feature) const override;
 
+    FFIValue eval(const std::string& code) override;
+    FFIValue getVariable(const std::string& name) override;
+    void setVariable(const std::string& name, const FFIValue& value) override;
+    bool isAvailable() const override;
+
     // Python-specific methods
     FFIValue executeCode(const std::string& code);
     bool executeFile(const std::string& filename);
@@ -67,8 +71,8 @@ private:
     std::unique_ptr<PythonFFI> pythonFFI_;
     
     // Conversion helpers
-    PythonFFI::PythonValue ffiValueToPython(const FFIValue& value);
-    FFIValue pythonValueToFFI(const PythonFFI::PythonValue& value);
+    FFIValue ffiValueToPython(const FFIValue& value);
+    FFIValue pythonValueToFFI(const FFIValue& value);
 };
 
 /**

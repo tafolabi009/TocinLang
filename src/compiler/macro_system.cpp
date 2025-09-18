@@ -295,6 +295,7 @@ ast::StmtPtr measureMacro(const MacroContext& context, error::ErrorHandler& erro
         std::make_shared<ast::BinaryExpr>(
             lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),
             std::make_shared<ast::LiteralExpr>(lexer::Token(lexer::TokenType::STRING, "Execution time: ", "", 0, 0), "Execution time: ", ast::LiteralExpr::LiteralType::STRING),
+            lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),
             std::make_shared<ast::VariableExpr>(lexer::Token(lexer::TokenType::IDENTIFIER, "elapsed", "", 0, 0), "elapsed")
         ),
         std::vector<ast::ExprPtr>{}
@@ -358,7 +359,8 @@ ast::StmtPtr matchMacro(const MacroContext& context, error::ErrorHandler& errorH
     return std::make_shared<ast::MatchStmt>(
         lexer::Token(lexer::TokenType::MATCH, "match", "", 0, 0),
         expression,
-        std::vector<ast::MatchCase>{}
+        std::vector<std::pair<ast::ExprPtr, ast::StmtPtr>>{},
+        nullptr  // defaultCase
     );
 }
 
@@ -432,8 +434,11 @@ ast::StmtPtr logMacro(const MacroContext& context, error::ErrorHandler& errorHan
     auto logMessage = std::make_shared<ast::BinaryExpr>(
         lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),
         std::make_shared<ast::LiteralExpr>(
-            lexer::Token(lexer::TokenType::STRING, "[LOG] ", "", 0, 0)
+            lexer::Token(lexer::TokenType::STRING, "[LOG] ", "", 0, 0),
+            "[LOG] ",
+            ast::LiteralExpr::LiteralType::STRING
         ),
+        lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),
         message
     );
     
@@ -444,7 +449,7 @@ ast::StmtPtr logMacro(const MacroContext& context, error::ErrorHandler& errorHan
     );
     
     return std::make_shared<ast::ExpressionStmt>(
-        lexer::Token(lexer::TokenType::SEMICOLON, ";", "", 0, 0),
+        lexer::Token(lexer::TokenType::SEMI_COLON, ";", "", 0, 0),
         printCall
     );
 }
@@ -502,8 +507,9 @@ ast::StmtPtr profileMacro(const MacroContext& context, error::ErrorHandler& erro
     auto printCall2 = std::make_shared<ast::CallExpr>(
         lexer::Token(lexer::TokenType::IDENTIFIER, "print", "", 0, 0),
         std::make_shared<ast::BinaryExpr>(
-            lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),
+            lexer::Token(lexer::TokenType::IDENTIFIER, "concat", "", 0, 0),  // token for the expression
             std::make_shared<ast::LiteralExpr>(lexer::Token(lexer::TokenType::STRING, "Function " + name + " took: ", "", 0, 0), "Function " + name + " took: ", ast::LiteralExpr::LiteralType::STRING),
+            lexer::Token(lexer::TokenType::PLUS, "+", "", 0, 0),  // operator token
             std::make_shared<ast::VariableExpr>(lexer::Token(lexer::TokenType::IDENTIFIER, "duration", "", 0, 0), "duration")
         ),
         std::vector<ast::ExprPtr>{}

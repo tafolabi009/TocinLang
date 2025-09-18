@@ -9,6 +9,12 @@
 #include <functional>
 #include <any>
 
+// Forward declarations
+namespace ast {
+    class Value;
+    using ValuePtr = std::shared_ptr<Value>;
+}
+
 namespace ffi {
 
 // Forward declarations
@@ -46,14 +52,84 @@ public:
     virtual bool initialize() = 0;
     
     /**
-     * @brief Cleanup the FFI system
+     * @brief Finalize/cleanup the FFI system
      */
-    virtual void cleanup() = 0;
+    virtual void finalize() = 0;
+    
+    /**
+     * @brief Check if the FFI system is initialized
+     */
+    virtual bool isInitialized() const = 0;
+    
+    /**
+     * @brief Get the language name
+     */
+    virtual std::string getLanguageName() const = 0;
+    
+    /**
+     * @brief Get the language version
+     */
+    virtual std::string getVersion() const = 0;
     
     /**
      * @brief Call a function in the foreign language
      */
-    virtual FFIValue call(const std::string& function, const std::vector<FFIValue>& args) = 0;
+    virtual FFIValue callFunction(const std::string& functionName, const std::vector<FFIValue>& args) = 0;
+    
+    /**
+     * @brief Check if a function exists
+     */
+    virtual bool hasFunction(const std::string& functionName) const = 0;
+    
+    /**
+     * @brief Load a module
+     */
+    virtual bool loadModule(const std::string& moduleName) = 0;
+    
+    /**
+     * @brief Unload a module
+     */
+    virtual bool unloadModule(const std::string& moduleName) = 0;
+    
+    /**
+     * @brief Check if a module is loaded
+     */
+    virtual bool isModuleLoaded(const std::string& moduleName) const = 0;
+    
+    /**
+     * @brief Convert AST value to FFI value
+     */
+    virtual FFIValue toFFIValue(ast::ValuePtr value) = 0;
+    
+    /**
+     * @brief Convert FFI value to AST value
+     */
+    virtual ast::ValuePtr fromFFIValue(const FFIValue& value) = 0;
+    
+    /**
+     * @brief Check if there's an error
+     */
+    virtual bool hasError() const = 0;
+    
+    /**
+     * @brief Get the last error message
+     */
+    virtual std::string getLastError() const = 0;
+    
+    /**
+     * @brief Clear the last error
+     */
+    virtual void clearError() = 0;
+    
+    /**
+     * @brief Get supported features
+     */
+    virtual std::vector<std::string> getSupportedFeatures() const = 0;
+    
+    /**
+     * @brief Check if a feature is supported
+     */
+    virtual bool supportsFeature(const std::string& feature) const = 0;
     
     /**
      * @brief Evaluate code in the foreign language
@@ -90,8 +166,22 @@ public:
     ~PythonFFI() override;
 
     bool initialize() override;
-    void cleanup() override;
-    FFIValue call(const std::string& function, const std::vector<FFIValue>& args) override;
+    void finalize() override;
+    bool isInitialized() const override { return initialized_; }
+    std::string getLanguageName() const override { return "Python"; }
+    std::string getVersion() const override;
+    FFIValue callFunction(const std::string& functionName, const std::vector<FFIValue>& args) override;
+    bool hasFunction(const std::string& functionName) const override;
+    bool loadModule(const std::string& moduleName) override;
+    bool unloadModule(const std::string& moduleName) override;
+    bool isModuleLoaded(const std::string& moduleName) const override;
+    FFIValue toFFIValue(ast::ValuePtr value) override;
+    ast::ValuePtr fromFFIValue(const FFIValue& value) override;
+    bool hasError() const override;
+    std::string getLastError() const override;
+    void clearError() override;
+    std::vector<std::string> getSupportedFeatures() const override;
+    bool supportsFeature(const std::string& feature) const override;
     FFIValue eval(const std::string& code) override;
     FFIValue getVariable(const std::string& name) override;
     void setVariable(const std::string& name, const FFIValue& value) override;
@@ -118,8 +208,22 @@ public:
     ~JavaScriptFFI() override;
 
     bool initialize() override;
-    void cleanup() override;
-    FFIValue call(const std::string& function, const std::vector<FFIValue>& args) override;
+    void finalize() override;
+    bool isInitialized() const override { return initialized_; }
+    std::string getLanguageName() const override { return "JavaScript"; }
+    std::string getVersion() const override;
+    FFIValue callFunction(const std::string& functionName, const std::vector<FFIValue>& args) override;
+    bool hasFunction(const std::string& functionName) const override;
+    bool loadModule(const std::string& moduleName) override;
+    bool unloadModule(const std::string& moduleName) override;
+    bool isModuleLoaded(const std::string& moduleName) const override;
+    FFIValue toFFIValue(ast::ValuePtr value) override;
+    ast::ValuePtr fromFFIValue(const FFIValue& value) override;
+    bool hasError() const override;
+    std::string getLastError() const override;
+    void clearError() override;
+    std::vector<std::string> getSupportedFeatures() const override;
+    bool supportsFeature(const std::string& feature) const override;
     FFIValue eval(const std::string& code) override;
     FFIValue getVariable(const std::string& name) override;
     void setVariable(const std::string& name, const FFIValue& value) override;
@@ -145,8 +249,22 @@ public:
     ~CppFFI() override;
 
     bool initialize() override;
-    void cleanup() override;
-    FFIValue call(const std::string& function, const std::vector<FFIValue>& args) override;
+    void finalize() override;
+    bool isInitialized() const override { return initialized_; }
+    std::string getLanguageName() const override { return "C++"; }
+    std::string getVersion() const override;
+    FFIValue callFunction(const std::string& functionName, const std::vector<FFIValue>& args) override;
+    bool hasFunction(const std::string& functionName) const override;
+    bool loadModule(const std::string& moduleName) override;
+    bool unloadModule(const std::string& moduleName) override;
+    bool isModuleLoaded(const std::string& moduleName) const override;
+    FFIValue toFFIValue(ast::ValuePtr value) override;
+    ast::ValuePtr fromFFIValue(const FFIValue& value) override;
+    bool hasError() const override;
+    std::string getLastError() const override;
+    void clearError() override;
+    std::vector<std::string> getSupportedFeatures() const override;
+    bool supportsFeature(const std::string& feature) const override;
     FFIValue eval(const std::string& code) override;
     FFIValue getVariable(const std::string& name) override;
     void setVariable(const std::string& name, const FFIValue& value) override;

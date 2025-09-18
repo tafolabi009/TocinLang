@@ -6,7 +6,7 @@
 namespace tocin {
 namespace compiler {
 
-    void StdLib::registerFunctions(tocin::ffi::CppFFI& ffi) {
+    void StdLib::registerFunctions(ffi::CppFFI& ffi) {
         ffi.registerFunction("print", [](const std::vector<ffi::FFIValue>& args) -> ffi::FFIValue {
             for (size_t i = 0; i < args.size(); ++i) {
                 if (i > 0) std::cout << " ";

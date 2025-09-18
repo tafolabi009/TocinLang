@@ -2,6 +2,7 @@
 
 #include "../ast/ast.h"
 #include "../error/error_handler.h"
+#include "concurrency.h"
 #include <memory>
 #include <functional>
 #include <future>
@@ -40,124 +41,6 @@ struct TaskResult {
     TaskResult(const std::string& err) : state(TaskState::FAILED), error(err) {}
 };
 
-/**
- * @brief Promise implementation
- */
-template<typename T>
-class Promise {
-private:
-    std::shared_ptr<std::promise<T>> promise;
-    std::shared_ptr<std::future<T>> future;
-    std::mutex mutex;
-    bool resolved;
-    
-public:
-    Promise() : promise(std::make_shared<std::promise<T>>()), 
-                future(std::make_shared<std::future<T>>(promise->get_future())),
-                resolved(false) {}
-    
-    /**
-     * @brief Resolve the promise with a value
-     */
-    void resolve(const T& value) {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (!resolved) {
-            promise->set_value(value);
-            resolved = true;
-        }
-    }
-    
-    /**
-     * @brief Reject the promise with an error
-     */
-    void reject(const std::string& error) {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (!resolved) {
-            promise->set_exception(std::make_exception_ptr(std::runtime_error(error)));
-            resolved = true;
-        }
-    }
-    
-    /**
-     * @brief Get the future
-     */
-    std::shared_ptr<std::future<T>> getFuture() const {
-        return future;
-    }
-    
-    /**
-     * @brief Check if promise is resolved
-     */
-    bool isResolved() const {
-        std::lock_guard<std::mutex> lock(mutex);
-        return resolved;
-    }
-};
-
-/**
- * @brief Future implementation
- */
-template<typename T>
-class Future {
-private:
-    std::shared_ptr<std::future<T>> future;
-    std::function<void(const T&)> onSuccess;
-    std::function<void(const std::string&)> onError;
-    
-public:
-    Future(std::shared_ptr<std::future<T>> f) : future(f) {}
-    
-    /**
-     * @brief Get the result (blocking)
-     */
-    T get() {
-        return future->get();
-    }
-    
-    /**
-     * @brief Get the result with timeout
-     */
-    template<typename Rep, typename Period>
-    T get(const std::chrono::duration<Rep, Period>& timeout) {
-        if (future->wait_for(timeout) == std::future_status::timeout) {
-            throw std::runtime_error("Future timeout");
-        }
-        return future->get();
-    }
-    
-    /**
-     * @brief Check if future is ready
-     */
-    bool isReady() const {
-        return future->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    }
-    
-    /**
-     * @brief Set success callback
-     */
-    Future& onSuccess(std::function<void(const T&)> callback) {
-        onSuccess = callback;
-        return *this;
-    }
-    
-    /**
-     * @brief Set error callback
-     */
-    Future& onError(std::function<void(const std::string&)> callback) {
-        onError = callback;
-        return *this;
-    }
-    
-    /**
-     * @brief Chain with another future
-     */
-    template<typename U>
-    Future<U> then(std::function<Future<U>(const T&)> transformer) {
-        // This would implement future chaining
-        // For now, return a placeholder
-        return Future<U>(std::make_shared<std::future<U>>());
-    }
-};
 
 /**
  * @brief Async task scheduler
@@ -193,8 +76,13 @@ public:
         
         auto task = [promise, f = std::forward<F>(f), ...args = std::forward<Args>(args)]() mutable {
             try {
-                auto result = std::invoke(f, args...);
-                promise->resolve(result);
+                if constexpr (std::is_void_v<return_type>) {
+                    std::invoke(f, args...);
+                    promise->resolve();
+                } else {
+                    auto result = std::invoke(f, args...);
+                    promise->resolve(result);
+                }
             } catch (const std::exception& e) {
                 promise->reject(e.what());
             }
@@ -221,8 +109,13 @@ public:
         
         auto task = [promise, f = std::forward<F>(f), ...args = std::forward<Args>(args)]() mutable {
             try {
-                auto result = std::invoke(f, args...);
-                promise->resolve(result);
+                if constexpr (std::is_void_v<return_type>) {
+                    std::invoke(f, args...);
+                    promise->resolve();
+                } else {
+                    auto result = std::invoke(f, args...);
+                    promise->resolve(result);
+                }
             } catch (const std::exception& e) {
                 promise->reject(e.what());
             }
@@ -251,7 +144,7 @@ public:
     /**
      * @brief Get number of pending tasks
      */
-    size_t getPendingTaskCount() const {
+    size_t getPendingTaskCount() {
         std::lock_guard<std::mutex> lock(queueMutex);
         return tasks.size();
     }
@@ -441,8 +334,7 @@ public:
     }
 };
 
-// Static member initialization
-template<typename T>
+// Static member definitions
 std::shared_ptr<AsyncScheduler> AsyncSystem::globalScheduler = nullptr;
 
 std::mutex AsyncSystem::schedulerMutex;

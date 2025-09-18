@@ -9,7 +9,7 @@ namespace compiler {
 
 class StdLib {
 public:
-    static void registerFunctions(tocin::ffi::CppFFI& ffi);
+    static void registerFunctions(ffi::CppFFI& ffi);
 };
 
 } // namespace compiler

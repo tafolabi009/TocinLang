@@ -212,6 +212,9 @@ private:
     std::vector<std::unordered_set<std::string>> scopeVariables_;
 };
 
+// Declare the global tracker so helper functions can link
+extern OwnershipStateTracker globalOwnershipTracker;
+
 } // namespace type_checker
 
 #endif // OWNERSHIP_H
