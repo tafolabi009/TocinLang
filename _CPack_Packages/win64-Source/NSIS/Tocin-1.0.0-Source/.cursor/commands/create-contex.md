@@ -1,0 +1,1 @@
+Do not hullicinate or go out of context Read all the files in the ;roject directory to have an understanding of the project so you can solve the question efficiently and correctly 

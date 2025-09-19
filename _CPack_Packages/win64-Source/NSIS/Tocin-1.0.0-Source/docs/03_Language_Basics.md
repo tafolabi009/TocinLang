@@ -1,0 +1,725 @@
+# Tocin Language Basics
+
+This guide covers the fundamental concepts and syntax of the Tocin programming language. After reading this, you'll have a good understanding of Tocin's basic building blocks.
+
+## Table of Contents
+
+1. [Basic Syntax](#basic-syntax)
+2. [Variables and Constants](#variables-and-constants)
+3. [Data Types](#data-types)
+4. [Operators](#operators)
+5. [Control Flow](#control-flow)
+6. [Functions](#functions)
+7. [Comments](#comments)
+8. [Error Handling](#error-handling)
+
+## Basic Syntax
+
+Tocin uses a clean, readable syntax that will feel familiar to developers with experience in languages like TypeScript, Swift, or Rust.
+
+### File Structure
+
+Tocin source files use the `.to` extension. A simple program might look like this:
+
+```tocin
+// Import standard library modules
+import system.io;
+
+// Define the main function
+def main() -> int {
+    println("Hello, Tocin!");
+    return 0;
+}
+```
+
+### Statements and Semicolons
+
+In Tocin, statements are terminated with semicolons (`;`). While semicolons are optional at the end of a line, it's recommended to include them for clarity and consistency.
+
+```tocin
+// Both of these are valid
+let x = 5;
+let y = 10
+```
+
+### Code Blocks
+
+Code blocks are enclosed in curly braces `{}` and are used to group statements together.
+
+```tocin
+def someFunction() -> void {
+    // This is a code block
+    let x = 5;
+    println(x);
+}
+```
+
+### Identifiers
+
+Identifiers (names for variables, functions, etc.) in Tocin:
+- Must start with a letter or underscore
+- Can contain letters, digits, and underscores
+- Are case-sensitive
+- Cannot be a reserved keyword
+
+```tocin
+// Valid identifiers
+let userName = "John";
+let _privateVar = 42;
+let camelCase123 = true;
+
+// Invalid identifiers
+let 123abc = "invalid";  // Cannot start with a digit
+let user-name = "John";  // Cannot contain hyphens
+let if = "keyword";      // Cannot be a reserved keyword
+```
+
+## Variables and Constants
+
+### Variables
+
+Variables in Tocin are declared using the `let` keyword, followed by an optional type annotation:
+
+```tocin
+// Type is inferred
+let name = "Alice";
+
+// Explicit type annotation
+let age: int = 30;
+
+// Declaration and later assignment
+let score: float;
+score = 95.5;
+```
+
+### Constants
+
+Constants are declared using the `const` keyword and must be assigned a value at declaration:
+
+```tocin
+// Constants cannot be changed after initialization
+const PI: float = 3.14159;
+const MAX_USERS = 100;  // Type inferred as int
+```
+
+### Variable Scope
+
+Variables declared within a block are only accessible within that block and its nested blocks:
+
+```tocin
+def demonstrateScope() -> void {
+    let outer = 10;
+    
+    {
+        let inner = 20;
+        println(outer);  // Access to outer scope variable
+        println(inner);  // Access to current scope variable
+    }
+    
+    println(outer);  // Still accessible
+    // println(inner);  // Error: inner is not accessible here
+}
+```
+
+## Data Types
+
+Tocin has a rich set of built-in data types:
+
+### Primitive Types
+
+```tocin
+// Boolean type
+let isActive: bool = true;
+
+// Integer types
+let age: int = 30;          // Platform-dependent size (usually 32 or 64 bits)
+let small: int8 = 127;      // 8-bit signed integer
+let medium: int16 = 32767;  // 16-bit signed integer
+let large: int32 = 2147483647;  // 32-bit signed integer
+let huge: int64 = 9223372036854775807;  // 64-bit signed integer
+
+// Unsigned integer types
+let positive: uint = 42;    // Platform-dependent size
+let byte: uint8 = 255;      // 8-bit unsigned integer
+let word: uint16 = 65535;   // 16-bit unsigned integer
+let dword: uint32 = 4294967295;  // 32-bit unsigned integer
+let qword: uint64 = 18446744073709551615;  // 64-bit unsigned integer
+
+// Floating-point types
+let height: float = 6.2;    // Platform-dependent (usually 32 or 64 bits)
+let precise: float32 = 3.14;  // 32-bit floating point
+let morePrecise: float64 = 3.14159265359;  // 64-bit floating point
+
+// Character type
+let letter: char = 'A';
+
+// String type
+let greeting: string = "Hello, Tocin!";
+```
+
+### Type Inference
+
+Tocin can often infer the type of a variable from its initialization value:
+
+```tocin
+let name = "Alice";  // Inferred as string
+let age = 30;        // Inferred as int
+let height = 5.9;    // Inferred as float
+let isActive = true; // Inferred as bool
+```
+
+### Type Aliases
+
+You can create aliases for types using the `type` keyword:
+
+```tocin
+type UserId = int;
+type Point = {x: float, y: float};
+
+let userId: UserId = 12345;
+let point: Point = {x: 10.5, y: 20.3};
+```
+
+### Compound Types
+
+#### Arrays
+
+Arrays are fixed-size collections of the same type:
+
+```tocin
+// Array declaration and initialization
+let numbers: Array<int> = [1, 2, 3, 4, 5];
+
+// Shorthand notation
+let names: string[] = ["Alice", "Bob", "Charlie"];
+
+// Accessing elements (zero-based indexing)
+println(numbers[0]);  // Outputs: 1
+
+// Getting array length
+println(names.length);  // Outputs: 3
+
+// Modifying elements
+names[1] = "Robert";
+```
+
+#### Tuples
+
+Tuples group multiple values of different types:
+
+```tocin
+// Declaring and initializing a tuple
+let person: (string, int, bool) = ("Alice", 30, true);
+
+// Accessing tuple elements by index
+println(person.0);  // Outputs: Alice
+println(person.1);  // Outputs: 30
+println(person.2);  // Outputs: true
+
+// Destructuring tuples
+let (name, age, isActive) = person;
+```
+
+#### Records / Objects
+
+Records (also called objects or structs in other languages) are key-value pairs:
+
+```tocin
+// Record type definition
+type Person = {
+    name: string,
+    age: int,
+    isActive: bool
+};
+
+// Creating a record
+let alice: Person = {
+    name: "Alice",
+    age: 30,
+    isActive: true
+};
+
+// Accessing record fields
+println(alice.name);  // Outputs: Alice
+alice.age = 31;       // Modifying a field
+```
+
+#### Maps
+
+Maps (or dictionaries) are collections of key-value pairs:
+
+```tocin
+// Creating a map
+let userScores: Map<string, int> = new Map<string, int>();
+
+// Adding key-value pairs
+userScores.set("Alice", 95);
+userScores.set("Bob", 87);
+
+// Accessing values
+println(userScores.get("Alice"));  // Outputs: 95
+
+// Checking if a key exists
+if (userScores.has("Charlie")) {
+    println(userScores.get("Charlie"));
+}
+
+// Iterating over a map
+for (let [name, score] of userScores) {
+    println(name + ": " + score.toString());
+}
+```
+
+### Enumerations
+
+Enums define a type with a fixed set of possible values:
+
+```tocin
+// Simple enum
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+}
+
+let favoriteColor: Color = Color.BLUE;
+
+// Enum with associated values
+enum Result<T, E> {
+    OK(T),
+    ERROR(E)
+}
+
+let success: Result<int, string> = Result.OK(42);
+let failure: Result<int, string> = Result.ERROR("Something went wrong");
+
+// Pattern matching on enums
+match (success) {
+    Result.OK(value) => println("Success: " + value.toString()),
+    Result.ERROR(message) => println("Error: " + message)
+}
+```
+
+### Optional Types
+
+Optional types represent values that may or may not be present:
+
+```tocin
+// Optional type declaration
+let optionalName: string? = "Alice";
+let emptyOptional: int? = null;
+
+// Checking if a value exists
+if (optionalName != null) {
+    println(optionalName);
+}
+
+// Null coalescing operator
+let name = optionalName ?? "Unknown";  // Uses "Unknown" if optionalName is null
+
+// Optional chaining
+let length = optionalName?.length;  // Returns null if optionalName is null
+```
+
+## Operators
+
+Tocin supports a variety of operators for different operations:
+
+### Arithmetic Operators
+
+```tocin
+let a = 10;
+let b = 3;
+
+let sum = a + b;         // Addition: 13
+let difference = a - b;  // Subtraction: 7
+let product = a * b;     // Multiplication: 30
+let quotient = a / b;    // Division: 3 (integer division)
+let remainder = a % b;   // Modulo: 1
+let power = a ** b;      // Exponentiation: 1000
+```
+
+### Compound Assignment Operators
+
+```tocin
+let x = 10;
+x += 5;   // x = x + 5 (x is now 15)
+x -= 3;   // x = x - 3 (x is now 12)
+x *= 2;   // x = x * 2 (x is now 24)
+x /= 6;   // x = x / 6 (x is now 4)
+x %= 3;   // x = x % 3 (x is now 1)
+x **= 3;  // x = x ** 3 (x is now 1)
+```
+
+### Comparison Operators
+
+```tocin
+let a = 10;
+let b = 20;
+
+let equal = a == b;            // Equal to: false
+let notEqual = a != b;         // Not equal to: true
+let greater = a > b;           // Greater than: false
+let less = a < b;              // Less than: true
+let greaterOrEqual = a >= b;   // Greater than or equal to: false
+let lessOrEqual = a <= b;      // Less than or equal to: true
+```
+
+### Logical Operators
+
+```tocin
+let a = true;
+let b = false;
+
+let and = a && b;  // Logical AND: false
+let or = a || b;   // Logical OR: true
+let not = !a;      // Logical NOT: false
+```
+
+### Bitwise Operators
+
+```tocin
+let a = 5;  // Binary: 0101
+let b = 3;  // Binary: 0011
+
+let bitwiseAnd = a & b;    // Bitwise AND: 1 (0001)
+let bitwiseOr = a | b;     // Bitwise OR: 7 (0111)
+let bitwiseXor = a ^ b;    // Bitwise XOR: 6 (0110)
+let bitwiseNot = ~a;       // Bitwise NOT: -6 (depends on bit width)
+let leftShift = a << 1;    // Left shift: 10 (1010)
+let rightShift = a >> 1;   // Right shift: 2 (0010)
+```
+
+### String Operators
+
+```tocin
+let firstName = "John";
+let lastName = "Doe";
+
+// String concatenation
+let fullName = firstName + " " + lastName;  // "John Doe"
+
+// String interpolation
+let greeting = "Hello, ${firstName}!";  // "Hello, John!"
+```
+
+### Range Operators
+
+```tocin
+// Inclusive range (includes both start and end)
+for (let i in 1..5) {
+    println(i);  // Outputs: 1, 2, 3, 4, 5
+}
+
+// Exclusive range (excludes end)
+for (let i in 1..<5) {
+    println(i);  // Outputs: 1, 2, 3, 4
+}
+```
+
+## Control Flow
+
+### Conditional Statements
+
+#### If-Else Statements
+
+```tocin
+let age = 20;
+
+if (age >= 18) {
+    println("Adult");
+} else if (age >= 13) {
+    println("Teenager");
+} else {
+    println("Child");
+}
+```
+
+#### Switch Statements
+
+```tocin
+let day = 3;
+let dayName;
+
+switch (day) {
+    case 1:
+        dayName = "Monday";
+        break;
+    case 2:
+        dayName = "Tuesday";
+        break;
+    case 3:
+        dayName = "Wednesday";
+        break;
+    // ... other days
+    default:
+        dayName = "Invalid day";
+}
+
+println(dayName);  // Outputs: Wednesday
+```
+
+#### Pattern Matching
+
+```tocin
+let value: any = 42;
+
+match (value) {
+    case n is int if n > 0 => println("Positive integer: " + n.toString()),
+    case n is int if n < 0 => println("Negative integer: " + n.toString()),
+    case 0 => println("Zero"),
+    case s is string => println("String: " + s),
+    case _ => println("Other type")
+}
+```
+
+### Loops
+
+#### For Loops
+
+```tocin
+// Counting loop
+for (let i = 0; i < 5; i++) {
+    println(i);  // Outputs: 0, 1, 2, 3, 4
+}
+
+// Iterating over an array
+let names = ["Alice", "Bob", "Charlie"];
+for (let name of names) {
+    println(name);
+}
+
+// Iterating with index
+for (let [index, name] of names.entries()) {
+    println(index.toString() + ": " + name);
+}
+
+// Iterating over a range
+for (let i in 1..5) {
+    println(i);  // Outputs: 1, 2, 3, 4, 5
+}
+```
+
+#### While Loops
+
+```tocin
+// While loop
+let i = 0;
+while (i < 5) {
+    println(i);  // Outputs: 0, 1, 2, 3, 4
+    i++;
+}
+
+// Do-while loop (executes at least once)
+let j = 0;
+do {
+    println(j);  // Outputs: 0, 1, 2, 3, 4
+    j++;
+} while (j < 5);
+```
+
+#### Loop Control
+
+```tocin
+// Break statement
+for (let i = 0; i < 10; i++) {
+    if (i == 5) {
+        break;  // Exit the loop when i is 5
+    }
+    println(i);  // Outputs: 0, 1, 2, 3, 4
+}
+
+// Continue statement
+for (let i = 0; i < 5; i++) {
+    if (i == 2) {
+        continue;  // Skip the rest of the loop body when i is 2
+    }
+    println(i);  // Outputs: 0, 1, 3, 4
+}
+```
+
+## Functions
+
+### Function Declaration
+
+```tocin
+// Simple function with no parameters or return value
+def sayHello() -> void {
+    println("Hello!");
+}
+
+// Function with parameters and return value
+def add(a: int, b: int) -> int {
+    return a + b;
+}
+
+// Calling functions
+sayHello();  // Outputs: Hello!
+let sum = add(5, 3);  // sum = 8
+```
+
+### Default Parameters
+
+```tocin
+def greet(name: string, greeting: string = "Hello") -> void {
+    println(greeting + ", " + name + "!");
+}
+
+greet("Alice");             // Outputs: Hello, Alice!
+greet("Bob", "Welcome");    // Outputs: Welcome, Bob!
+```
+
+### Named Parameters
+
+```tocin
+def createRect(width: float, height: float, color: string = "black") -> void {
+    // Function implementation
+}
+
+// Call with named parameters
+createRect(width: 10.0, height: 5.0);
+createRect(width: 8.0, height: 4.0, color: "red");
+createRect(height: 3.0, width: 6.0);  // Order can be changed
+```
+
+### Variable Number of Arguments
+
+```tocin
+def sum(...numbers: int[]) -> int {
+    let result = 0;
+    for (let num of numbers) {
+        result += num;
+    }
+    return result;
+}
+
+let total = sum(1, 2, 3, 4, 5);  // total = 15
+```
+
+### Function Types and Lambdas
+
+```tocin
+// Function type
+type MathOperation = (int, int) -> int;
+
+// Function assigned to a variable
+let add: MathOperation = (a, b) => a + b;
+let subtract: MathOperation = (a, b) => a - b;
+
+// Using function variables
+println(add(5, 3));      // Outputs: 8
+println(subtract(5, 3));  // Outputs: 2
+
+// Higher-order function (takes a function as parameter)
+def applyOperation(a: int, b: int, operation: MathOperation) -> int {
+    return operation(a, b);
+}
+
+// Passing lambdas to functions
+println(applyOperation(5, 3, (a, b) => a * b));  // Outputs: 15
+```
+
+## Comments
+
+Tocin supports several types of comments:
+
+```tocin
+// Single-line comment
+
+/* 
+   Multi-line comment
+   spanning multiple lines
+*/
+
+/**
+ * Documentation comment
+ * 
+ * @param name The name to greet
+ * @return A greeting message
+ */
+def greet(name: string) -> string {
+    return "Hello, " + name + "!";
+}
+```
+
+## Error Handling
+
+### Try-Catch Blocks
+
+```tocin
+try {
+    let file = File.open("data.txt", "r");
+    let content = file.readAll();
+    file.close();
+} catch (e: FileNotFoundError) {
+    println("File not found: " + e.message);
+} catch (e: IOError) {
+    println("IO error: " + e.message);
+} catch (e) {
+    println("Unknown error: " + e.message);
+} finally {
+    // Clean-up code that always runs
+    println("Finished processing");
+}
+```
+
+### Result Type
+
+```tocin
+// Function that returns a Result
+def divide(a: int, b: int) -> Result<float, string> {
+    if (b == 0) {
+        return Result.ERROR("Cannot divide by zero");
+    }
+    return Result.OK(a / b);
+}
+
+// Using the Result
+let result = divide(10, 2);
+match (result) {
+    Result.OK(value) => println("Result: " + value.toString()),
+    Result.ERROR(message) => println("Error: " + message)
+}
+
+// Chaining Results
+let finalResult = divide(10, 2)
+    .map(value => value * 2)
+    .mapError(message => "Calculation error: " + message);
+```
+
+### Optional Chaining and Null Safety
+
+```tocin
+// Optional chaining
+let user = getUser("alice");  // Returns User? (may be null)
+let city = user?.address?.city;  // Returns string? (null if any part is null)
+
+// Unwrapping with a default value
+let displayCity = city ?? "Unknown";
+
+// Safe unwrapping with if-let
+if let userCity = user?.address?.city {
+    println("User lives in " + userCity);
+} else {
+    println("City information not available");
+}
+```
+
+### Defer Statement
+
+```tocin
+def processFile(path: string) -> void {
+    let file = File.open(path, "r");
+    
+    // defer ensures the file is closed even if an exception occurs
+    defer {
+        file.close();
+    }
+    
+    // Process the file...
+    let content = file.readAll();
+    // If an error occurs here, file.close() will still be called
+}
+```
+
+This completes the overview of Tocin's language basics. As you continue your journey with Tocin, explore the other guides for more advanced topics and the standard library reference for built-in functionality.

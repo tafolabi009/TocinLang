@@ -1,0 +1,401 @@
+/**
+ * Math Standard Library for Tocin
+ * Provides mathematical constants, functions, and data structures
+ */
+
+module math {
+    // Mathematical constants
+    export const PI: float64 = 3.14159265358979323846;
+    export const E: float64 = 2.71828182845904523536;
+    export const PHI: float64 = 1.61803398874989484820; // Golden ratio
+    export const SQRT2: float64 = 1.41421356237309504880;
+    
+    // Basic math functions
+    export def abs<T: Number>(x: T) -> T {
+        return if x < 0 { -x } else { x };
+    }
+    
+    export def sqrt(x: float64) -> float64 {
+        // Call to C standard library sqrt
+        @extern("math", "sqrt")
+        def _c_sqrt(x: float64) -> float64;
+        return _c_sqrt(x);
+    }
+    
+    export def pow(x: float64, y: float64) -> float64 {
+        // Call to C standard library pow
+        @extern("math", "pow")
+        def _c_pow(x: float64, y: float64) -> float64;
+        return _c_pow(x, y);
+    }
+    
+    export def exp(x: float64) -> float64 {
+        // Call to C standard library exp
+        @extern("math", "exp")
+        def _c_exp(x: float64) -> float64;
+        return _c_exp(x);
+    }
+    
+    export def log(x: float64) -> float64 {
+        // Call to C standard library log
+        @extern("math", "log")
+        def _c_log(x: float64) -> float64;
+        return _c_log(x);
+    }
+    
+    export def log10(x: float64) -> float64 {
+        // Call to C standard library log10
+        @extern("math", "log10")
+        def _c_log10(x: float64) -> float64;
+        return _c_log10(x);
+    }
+    
+    // Trigonometric functions
+    export def sin(x: float64) -> float64 {
+        @extern("math", "sin")
+        def _c_sin(x: float64) -> float64;
+        return _c_sin(x);
+    }
+    
+    export def cos(x: float64) -> float64 {
+        @extern("math", "cos")
+        def _c_cos(x: float64) -> float64;
+        return _c_cos(x);
+    }
+    
+    export def tan(x: float64) -> float64 {
+        @extern("math", "tan")
+        def _c_tan(x: float64) -> float64;
+        return _c_tan(x);
+    }
+    
+    // Inverse trigonometric functions
+    export def asin(x: float64) -> float64 {
+        @extern("math", "asin")
+        def _c_asin(x: float64) -> float64;
+        return _c_asin(x);
+    }
+    
+    export def acos(x: float64) -> float64 {
+        @extern("math", "acos")
+        def _c_acos(x: float64) -> float64;
+        return _c_acos(x);
+    }
+    
+    export def atan(x: float64) -> float64 {
+        @extern("math", "atan")
+        def _c_atan(x: float64) -> float64;
+        return _c_atan(x);
+    }
+    
+    export def atan2(y: float64, x: float64) -> float64 {
+        @extern("math", "atan2")
+        def _c_atan2(y: float64, x: float64) -> float64;
+        return _c_atan2(y, x);
+    }
+    
+    // Rounding functions
+    export def floor(x: float64) -> float64 {
+        @extern("math", "floor")
+        def _c_floor(x: float64) -> float64;
+        return _c_floor(x);
+    }
+    
+    export def ceil(x: float64) -> float64 {
+        @extern("math", "ceil")
+        def _c_ceil(x: float64) -> float64;
+        return _c_ceil(x);
+    }
+    
+    export def round(x: float64) -> float64 {
+        @extern("math", "round")
+        def _c_round(x: float64) -> float64;
+        return _c_round(x);
+    }
+}
+
+// Vector module for vector operations
+module math.vector {
+    // Generic Vector class
+    export class Vector<T: Number> {
+        private values: list<T>;
+        
+        constructor(values: list<T>) {
+            this.values = values;
+        }
+        
+        // Get vector dimension
+        def dimension() -> int {
+            return this.values.length();
+        }
+        
+        // Access elements
+        def get(index: int) -> T {
+            return this.values[index];
+        }
+        
+        def set(index: int, value: T) {
+            this.values[index] = value;
+        }
+        
+        // Vector addition
+        def add(other: Vector<T>) -> Vector<T> {
+            if this.dimension() != other.dimension() {
+                throw "Vector dimensions do not match";
+            }
+            
+            let result = new list<T>(this.dimension());
+            for i in 0..this.dimension() {
+                result[i] = this.values[i] + other.values[i];
+            }
+            
+            return new Vector<T>(result);
+        }
+        
+        // Vector subtraction
+        def subtract(other: Vector<T>) -> Vector<T> {
+            if this.dimension() != other.dimension() {
+                throw "Vector dimensions do not match";
+            }
+            
+            let result = new list<T>(this.dimension());
+            for i in 0..this.dimension() {
+                result[i] = this.values[i] - other.values[i];
+            }
+            
+            return new Vector<T>(result);
+        }
+        
+        // Scalar multiplication
+        def scale(scalar: T) -> Vector<T> {
+            let result = new list<T>(this.dimension());
+            for i in 0..this.dimension() {
+                result[i] = this.values[i] * scalar;
+            }
+            
+            return new Vector<T>(result);
+        }
+        
+        // Dot product
+        def dot(other: Vector<T>) -> T {
+            if this.dimension() != other.dimension() {
+                throw "Vector dimensions do not match";
+            }
+            
+            let result: T = 0;
+            for i in 0..this.dimension() {
+                result += this.values[i] * other.values[i];
+            }
+            
+            return result;
+        }
+        
+        // Magnitude (length) of vector
+        def magnitude() -> float64 {
+            let sum: float64 = 0.0;
+            for i in 0..this.dimension() {
+                sum += (this.values[i] * this.values[i]) as float64;
+            }
+            
+            return sqrt(sum);
+        }
+        
+        // Normalize vector
+        def normalize() -> Vector<float64> {
+            let mag = this.magnitude();
+            let result = new list<float64>(this.dimension());
+            
+            for i in 0..this.dimension() {
+                result[i] = (this.values[i] as float64) / mag;
+            }
+            
+            return new Vector<float64>(result);
+        }
+    }
+    
+    // Specialized 3D vector for common operations
+    export class Vector3 {
+        x: float64;
+        y: float64;
+        z: float64;
+        
+        constructor(x: float64, y: float64, z: float64) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+        
+        // Vector addition
+        def add(other: Vector3) -> Vector3 {
+            return new Vector3(
+                this.x + other.x,
+                this.y + other.y,
+                this.z + other.z
+            );
+        }
+        
+        // Vector subtraction
+        def subtract(other: Vector3) -> Vector3 {
+            return new Vector3(
+                this.x - other.x,
+                this.y - other.y,
+                this.z - other.z
+            );
+        }
+        
+        // Scalar multiplication
+        def scale(scalar: float64) -> Vector3 {
+            return new Vector3(
+                this.x * scalar,
+                this.y * scalar,
+                this.z * scalar
+            );
+        }
+        
+        // Dot product
+        def dot(other: Vector3) -> float64 {
+            return this.x * other.x + this.y * other.y + this.z * other.z;
+        }
+        
+        // Cross product (specific to 3D vectors)
+        def cross(other: Vector3) -> Vector3 {
+            return new Vector3(
+                this.y * other.z - this.z * other.y,
+                this.z * other.x - this.x * other.z,
+                this.x * other.y - this.y * other.x
+            );
+        }
+        
+        // Magnitude (length) of vector
+        def magnitude() -> float64 {
+            return sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+        }
+        
+        // Normalize vector
+        def normalize() -> Vector3 {
+            let mag = this.magnitude();
+            return new Vector3(
+                this.x / mag,
+                this.y / mag,
+                this.z / mag
+            );
+        }
+    }
+}
+
+// Matrix module for matrix operations
+module math.matrix {
+    // Generic Matrix class
+    export class Matrix<T: Number> {
+        private values: list<list<T>>;
+        private rows: int;
+        private cols: int;
+        
+        constructor(rows: int, cols: int) {
+            this.rows = rows;
+            this.cols = cols;
+            this.values = new list<list<T>>(rows);
+            
+            for i in 0..rows {
+                this.values[i] = new list<T>(cols);
+                for j in 0..cols {
+                    this.values[i][j] = 0 as T;
+                }
+            }
+        }
+        
+        // Create identity matrix
+        static def identity<T: Number>(size: int) -> Matrix<T> {
+            let result = new Matrix<T>(size, size);
+            for i in 0..size {
+                result.values[i][i] = 1 as T;
+            }
+            return result;
+        }
+        
+        // Access elements
+        def get(row: int, col: int) -> T {
+            return this.values[row][col];
+        }
+        
+        def set(row: int, col: int, value: T) {
+            this.values[row][col] = value;
+        }
+        
+        // Matrix addition
+        def add(other: Matrix<T>) -> Matrix<T> {
+            if this.rows != other.rows || this.cols != other.cols {
+                throw "Matrix dimensions do not match";
+            }
+            
+            let result = new Matrix<T>(this.rows, this.cols);
+            for i in 0..this.rows {
+                for j in 0..this.cols {
+                    result.values[i][j] = this.values[i][j] + other.values[i][j];
+                }
+            }
+            
+            return result;
+        }
+        
+        // Matrix subtraction
+        def subtract(other: Matrix<T>) -> Matrix<T> {
+            if this.rows != other.rows || this.cols != other.cols {
+                throw "Matrix dimensions do not match";
+            }
+            
+            let result = new Matrix<T>(this.rows, this.cols);
+            for i in 0..this.rows {
+                for j in 0..this.cols {
+                    result.values[i][j] = this.values[i][j] - other.values[i][j];
+                }
+            }
+            
+            return result;
+        }
+        
+        // Scalar multiplication
+        def scale(scalar: T) -> Matrix<T> {
+            let result = new Matrix<T>(this.rows, this.cols);
+            for i in 0..this.rows {
+                for j in 0..this.cols {
+                    result.values[i][j] = this.values[i][j] * scalar;
+                }
+            }
+            
+            return result;
+        }
+        
+        // Matrix multiplication
+        def multiply(other: Matrix<T>) -> Matrix<T> {
+            if this.cols != other.rows {
+                throw "Matrix dimensions incompatible for multiplication";
+            }
+            
+            let result = new Matrix<T>(this.rows, other.cols);
+            for i in 0..this.rows {
+                for j in 0..other.cols {
+                    let sum: T = 0 as T;
+                    for k in 0..this.cols {
+                        sum += this.values[i][k] * other.values[k][j];
+                    }
+                    result.values[i][j] = sum;
+                }
+            }
+            
+            return result;
+        }
+        
+        // Transpose matrix
+        def transpose() -> Matrix<T> {
+            let result = new Matrix<T>(this.cols, this.rows);
+            for i in 0..this.rows {
+                for j in 0..this.cols {
+                    result.values[j][i] = this.values[i][j];
+                }
+            }
+            
+            return result;
+        }
+    }
+} 

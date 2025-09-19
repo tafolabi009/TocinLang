@@ -1,0 +1,1079 @@
+/**
+ * Tocin Standard Library - Geometry Module
+ * Provides geometric primitives and operations for 2D and 3D space.
+ */
+
+import math.basic;
+import math.linear;
+
+/**
+ * 2D Vector class
+ */
+class Vector2 {
+    property x: float;
+    property y: float;
+    
+    def initialize(x: float = 0.0, y: float = 0.0) {
+        self.x = x;
+        self.y = y;
+    }
+    
+    /**
+     * Create a Vector2 from an array
+     */
+    static def fromArray(arr: Array<float>) -> Vector2 {
+        if (arr.length < 2) {
+            throw Error("Array must have at least 2 elements");
+        }
+        return new Vector2(arr[0], arr[1]);
+    }
+    
+    /**
+     * Convert Vector2 to an array
+     */
+    def toArray() -> Array<float> {
+        return [self.x, self.y];
+    }
+    
+    /**
+     * Create a copy of this vector
+     */
+    def clone() -> Vector2 {
+        return new Vector2(self.x, self.y);
+    }
+    
+    /**
+     * Set vector components
+     */
+    def set(x: float, y: float) -> Vector2 {
+        self.x = x;
+        self.y = y;
+        return self;
+    }
+    
+    /**
+     * Add a vector to this vector
+     */
+    def add(v: Vector2) -> Vector2 {
+        return new Vector2(self.x + v.x, self.y + v.y);
+    }
+    
+    /**
+     * Subtract a vector from this vector
+     */
+    def subtract(v: Vector2) -> Vector2 {
+        return new Vector2(self.x - v.x, self.y - v.y);
+    }
+    
+    /**
+     * Multiply this vector by a scalar
+     */
+    def scale(scalar: float) -> Vector2 {
+        return new Vector2(self.x * scalar, self.y * scalar);
+    }
+    
+    /**
+     * Component-wise multiplication with another vector
+     */
+    def multiply(v: Vector2) -> Vector2 {
+        return new Vector2(self.x * v.x, self.y * v.y);
+    }
+    
+    /**
+     * Component-wise division with another vector
+     */
+    def divide(v: Vector2) -> Vector2 {
+        if (v.x == 0 || v.y == 0) {
+            throw Error("Division by zero");
+        }
+        return new Vector2(self.x / v.x, self.y / v.y);
+    }
+    
+    /**
+     * Calculate dot product with another vector
+     */
+    def dot(v: Vector2) -> float {
+        return self.x * v.x + self.y * v.y;
+    }
+    
+    /**
+     * Calculate 2D cross product magnitude (z-component of cross product)
+     */
+    def cross(v: Vector2) -> float {
+        return self.x * v.y - self.y * v.x;
+    }
+    
+    /**
+     * Calculate squared length of this vector
+     */
+    def lengthSquared() -> float {
+        return self.x * self.x + self.y * self.y;
+    }
+    
+    /**
+     * Calculate length of this vector
+     */
+    def length() -> float {
+        return math.sqrt(self.lengthSquared());
+    }
+    
+    /**
+     * Calculate squared distance to another vector
+     */
+    def distanceSquared(v: Vector2) -> float {
+        let dx = self.x - v.x;
+        let dy = self.y - v.y;
+        return dx * dx + dy * dy;
+    }
+    
+    /**
+     * Calculate distance to another vector
+     */
+    def distance(v: Vector2) -> float {
+        return math.sqrt(self.distanceSquared(v));
+    }
+    
+    /**
+     * Normalize this vector
+     */
+    def normalize() -> Vector2 {
+        let len = self.length();
+        if (len == 0) {
+            return self.clone();
+        }
+        return new Vector2(self.x / len, self.y / len);
+    }
+    
+    /**
+     * Limit the magnitude of this vector
+     */
+    def limit(max: float) -> Vector2 {
+        let len = self.length();
+        if (len > max) {
+            return self.normalize().scale(max);
+        }
+        return self.clone();
+    }
+    
+    /**
+     * Rotate vector by angle (in radians)
+     */
+    def rotate(angle: float) -> Vector2 {
+        let cos_angle = math.cos(angle);
+        let sin_angle = math.sin(angle);
+        
+        return new Vector2(
+            self.x * cos_angle - self.y * sin_angle,
+            self.x * sin_angle + self.y * cos_angle
+        );
+    }
+    
+    /**
+     * Calculate angle of this vector (from positive x-axis)
+     */
+    def angle() -> float {
+        return math.atan2(self.y, self.x);
+    }
+    
+    /**
+     * Calculate angle between this vector and another vector
+     */
+    def angleBetween(v: Vector2) -> float {
+        let dot = self.dot(v);
+        let det = self.cross(v);
+        return math.atan2(det, dot);
+    }
+    
+    /**
+     * Linear interpolation between this vector and another
+     */
+    def lerp(v: Vector2, t: float) -> Vector2 {
+        t = math.clamp(t, 0.0, 1.0);
+        return new Vector2(
+            self.x + (v.x - self.x) * t,
+            self.y + (v.y - self.y) * t
+        );
+    }
+    
+    /**
+     * Check if this vector equals another vector
+     */
+    def equals(v: Vector2, epsilon: float = 1e-10) -> bool {
+        return math.abs(self.x - v.x) < epsilon && 
+               math.abs(self.y - v.y) < epsilon;
+    }
+    
+    /**
+     * Convert vector to string
+     */
+    def toString() -> string {
+        return `Vector2(${self.x}, ${self.y})`;
+    }
+    
+    // Static vectors
+    static property zero: Vector2 = new Vector2(0, 0);
+    static property one: Vector2 = new Vector2(1, 1);
+    static property up: Vector2 = new Vector2(0, 1);
+    static property down: Vector2 = new Vector2(0, -1);
+    static property left: Vector2 = new Vector2(-1, 0);
+    static property right: Vector2 = new Vector2(1, 0);
+}
+
+/**
+ * 3D Vector class
+ */
+class Vector3 {
+    property x: float;
+    property y: float;
+    property z: float;
+    
+    def initialize(x: float = 0.0, y: float = 0.0, z: float = 0.0) {
+        self.x = x;
+        self.y = y;
+        self.z = z;
+    }
+    
+    /**
+     * Create a Vector3 from an array
+     */
+    static def fromArray(arr: Array<float>) -> Vector3 {
+        if (arr.length < 3) {
+            throw Error("Array must have at least 3 elements");
+        }
+        return new Vector3(arr[0], arr[1], arr[2]);
+    }
+    
+    /**
+     * Convert Vector3 to an array
+     */
+    def toArray() -> Array<float> {
+        return [self.x, self.y, self.z];
+    }
+    
+    /**
+     * Create a copy of this vector
+     */
+    def clone() -> Vector3 {
+        return new Vector3(self.x, self.y, self.z);
+    }
+    
+    /**
+     * Set vector components
+     */
+    def set(x: float, y: float, z: float) -> Vector3 {
+        self.x = x;
+        self.y = y;
+        self.z = z;
+        return self;
+    }
+    
+    /**
+     * Add a vector to this vector
+     */
+    def add(v: Vector3) -> Vector3 {
+        return new Vector3(self.x + v.x, self.y + v.y, self.z + v.z);
+    }
+    
+    /**
+     * Subtract a vector from this vector
+     */
+    def subtract(v: Vector3) -> Vector3 {
+        return new Vector3(self.x - v.x, self.y - v.y, self.z - v.z);
+    }
+    
+    /**
+     * Multiply this vector by a scalar
+     */
+    def scale(scalar: float) -> Vector3 {
+        return new Vector3(self.x * scalar, self.y * scalar, self.z * scalar);
+    }
+    
+    /**
+     * Component-wise multiplication with another vector
+     */
+    def multiply(v: Vector3) -> Vector3 {
+        return new Vector3(self.x * v.x, self.y * v.y, self.z * v.z);
+    }
+    
+    /**
+     * Component-wise division with another vector
+     */
+    def divide(v: Vector3) -> Vector3 {
+        if (v.x == 0 || v.y == 0 || v.z == 0) {
+            throw Error("Division by zero");
+        }
+        return new Vector3(self.x / v.x, self.y / v.y, self.z / v.z);
+    }
+    
+    /**
+     * Calculate dot product with another vector
+     */
+    def dot(v: Vector3) -> float {
+        return self.x * v.x + self.y * v.y + self.z * v.z;
+    }
+    
+    /**
+     * Calculate cross product with another vector
+     */
+    def cross(v: Vector3) -> Vector3 {
+        return new Vector3(
+            self.y * v.z - self.z * v.y,
+            self.z * v.x - self.x * v.z,
+            self.x * v.y - self.y * v.x
+        );
+    }
+    
+    /**
+     * Calculate squared length of this vector
+     */
+    def lengthSquared() -> float {
+        return self.x * self.x + self.y * self.y + self.z * self.z;
+    }
+    
+    /**
+     * Calculate length of this vector
+     */
+    def length() -> float {
+        return math.sqrt(self.lengthSquared());
+    }
+    
+    /**
+     * Calculate squared distance to another vector
+     */
+    def distanceSquared(v: Vector3) -> float {
+        let dx = self.x - v.x;
+        let dy = self.y - v.y;
+        let dz = self.z - v.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+    
+    /**
+     * Calculate distance to another vector
+     */
+    def distance(v: Vector3) -> float {
+        return math.sqrt(self.distanceSquared(v));
+    }
+    
+    /**
+     * Normalize this vector
+     */
+    def normalize() -> Vector3 {
+        let len = self.length();
+        if (len == 0) {
+            return self.clone();
+        }
+        return new Vector3(self.x / len, self.y / len, self.z / len);
+    }
+    
+    /**
+     * Limit the magnitude of this vector
+     */
+    def limit(max: float) -> Vector3 {
+        let len = self.length();
+        if (len > max) {
+            return self.normalize().scale(max);
+        }
+        return self.clone();
+    }
+    
+    /**
+     * Linear interpolation between this vector and another
+     */
+    def lerp(v: Vector3, t: float) -> Vector3 {
+        t = math.clamp(t, 0.0, 1.0);
+        return new Vector3(
+            self.x + (v.x - self.x) * t,
+            self.y + (v.y - self.y) * t,
+            self.z + (v.z - self.z) * t
+        );
+    }
+    
+    /**
+     * Check if this vector equals another vector
+     */
+    def equals(v: Vector3, epsilon: float = 1e-10) -> bool {
+        return math.abs(self.x - v.x) < epsilon && 
+               math.abs(self.y - v.y) < epsilon &&
+               math.abs(self.z - v.z) < epsilon;
+    }
+    
+    /**
+     * Convert vector to string
+     */
+    def toString() -> string {
+        return `Vector3(${self.x}, ${self.y}, ${self.z})`;
+    }
+    
+    // Static vectors
+    static property zero: Vector3 = new Vector3(0, 0, 0);
+    static property one: Vector3 = new Vector3(1, 1, 1);
+    static property up: Vector3 = new Vector3(0, 1, 0);
+    static property down: Vector3 = new Vector3(0, -1, 0);
+    static property left: Vector3 = new Vector3(-1, 0, 0);
+    static property right: Vector3 = new Vector3(1, 0, 0);
+    static property forward: Vector3 = new Vector3(0, 0, 1);
+    static property backward: Vector3 = new Vector3(0, 0, -1);
+}
+
+/**
+ * Rectangle class
+ */
+class Rect {
+    property x: float;
+    property y: float;
+    property width: float;
+    property height: float;
+    
+    def initialize(x: float = 0.0, y: float = 0.0, width: float = 0.0, height: float = 0.0) {
+        self.x = x;
+        self.y = y;
+        self.width = width;
+        self.height = height;
+    }
+    
+    /**
+     * Create a rectangle from two points
+     */
+    static def fromPoints(p1: Vector2, p2: Vector2) -> Rect {
+        let minX = math.min(p1.x, p2.x);
+        let minY = math.min(p1.y, p2.y);
+        let width = math.abs(p2.x - p1.x);
+        let height = math.abs(p2.y - p1.y);
+        
+        return new Rect(minX, minY, width, height);
+    }
+    
+    /**
+     * Clone this rectangle
+     */
+    def clone() -> Rect {
+        return new Rect(self.x, self.y, self.width, self.height);
+    }
+    
+    /**
+     * Get the left edge of the rectangle
+     */
+    def left() -> float {
+        return self.x;
+    }
+    
+    /**
+     * Get the right edge of the rectangle
+     */
+    def right() -> float {
+        return self.x + self.width;
+    }
+    
+    /**
+     * Get the top edge of the rectangle
+     */
+    def top() -> float {
+        return self.y;
+    }
+    
+    /**
+     * Get the bottom edge of the rectangle
+     */
+    def bottom() -> float {
+        return self.y + self.height;
+    }
+    
+    /**
+     * Get the top-left corner
+     */
+    def topLeft() -> Vector2 {
+        return new Vector2(self.x, self.y);
+    }
+    
+    /**
+     * Get the top-right corner
+     */
+    def topRight() -> Vector2 {
+        return new Vector2(self.x + self.width, self.y);
+    }
+    
+    /**
+     * Get the bottom-left corner
+     */
+    def bottomLeft() -> Vector2 {
+        return new Vector2(self.x, self.y + self.height);
+    }
+    
+    /**
+     * Get the bottom-right corner
+     */
+    def bottomRight() -> Vector2 {
+        return new Vector2(self.x + self.width, self.y + self.height);
+    }
+    
+    /**
+     * Get the center of the rectangle
+     */
+    def center() -> Vector2 {
+        return new Vector2(self.x + self.width / 2, self.y + self.height / 2);
+    }
+    
+    /**
+     * Check if the rectangle contains a point
+     */
+    def contains(point: Vector2) -> bool {
+        return point.x >= self.x && 
+               point.x <= self.x + self.width && 
+               point.y >= self.y && 
+               point.y <= self.y + self.height;
+    }
+    
+    /**
+     * Check if the rectangle intersects another rectangle
+     */
+    def intersects(rect: Rect) -> bool {
+        return self.x < rect.x + rect.width && 
+               self.x + self.width > rect.x && 
+               self.y < rect.y + rect.height && 
+               self.y + self.height > rect.y;
+    }
+    
+    /**
+     * Get the intersection of this rectangle with another
+     */
+    def intersection(rect: Rect) -> Rect? {
+        let x1 = math.max(self.x, rect.x);
+        let y1 = math.max(self.y, rect.y);
+        let x2 = math.min(self.x + self.width, rect.x + rect.width);
+        let y2 = math.min(self.y + self.height, rect.y + rect.height);
+        
+        if (x1 < x2 && y1 < y2) {
+            return new Rect(x1, y1, x2 - x1, y2 - y1);
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Get the union of this rectangle with another
+     */
+    def union(rect: Rect) -> Rect {
+        let x1 = math.min(self.x, rect.x);
+        let y1 = math.min(self.y, rect.y);
+        let x2 = math.max(self.x + self.width, rect.x + rect.width);
+        let y2 = math.max(self.y + self.height, rect.y + rect.height);
+        
+        return new Rect(x1, y1, x2 - x1, y2 - y1);
+    }
+    
+    /**
+     * Expand rectangle by the specified amount
+     */
+    def expand(amount: float) -> Rect {
+        return new Rect(
+            self.x - amount,
+            self.y - amount,
+            self.width + amount * 2,
+            self.height + amount * 2
+        );
+    }
+    
+    /**
+     * Convert rectangle to string
+     */
+    def toString() -> string {
+        return `Rect(${self.x}, ${self.y}, ${self.width}, ${self.height})`;
+    }
+}
+
+/**
+ * Circle class
+ */
+class Circle {
+    property center: Vector2;
+    property radius: float;
+    
+    def initialize(center: Vector2, radius: float) {
+        self.center = center;
+        self.radius = radius;
+    }
+    
+    /**
+     * Clone this circle
+     */
+    def clone() -> Circle {
+        return new Circle(self.center.clone(), self.radius);
+    }
+    
+    /**
+     * Check if the circle contains a point
+     */
+    def contains(point: Vector2) -> bool {
+        return self.center.distanceSquared(point) <= self.radius * self.radius;
+    }
+    
+    /**
+     * Check if the circle intersects another circle
+     */
+    def intersectsCircle(circle: Circle) -> bool {
+        let distance = self.center.distance(circle.center);
+        return distance <= self.radius + circle.radius;
+    }
+    
+    /**
+     * Check if the circle intersects a rectangle
+     */
+    def intersectsRect(rect: Rect) -> bool {
+        // Find closest point on rectangle to circle center
+        let closestX = math.clamp(self.center.x, rect.x, rect.x + rect.width);
+        let closestY = math.clamp(self.center.y, rect.y, rect.y + rect.height);
+        
+        // Calculate distance between the closest point and circle center
+        let distance = self.center.distance(new Vector2(closestX, closestY));
+        
+        return distance <= self.radius;
+    }
+    
+    /**
+     * Calculate area of the circle
+     */
+    def area() -> float {
+        return math.PI * self.radius * self.radius;
+    }
+    
+    /**
+     * Calculate circumference of the circle
+     */
+    def circumference() -> float {
+        return 2 * math.PI * self.radius;
+    }
+    
+    /**
+     * Convert circle to string
+     */
+    def toString() -> string {
+        return `Circle(center: ${self.center.toString()}, radius: ${self.radius})`;
+    }
+}
+
+/**
+ * Line segment class
+ */
+class LineSegment {
+    property start: Vector2;
+    property end: Vector2;
+    
+    def initialize(start: Vector2, end: Vector2) {
+        self.start = start;
+        self.end = end;
+    }
+    
+    /**
+     * Clone this line segment
+     */
+    def clone() -> LineSegment {
+        return new LineSegment(self.start.clone(), self.end.clone());
+    }
+    
+    /**
+     * Calculate the length of the line segment
+     */
+    def length() -> float {
+        return self.start.distance(self.end);
+    }
+    
+    /**
+     * Calculate the squared length of the line segment
+     */
+    def lengthSquared() -> float {
+        return self.start.distanceSquared(self.end);
+    }
+    
+    /**
+     * Get the direction vector of the line segment
+     */
+    def direction() -> Vector2 {
+        return self.end.subtract(self.start).normalize();
+    }
+    
+    /**
+     * Get the midpoint of the line segment
+     */
+    def midpoint() -> Vector2 {
+        return new Vector2(
+            (self.start.x + self.end.x) / 2,
+            (self.start.y + self.end.y) / 2
+        );
+    }
+    
+    /**
+     * Check if this line segment intersects another line segment
+     */
+    def intersects(line: LineSegment) -> bool {
+        // Calculate directions
+        let p = self.start;
+        let r = self.end.subtract(self.start);
+        let q = line.start;
+        let s = line.end.subtract(line.start);
+        
+        // Calculate determinant
+        let determinant = r.cross(s);
+        
+        // If determinant is zero, lines are parallel or collinear
+        if (determinant == 0) {
+            return false;
+        }
+        
+        // Calculate parameters
+        let t = q.subtract(p).cross(s) / determinant;
+        let u = q.subtract(p).cross(r) / determinant;
+        
+        // Check if intersection is within both line segments
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+    }
+    
+    /**
+     * Calculate intersection point with another line segment
+     */
+    def intersection(line: LineSegment) -> Vector2? {
+        // Calculate directions
+        let p = self.start;
+        let r = self.end.subtract(self.start);
+        let q = line.start;
+        let s = line.end.subtract(line.start);
+        
+        // Calculate determinant
+        let determinant = r.cross(s);
+        
+        // If determinant is zero, lines are parallel or collinear
+        if (determinant == 0) {
+            return null;
+        }
+        
+        // Calculate parameters
+        let t = q.subtract(p).cross(s) / determinant;
+        let u = q.subtract(p).cross(r) / determinant;
+        
+        // Check if intersection is within both line segments
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+            return p.add(r.scale(t));
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Calculate the closest point on the line segment to a point
+     */
+    def closestPoint(point: Vector2) -> Vector2 {
+        let line_vec = self.end.subtract(self.start);
+        let point_vec = point.subtract(self.start);
+        
+        // Calculate projection
+        let line_len = line_vec.length();
+        let line_unitvec = line_vec.scale(1 / line_len);
+        let projection = point_vec.dot(line_unitvec);
+        
+        // Calculate closest point
+        if (projection < 0) {
+            return self.start;
+        } else if (projection > line_len) {
+            return self.end;
+        } else {
+            return self.start.add(line_unitvec.scale(projection));
+        }
+    }
+    
+    /**
+     * Calculate the distance of the line segment to a point
+     */
+    def distanceToPoint(point: Vector2) -> float {
+        return point.distance(self.closestPoint(point));
+    }
+    
+    /**
+     * Convert line segment to string
+     */
+    def toString() -> string {
+        return `LineSegment(${self.start.toString()} to ${self.end.toString()})`;
+    }
+}
+
+/**
+ * Transformation for 2D space
+ */
+class Transform2D {
+    property position: Vector2;
+    property rotation: float;
+    property scale: Vector2;
+    
+    def initialize(position: Vector2 = Vector2.zero, rotation: float = 0.0, scale: Vector2 = Vector2.one) {
+        self.position = position;
+        self.rotation = rotation;
+        self.scale = scale;
+    }
+    
+    /**
+     * Clone this transform
+     */
+    def clone() -> Transform2D {
+        return new Transform2D(
+            self.position.clone(),
+            self.rotation,
+            self.scale.clone()
+        );
+    }
+    
+    /**
+     * Transform a point from local space to world space
+     */
+    def transformPoint(point: Vector2) -> Vector2 {
+        // Scale
+        let result = new Vector2(
+            point.x * self.scale.x,
+            point.y * self.scale.y
+        );
+        
+        // Rotate
+        let cos_r = math.cos(self.rotation);
+        let sin_r = math.sin(self.rotation);
+        
+        let rx = result.x * cos_r - result.y * sin_r;
+        let ry = result.x * sin_r + result.y * cos_r;
+        
+        result.x = rx;
+        result.y = ry;
+        
+        // Translate
+        result.x += self.position.x;
+        result.y += self.position.y;
+        
+        return result;
+    }
+    
+    /**
+     * Transform a point from world space to local space
+     */
+    def inverseTransformPoint(point: Vector2) -> Vector2 {
+        // Inverse translate
+        let result = new Vector2(
+            point.x - self.position.x,
+            point.y - self.position.y
+        );
+        
+        // Inverse rotate
+        let cos_r = math.cos(-self.rotation);
+        let sin_r = math.sin(-self.rotation);
+        
+        let rx = result.x * cos_r - result.y * sin_r;
+        let ry = result.x * sin_r + result.y * cos_r;
+        
+        result.x = rx;
+        result.y = ry;
+        
+        // Inverse scale
+        if (self.scale.x != 0 && self.scale.y != 0) {
+            result.x /= self.scale.x;
+            result.y /= self.scale.y;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Combine this transform with another transform
+     */
+    def combine(transform: Transform2D) -> Transform2D {
+        let result = new Transform2D();
+        
+        // Scale gets combined by multiplication
+        result.scale = new Vector2(
+            self.scale.x * transform.scale.x,
+            self.scale.y * transform.scale.y
+        );
+        
+        // Rotation gets added
+        result.rotation = self.rotation + transform.rotation;
+        
+        // Position gets transformed and added
+        let transformedPosition = self.transformPoint(transform.position);
+        result.position = transformedPosition;
+        
+        return result;
+    }
+    
+    /**
+     * Convert transform to string
+     */
+    def toString() -> string {
+        return `Transform2D(position: ${self.position.toString()}, rotation: ${self.rotation}, scale: ${self.scale.toString()})`;
+    }
+}
+
+/**
+ * Polygon class
+ */
+class Polygon {
+    property vertices: Array<Vector2>;
+    
+    def initialize(vertices: Array<Vector2>) {
+        if (vertices.length < 3) {
+            throw Error("A polygon must have at least 3 vertices");
+        }
+        
+        self.vertices = vertices;
+    }
+    
+    /**
+     * Clone this polygon
+     */
+    def clone() -> Polygon {
+        let new_vertices = [];
+        for (let vertex of self.vertices) {
+            new_vertices.push(vertex.clone());
+        }
+        return new Polygon(new_vertices);
+    }
+    
+    /**
+     * Get the number of vertices in the polygon
+     */
+    def getVertexCount() -> int {
+        return self.vertices.length;
+    }
+    
+    /**
+     * Get the edges of the polygon as line segments
+     */
+    def getEdges() -> Array<LineSegment> {
+        let edges = [];
+        let vertexCount = self.vertices.length;
+        
+        for (let i = 0; i < vertexCount; i++) {
+            let j = (i + 1) % vertexCount;
+            edges.push(new LineSegment(self.vertices[i], self.vertices[j]));
+        }
+        
+        return edges;
+    }
+    
+    /**
+     * Calculate the perimeter of the polygon
+     */
+    def perimeter() -> float {
+        let result = 0.0;
+        let vertexCount = self.vertices.length;
+        
+        for (let i = 0; i < vertexCount; i++) {
+            let j = (i + 1) % vertexCount;
+            result += self.vertices[i].distance(self.vertices[j]);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Calculate the area of the polygon
+     */
+    def area() -> float {
+        let result = 0.0;
+        let vertexCount = self.vertices.length;
+        
+        for (let i = 0; i < vertexCount; i++) {
+            let j = (i + 1) % vertexCount;
+            result += self.vertices[i].x * self.vertices[j].y;
+            result -= self.vertices[j].x * self.vertices[i].y;
+        }
+        
+        return math.abs(result) / 2;
+    }
+    
+    /**
+     * Calculate the centroid (geometric center) of the polygon
+     */
+    def centroid() -> Vector2 {
+        let result = new Vector2();
+        let vertexCount = self.vertices.length;
+        let area = self.area() * 6;
+        
+        for (let i = 0; i < vertexCount; i++) {
+            let j = (i + 1) % vertexCount;
+            let cross = self.vertices[i].cross(self.vertices[j]);
+            
+            result.x += (self.vertices[i].x + self.vertices[j].x) * cross;
+            result.y += (self.vertices[i].y + self.vertices[j].y) * cross;
+        }
+        
+        return new Vector2(result.x / area, result.y / area);
+    }
+    
+    /**
+     * Check if a point is inside the polygon
+     */
+    def contains(point: Vector2) -> bool {
+        let inside = false;
+        let vertexCount = self.vertices.length;
+        
+        for (let i = 0, j = vertexCount - 1; i < vertexCount; j = i++) {
+            let vi = self.vertices[i];
+            let vj = self.vertices[j];
+            
+            if (((vi.y > point.y) != (vj.y > point.y)) &&
+                (point.x < (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x)) {
+                inside = !inside;
+            }
+        }
+        
+        return inside;
+    }
+    
+    /**
+     * Transform the polygon using a transform
+     */
+    def transform(transform: Transform2D) -> Polygon {
+        let new_vertices = [];
+        
+        for (let vertex of self.vertices) {
+            new_vertices.push(transform.transformPoint(vertex));
+        }
+        
+        return new Polygon(new_vertices);
+    }
+    
+    /**
+     * Get the axis-aligned bounding box of the polygon
+     */
+    def getBoundingBox() -> Rect {
+        if (self.vertices.length == 0) {
+            return new Rect();
+        }
+        
+        let minX = self.vertices[0].x;
+        let minY = self.vertices[0].y;
+        let maxX = minX;
+        let maxY = minY;
+        
+        for (let i = 1; i < self.vertices.length; i++) {
+            let vertex = self.vertices[i];
+            
+            minX = math.min(minX, vertex.x);
+            minY = math.min(minY, vertex.y);
+            maxX = math.max(maxX, vertex.x);
+            maxY = math.max(maxY, vertex.y);
+        }
+        
+        return new Rect(minX, minY, maxX - minX, maxY - minY);
+    }
+    
+    /**
+     * Convert polygon to string
+     */
+    def toString() -> string {
+        let result = "Polygon(";
+        
+        for (let i = 0; i < self.vertices.length; i++) {
+            result += self.vertices[i].toString();
+            
+            if (i < self.vertices.length - 1) {
+                result += ", ";
+            }
+        }
+        
+        return result + ")";
+    }
+} 

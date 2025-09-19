@@ -1,0 +1,895 @@
+/**
+ * Tocin Standard Library - Audio Processing Module
+ * Provides utilities for audio manipulation and analysis.
+ */
+
+import math.linear;
+import math.stats;
+
+/**
+ * AudioBuffer represents audio data in memory
+ */
+class AudioBuffer {
+    property sampleRate: int;
+    property channels: int;
+    property frames: int;
+    property data: Array<Array<float>>;
+    
+    def initialize(channels: int = 1, frames: int = 0, sampleRate: int = 44100) {
+        self.channels = channels;
+        self.frames = frames;
+        self.sampleRate = sampleRate;
+        
+        // Initialize data array
+        self.data = [];
+        for (let i = 0; i < channels; i++) {
+            self.data.push(new Array(frames).fill(0.0));
+        }
+    }
+    
+    /**
+     * Get a sample at a specific channel and frame
+     */
+    def getSample(channel: int, frame: int) -> float {
+        if (channel < 0 || channel >= self.channels) {
+            throw ValueError("Channel index out of range");
+        }
+        
+        if (frame < 0 || frame >= self.frames) {
+            throw ValueError("Frame index out of range");
+        }
+        
+        return self.data[channel][frame];
+    }
+    
+    /**
+     * Set a sample at a specific channel and frame
+     */
+    def setSample(channel: int, frame: int, value: float) {
+        if (channel < 0 || channel >= self.channels) {
+            throw ValueError("Channel index out of range");
+        }
+        
+        if (frame < 0 || frame >= self.frames) {
+            throw ValueError("Frame index out of range");
+        }
+        
+        self.data[channel][frame] = value;
+    }
+    
+    /**
+     * Get the duration of the audio in seconds
+     */
+    def getDuration() -> float {
+        return self.frames / self.sampleRate;
+    }
+    
+    /**
+     * Resize the buffer to a new number of frames
+     */
+    def resize(newFrames: int) {
+        if (newFrames == self.frames) {
+            return;
+        }
+        
+        for (let i = 0; i < self.channels; i++) {
+            let newChannelData = new Array(newFrames).fill(0.0);
+            
+            // Copy existing data
+            let copyFrames = math.min(self.frames, newFrames);
+            for (let j = 0; j < copyFrames; j++) {
+                newChannelData[j] = self.data[i][j];
+            }
+            
+            self.data[i] = newChannelData;
+        }
+        
+        self.frames = newFrames;
+    }
+    
+    /**
+     * Create a copy of this buffer
+     */
+    def clone() -> AudioBuffer {
+        let buffer = new AudioBuffer(self.channels, self.frames, self.sampleRate);
+        
+        for (let i = 0; i < self.channels; i++) {
+            for (let j = 0; j < self.frames; j++) {
+                buffer.data[i][j] = self.data[i][j];
+            }
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Mix another buffer into this one
+     */
+    def mix(other: AudioBuffer, gain: float = 1.0) {
+        if (other.sampleRate != self.sampleRate) {
+            throw ValueError("Cannot mix buffers with different sample rates");
+        }
+        
+        // Resize if necessary
+        if (other.frames > self.frames) {
+            self.resize(other.frames);
+        }
+        
+        // Mix channels
+        let channelsToMix = math.min(self.channels, other.channels);
+        
+        for (let i = 0; i < channelsToMix; i++) {
+            for (let j = 0; j < other.frames; j++) {
+                self.data[i][j] += other.data[i][j] * gain;
+            }
+        }
+    }
+    
+    /**
+     * Create a buffer from an array of samples
+     */
+    static def fromArray(sampleArray: Array<Array<float>>, sampleRate: int = 44100) -> AudioBuffer {
+        if (sampleArray.length == 0) {
+            return new AudioBuffer(1, 0, sampleRate);
+        }
+        
+        let channels = sampleArray.length;
+        let frames = sampleArray[0].length;
+        
+        let buffer = new AudioBuffer(channels, frames, sampleRate);
+        
+        for (let i = 0; i < channels; i++) {
+            for (let j = 0; j < frames; j++) {
+                buffer.data[i][j] = sampleArray[i][j];
+            }
+        }
+        
+        return buffer;
+    }
+}
+
+/**
+ * AudioFile provides methods to read and write audio files
+ */
+class AudioFile {
+    /**
+     * Read audio from a file
+     */
+    static async def read(filename: string) -> AudioBuffer {
+        // In a real implementation, this would use FFI to read audio files
+        // using a library like libsndfile
+        
+        console.log("Reading audio file:", filename);
+        
+        // Simulate reading a file with 1 second of silence
+        let sampleRate = 44100;
+        let channels = 2;
+        let frames = sampleRate; // 1 second
+        
+        return new AudioBuffer(channels, frames, sampleRate);
+    }
+    
+    /**
+     * Write audio to a file
+     */
+    static async def write(buffer: AudioBuffer, filename: string, format: string = "wav") {
+        // In a real implementation, this would use FFI to write audio files
+        
+        console.log(`Writing audio file: ${filename} (${format}, ${buffer.channels} channels, ${buffer.sampleRate} Hz, ${buffer.frames} frames)`);
+    }
+}
+
+/**
+ * Audio processors for common operations
+ */
+class AudioProcessors {
+    /**
+     * Apply gain to an audio buffer
+     */
+    static def gain(buffer: AudioBuffer, gainAmount: float) -> AudioBuffer {
+        let result = buffer.clone();
+        
+        for (let i = 0; i < result.channels; i++) {
+            for (let j = 0; j < result.frames; j++) {
+                result.data[i][j] *= gainAmount;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply fade in to an audio buffer
+     */
+    static def fadeIn(buffer: AudioBuffer, durationSeconds: float) -> AudioBuffer {
+        let result = buffer.clone();
+        let fadeSamples = math.min(math.floor(durationSeconds * buffer.sampleRate), buffer.frames);
+        
+        for (let i = 0; i < result.channels; i++) {
+            for (let j = 0; j < fadeSamples; j++) {
+                let factor = j / fadeSamples;
+                result.data[i][j] *= factor;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply fade out to an audio buffer
+     */
+    static def fadeOut(buffer: AudioBuffer, durationSeconds: float) -> AudioBuffer {
+        let result = buffer.clone();
+        let fadeSamples = math.min(math.floor(durationSeconds * buffer.sampleRate), buffer.frames);
+        let startSample = buffer.frames - fadeSamples;
+        
+        for (let i = 0; i < result.channels; i++) {
+            for (let j = startSample; j < buffer.frames; j++) {
+                let factor = (buffer.frames - j) / fadeSamples;
+                result.data[i][j] *= factor;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Normalize the audio to a target peak level
+     */
+    static def normalize(buffer: AudioBuffer, targetPeak: float = 1.0) -> AudioBuffer {
+        let result = buffer.clone();
+        
+        // Find current peak
+        let currentPeak = 0.0;
+        for (let i = 0; i < buffer.channels; i++) {
+            for (let j = 0; j < buffer.frames; j++) {
+                let abs = math.abs(buffer.data[i][j]);
+                if (abs > currentPeak) {
+                    currentPeak = abs;
+                }
+            }
+        }
+        
+        // Apply gain adjustment
+        if (currentPeak > 0.0) {
+            let gainFactor = targetPeak / currentPeak;
+            
+            for (let i = 0; i < result.channels; i++) {
+                for (let j = 0; j < result.frames; j++) {
+                    result.data[i][j] *= gainFactor;
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Trim silence from the beginning and end of an audio buffer
+     */
+    static def trimSilence(buffer: AudioBuffer, threshold: float = 0.01) -> AudioBuffer {
+        // Find start index
+        let startIndex = 0;
+        let endIndex = buffer.frames - 1;
+        let foundStart = false;
+        
+        // Find first non-silent sample
+        for (let j = 0; j < buffer.frames; j++) {
+            let isSilent = true;
+            
+            for (let i = 0; i < buffer.channels; i++) {
+                if (math.abs(buffer.data[i][j]) > threshold) {
+                    isSilent = false;
+                    break;
+                }
+            }
+            
+            if (!isSilent) {
+                startIndex = j;
+                foundStart = true;
+                break;
+            }
+        }
+        
+        // If the entire buffer is silent, return an empty buffer
+        if (!foundStart) {
+            return new AudioBuffer(buffer.channels, 0, buffer.sampleRate);
+        }
+        
+        // Find last non-silent sample
+        for (let j = buffer.frames - 1; j >= 0; j--) {
+            let isSilent = true;
+            
+            for (let i = 0; i < buffer.channels; i++) {
+                if (math.abs(buffer.data[i][j]) > threshold) {
+                    isSilent = false;
+                    break;
+                }
+            }
+            
+            if (!isSilent) {
+                endIndex = j;
+                break;
+            }
+        }
+        
+        // Create new buffer with trimmed data
+        let newFrames = endIndex - startIndex + 1;
+        let result = new AudioBuffer(buffer.channels, newFrames, buffer.sampleRate);
+        
+        for (let i = 0; i < buffer.channels; i++) {
+            for (let j = 0; j < newFrames; j++) {
+                result.data[i][j] = buffer.data[i][startIndex + j];
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Resample an audio buffer to a new sample rate
+     */
+    static def resample(buffer: AudioBuffer, newSampleRate: int) -> AudioBuffer {
+        if (buffer.sampleRate == newSampleRate) {
+            return buffer.clone();
+        }
+        
+        // Calculate new number of frames
+        let ratio = newSampleRate / buffer.sampleRate;
+        let newFrames = math.floor(buffer.frames * ratio);
+        
+        // Create new buffer
+        let result = new AudioBuffer(buffer.channels, newFrames, newSampleRate);
+        
+        // Linear interpolation for simplicity
+        // (A real implementation would use a better resampling algorithm)
+        for (let i = 0; i < buffer.channels; i++) {
+            for (let j = 0; j < newFrames; j++) {
+                let pos = j / ratio;
+                let pos1 = math.floor(pos);
+                let pos2 = math.min(pos1 + 1, buffer.frames - 1);
+                let fraction = pos - pos1;
+                
+                result.data[i][j] = buffer.data[i][pos1] * (1 - fraction) + buffer.data[i][pos2] * fraction;
+            }
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Audio filters for signal processing
+ */
+class AudioFilters {
+    /**
+     * Apply a low-pass filter
+     */
+    static def lowPass(buffer: AudioBuffer, cutoffFrequency: float) -> AudioBuffer {
+        let result = buffer.clone();
+        let dt = 1.0 / buffer.sampleRate;
+        let rc = 1.0 / (2.0 * math.PI * cutoffFrequency);
+        let alpha = dt / (rc + dt);
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            let filtered = 0.0;
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                filtered = filtered + alpha * (buffer.data[channel][i] - filtered);
+                result.data[channel][i] = filtered;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply a high-pass filter
+     */
+    static def highPass(buffer: AudioBuffer, cutoffFrequency: float) -> AudioBuffer {
+        let result = buffer.clone();
+        let dt = 1.0 / buffer.sampleRate;
+        let rc = 1.0 / (2.0 * math.PI * cutoffFrequency);
+        let alpha = rc / (rc + dt);
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            let previous = 0.0;
+            let filtered = 0.0;
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                filtered = alpha * (filtered + buffer.data[channel][i] - previous);
+                previous = buffer.data[channel][i];
+                result.data[channel][i] = filtered;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply a simple reverb effect
+     */
+    static def reverb(buffer: AudioBuffer, delayMs: float = 100, decay: float = 0.5, mix: float = 0.3) -> AudioBuffer {
+        let result = buffer.clone();
+        let delaySamples = math.floor(delayMs * buffer.sampleRate / 1000);
+        
+        // Simple delay-based reverb, a proper implementation would be more complex
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            for (let i = 0; i < buffer.frames; i++) {
+                // Add delayed samples with decay
+                if (i - delaySamples >= 0) {
+                    let originalSample = result.data[channel][i];
+                    let delaySample = buffer.data[channel][i - delaySamples] * decay;
+                    
+                    // Mix original and delayed signal
+                    result.data[channel][i] = originalSample * (1 - mix) + delaySample * mix;
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply a delay effect
+     */
+    static def delay(buffer: AudioBuffer, delayMs: float = 300, feedback: float = 0.4, mix: float = 0.5) -> AudioBuffer {
+        let result = buffer.clone();
+        let delaySamples = math.floor(delayMs * buffer.sampleRate / 1000);
+        
+        // Simple delay effect with feedback
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            // Create a delay buffer of zeroes
+            let delayBuffer = new Array(buffer.frames).fill(0.0);
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                let originalSample = buffer.data[channel][i];
+                
+                // Add delayed sample if available
+                if (i - delaySamples >= 0) {
+                    delayBuffer[i] = originalSample + delayBuffer[i - delaySamples] * feedback;
+                } else {
+                    delayBuffer[i] = originalSample;
+                }
+                
+                // Mix original and delayed signal
+                result.data[channel][i] = originalSample * (1 - mix) + delayBuffer[i] * mix;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Apply a distortion effect
+     */
+    static def distortion(buffer: AudioBuffer, amount: float = 0.5) -> AudioBuffer {
+        let result = buffer.clone();
+        
+        // Simple waveshaping distortion
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            for (let i = 0; i < buffer.frames; i++) {
+                let sample = buffer.data[channel][i];
+                
+                // Apply waveshaping function
+                result.data[channel][i] = math.tanh(sample * amount) / math.tanh(amount);
+            }
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Audio analysis tools
+ */
+class AudioAnalysis {
+    /**
+     * Calculate the RMS (Root Mean Square) level of an audio buffer
+     */
+    static def rms(buffer: AudioBuffer) -> Array<float> {
+        let result = [];
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            let sumSquared = 0.0;
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                let sample = buffer.data[channel][i];
+                sumSquared += sample * sample;
+            }
+            
+            result.push(math.sqrt(sumSquared / buffer.frames));
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Calculate the peak level of an audio buffer
+     */
+    static def peakLevel(buffer: AudioBuffer) -> Array<float> {
+        let result = [];
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            let peak = 0.0;
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                let abs = math.abs(buffer.data[channel][i]);
+                if (abs > peak) {
+                    peak = abs;
+                }
+            }
+            
+            result.push(peak);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Detect zero crossings in an audio buffer
+     */
+    static def zeroCrossings(buffer: AudioBuffer) -> Array<int> {
+        let result = [];
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            let crossings = 0;
+            let prevSample = 0;
+            
+            for (let i = 0; i < buffer.frames; i++) {
+                let sample = buffer.data[channel][i];
+                
+                if ((prevSample > 0 && sample <= 0) || (prevSample <= 0 && sample > 0)) {
+                    crossings++;
+                }
+                
+                prevSample = sample;
+            }
+            
+            result.push(crossings);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Estimate the fundamental frequency of a buffer
+     */
+    static def fundamentalFrequency(buffer: AudioBuffer) -> float {
+        // Use zero-crossing rate for a simple frequency estimation
+        // (A real implementation would use autocorrelation or FFT)
+        
+        // Use only the first channel for simplicity
+        let zeroCrossings = AudioAnalysis.zeroCrossings(buffer)[0];
+        
+        // Estimate frequency from zero-crossing rate
+        // Zero crossings occur twice per cycle
+        let cycles = zeroCrossings / 2;
+        let duration = buffer.frames / buffer.sampleRate;
+        let frequency = cycles / duration;
+        
+        return frequency;
+    }
+}
+
+/**
+ * Audio synthesis tools
+ */
+class AudioSynthesis {
+    /**
+     * Generate a sine wave
+     */
+    static def sine(frequency: float, durationSeconds: float, amplitude: float = 1.0, sampleRate: int = 44100) -> AudioBuffer {
+        let frames = math.floor(durationSeconds * sampleRate);
+        let buffer = new AudioBuffer(1, frames, sampleRate);
+        
+        for (let i = 0; i < frames; i++) {
+            let time = i / sampleRate;
+            let sample = amplitude * math.sin(2 * math.PI * frequency * time);
+            buffer.data[0][i] = sample;
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Generate a square wave
+     */
+    static def square(frequency: float, durationSeconds: float, amplitude: float = 1.0, sampleRate: int = 44100) -> AudioBuffer {
+        let frames = math.floor(durationSeconds * sampleRate);
+        let buffer = new AudioBuffer(1, frames, sampleRate);
+        
+        for (let i = 0; i < frames; i++) {
+            let time = i / sampleRate;
+            let period = 1.0 / frequency;
+            let phase = (time % period) / period;
+            
+            let sample = phase < 0.5 ? amplitude : -amplitude;
+            buffer.data[0][i] = sample;
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Generate a sawtooth wave
+     */
+    static def sawtooth(frequency: float, durationSeconds: float, amplitude: float = 1.0, sampleRate: int = 44100) -> AudioBuffer {
+        let frames = math.floor(durationSeconds * sampleRate);
+        let buffer = new AudioBuffer(1, frames, sampleRate);
+        
+        for (let i = 0; i < frames; i++) {
+            let time = i / sampleRate;
+            let period = 1.0 / frequency;
+            let phase = (time % period) / period;
+            
+            let sample = 2 * amplitude * (phase - 0.5);
+            buffer.data[0][i] = sample;
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Generate a triangle wave
+     */
+    static def triangle(frequency: float, durationSeconds: float, amplitude: float = 1.0, sampleRate: int = 44100) -> AudioBuffer {
+        let frames = math.floor(durationSeconds * sampleRate);
+        let buffer = new AudioBuffer(1, frames, sampleRate);
+        
+        for (let i = 0; i < frames; i++) {
+            let time = i / sampleRate;
+            let period = 1.0 / frequency;
+            let phase = (time % period) / period;
+            
+            let sample;
+            if (phase < 0.25) {
+                sample = amplitude * (4 * phase);
+            } else if (phase < 0.75) {
+                sample = amplitude * (2 - 4 * phase);
+            } else {
+                sample = amplitude * (4 * phase - 4);
+            }
+            
+            buffer.data[0][i] = sample;
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Generate white noise
+     */
+    static def whiteNoise(durationSeconds: float, amplitude: float = 0.5, sampleRate: int = 44100) -> AudioBuffer {
+        let frames = math.floor(durationSeconds * sampleRate);
+        let buffer = new AudioBuffer(1, frames, sampleRate);
+        
+        for (let i = 0; i < frames; i++) {
+            let sample = amplitude * (2 * math.random() - 1);
+            buffer.data[0][i] = sample;
+        }
+        
+        return buffer;
+    }
+    
+    /**
+     * Generate a simple ADSR envelope
+     */
+    static def adsr(buffer: AudioBuffer, attackTime: float, decayTime: float, 
+                  sustainLevel: float, releaseTime: float) -> AudioBuffer {
+        let result = buffer.clone();
+        let sampleRate = buffer.sampleRate;
+        
+        let attackSamples = math.floor(attackTime * sampleRate);
+        let decaySamples = math.floor(decayTime * sampleRate);
+        let releaseSamples = math.floor(releaseTime * sampleRate);
+        
+        // Calculate sustain samples
+        let sustainSamples = buffer.frames - attackSamples - decaySamples - releaseSamples;
+        
+        // Make sure sustain is at least 0
+        sustainSamples = math.max(0, sustainSamples);
+        
+        for (let channel = 0; channel < buffer.channels; channel++) {
+            // Attack phase
+            for (let i = 0; i < attackSamples; i++) {
+                let gain = i / attackSamples;
+                result.data[channel][i] *= gain;
+            }
+            
+            // Decay phase
+            for (let i = 0; i < decaySamples; i++) {
+                let position = attackSamples + i;
+                let gain = 1.0 - (1.0 - sustainLevel) * (i / decaySamples);
+                
+                if (position < buffer.frames) {
+                    result.data[channel][position] *= gain;
+                }
+            }
+            
+            // Sustain phase
+            for (let i = 0; i < sustainSamples; i++) {
+                let position = attackSamples + decaySamples + i;
+                
+                if (position < buffer.frames) {
+                    result.data[channel][position] *= sustainLevel;
+                }
+            }
+            
+            // Release phase
+            for (let i = 0; i < releaseSamples; i++) {
+                let position = attackSamples + decaySamples + sustainSamples + i;
+                let gain = sustainLevel * (1.0 - i / releaseSamples);
+                
+                if (position < buffer.frames) {
+                    result.data[channel][position] *= gain;
+                }
+            }
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Audio mixer for combining multiple audio streams
+ */
+class AudioMixer {
+    property channels: int;
+    property sampleRate: int;
+    property tracks: Array<{buffer: AudioBuffer, gain: float, pan: float}>;
+    
+    def initialize(channels: int = 2, sampleRate: int = 44100) {
+        self.channels = channels;
+        self.sampleRate = sampleRate;
+        self.tracks = [];
+    }
+    
+    /**
+     * Add a track to the mixer
+     */
+    def addTrack(buffer: AudioBuffer, gain: float = 1.0, pan: float = 0.0) {
+        // Ensure buffer has the same sample rate
+        if (buffer.sampleRate != self.sampleRate) {
+            buffer = AudioProcessors.resample(buffer, self.sampleRate);
+        }
+        
+        self.tracks.push({buffer, gain, pan});
+    }
+    
+    /**
+     * Mix all tracks into a single buffer
+     */
+    def mix() -> AudioBuffer {
+        // Find the longest track
+        let maxFrames = 0;
+        for (let track of self.tracks) {
+            maxFrames = math.max(maxFrames, track.buffer.frames);
+        }
+        
+        // Create output buffer
+        let output = new AudioBuffer(self.channels, maxFrames, self.sampleRate);
+        
+        // Mix all tracks
+        for (let track of self.tracks) {
+            let trackBuffer = track.buffer;
+            let gain = track.gain;
+            let pan = track.pan;
+            
+            // Apply panning
+            let leftGain = gain * (1 - pan) / 2;
+            let rightGain = gain * (1 + pan) / 2;
+            
+            for (let frame = 0; frame < trackBuffer.frames; frame++) {
+                // Handle mono track
+                if (trackBuffer.channels == 1) {
+                    let sample = trackBuffer.data[0][frame];
+                    
+                    if (self.channels >= 1) {
+                        output.data[0][frame] += sample * leftGain;
+                    }
+                    
+                    if (self.channels >= 2) {
+                        output.data[1][frame] += sample * rightGain;
+                    }
+                } 
+                // Handle stereo track
+                else if (trackBuffer.channels == 2) {
+                    if (self.channels >= 1) {
+                        output.data[0][frame] += trackBuffer.data[0][frame] * leftGain;
+                    }
+                    
+                    if (self.channels >= 2) {
+                        output.data[1][frame] += trackBuffer.data[1][frame] * rightGain;
+                    }
+                }
+                // Handle tracks with more than 2 channels (just copy as many as possible)
+                else {
+                    let channelsToCopy = math.min(self.channels, trackBuffer.channels);
+                    
+                    for (let channel = 0; channel < channelsToCopy; channel++) {
+                        output.data[channel][frame] += trackBuffer.data[channel][frame] * gain;
+                    }
+                }
+            }
+        }
+        
+        return output;
+    }
+    
+    /**
+     * Clear all tracks
+     */
+    def clear() {
+        self.tracks = [];
+    }
+}
+
+/**
+ * AudioSequencer for arranging audio clips in time
+ */
+class AudioSequencer {
+    property sampleRate: int;
+    property channels: int;
+    property clips: Array<{buffer: AudioBuffer, startFrame: int}>;
+    
+    def initialize(channels: int = 2, sampleRate: int = 44100) {
+        self.channels = channels;
+        self.sampleRate = sampleRate;
+        self.clips = [];
+    }
+    
+    /**
+     * Add a clip to the sequencer
+     */
+    def addClip(buffer: AudioBuffer, startTimeSeconds: float) {
+        // Ensure buffer has the same sample rate
+        if (buffer.sampleRate != self.sampleRate) {
+            buffer = AudioProcessors.resample(buffer, self.sampleRate);
+        }
+        
+        let startFrame = math.floor(startTimeSeconds * self.sampleRate);
+        self.clips.push({buffer, startFrame});
+    }
+    
+    /**
+     * Render all clips into a single buffer
+     */
+    def render() -> AudioBuffer {
+        // Find the end frame of the last clip
+        let endFrame = 0;
+        for (let clip of self.clips) {
+            let clipEndFrame = clip.startFrame + clip.buffer.frames;
+            endFrame = math.max(endFrame, clipEndFrame);
+        }
+        
+        // Create output buffer
+        let output = new AudioBuffer(self.channels, endFrame, self.sampleRate);
+        
+        // Render all clips
+        for (let clip of self.clips) {
+            let buffer = clip.buffer;
+            let startFrame = clip.startFrame;
+            
+            // Mix the clip into the output
+            for (let channel = 0; channel < math.min(buffer.channels, self.channels); channel++) {
+                for (let frame = 0; frame < buffer.frames; frame++) {
+                    let outputFrame = startFrame + frame;
+                    
+                    if (outputFrame < output.frames) {
+                        output.data[channel][outputFrame] += buffer.data[channel % buffer.channels][frame];
+                    }
+                }
+            }
+        }
+        
+        return output;
+    }
+    
+    /**
+     * Clear all clips
+     */
+    def clear() {
+        self.clips = [];
+    }
+} 

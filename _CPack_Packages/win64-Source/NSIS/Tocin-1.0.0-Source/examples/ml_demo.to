@@ -1,0 +1,231 @@
+// Example Tocin program demonstrating machine learning capabilities
+
+// Import necessary ML modules
+import ml.model;
+import ml.nn;
+import ml.optimizer;
+import ml.data;
+import ml.preprocessing;
+import math.basic;
+import math.linear;
+import math.stats;
+import system.io;
+
+// Define a simple neural network for MNIST digit classification
+class DigitClassifier {
+    property model: nn.Sequential;
+    property optimizer: optimizer.SGD;
+    property lossFn: nn.CrossEntropyLoss;
+    
+    def initialize() {
+        // Create a sequential neural network
+        self.model = new nn.Sequential([
+            // Input layer: 28x28 image flattened to 784 features
+            new nn.Linear(784, 128),
+            new nn.ReLU(),
+            new nn.Dropout(0.2),
+            new nn.Linear(128, 64),
+            new nn.ReLU(),
+            new nn.Linear(64, 10)  // 10 output classes (digits 0-9)
+        ]);
+        
+        // Initialize optimizer
+        self.optimizer = new optimizer.SGD(self.model.parameters(), {
+            learningRate: 0.01,
+            momentum: 0.9
+        });
+        
+        // Define loss function
+        self.lossFn = new nn.CrossEntropyLoss();
+    }
+    
+    def train(dataLoader: data.DataLoader, epochs: int) -> void {
+        println("Starting training for " + epochs.toString() + " epochs");
+        
+        for (let epoch = 1; epoch <= epochs; epoch++) {
+            let totalLoss = 0.0;
+            let totalSamples = 0;
+            let correctPredictions = 0;
+            
+            for (let batch of dataLoader) {
+                let {inputs, targets} = batch;
+                
+                // Zero gradients
+                self.optimizer.zeroGrad();
+                
+                // Forward pass
+                let outputs = self.model.forward(inputs);
+                
+                // Calculate loss
+                let loss = self.lossFn.forward(outputs, targets);
+                totalLoss += loss.value * inputs.shape[0];
+                totalSamples += inputs.shape[0];
+                
+                // Calculate accuracy
+                let predictions = outputs.argmax(1);
+                for (let i = 0; i < predictions.shape[0]; i++) {
+                    if (predictions.get(i) == targets.get(i)) {
+                        correctPredictions++;
+                    }
+                }
+                
+                // Backward pass
+                loss.backward();
+                
+                // Update weights
+                self.optimizer.step();
+            }
+            
+            let avgLoss = totalLoss / totalSamples;
+            let accuracy = correctPredictions / totalSamples;
+            
+            println("Epoch " + epoch.toString() + 
+                    ", Loss: " + avgLoss.toFixed(4) + 
+                    ", Accuracy: " + (accuracy * 100).toFixed(2) + "%");
+        }
+    }
+    
+    def evaluate(dataLoader: data.DataLoader) -> {accuracy: float, confusionMatrix: Matrix} {
+        let totalSamples = 0;
+        let correctPredictions = 0;
+        let confusionMatrix = Matrix.zeros(10, 10);  // 10x10 for digits 0-9
+        
+        // Set model to evaluation mode (deactivates dropout, etc.)
+        self.model.eval();
+        
+        for (let batch of dataLoader) {
+            let {inputs, targets} = batch;
+            
+            // Forward pass only (no gradient tracking)
+            let outputs = self.model.forward(inputs, false);
+            
+            // Calculate accuracy
+            let predictions = outputs.argmax(1);
+            for (let i = 0; i < predictions.shape[0]; i++) {
+                let predicted = predictions.get(i);
+                let actual = targets.get(i);
+                
+                if (predicted == actual) {
+                    correctPredictions++;
+                }
+                
+                // Update confusion matrix
+                confusionMatrix.set(actual, predicted, 
+                                    confusionMatrix.get(actual, predicted) + 1);
+            }
+            
+            totalSamples += inputs.shape[0];
+        }
+        
+        // Set model back to training mode
+        self.model.train();
+        
+        let accuracy = correctPredictions / totalSamples;
+        return {accuracy, confusionMatrix};
+    }
+    
+    def predict(image: Tensor) -> int {
+        // Ensure model is in evaluation mode
+        self.model.eval();
+        
+        // Flatten and normalize the image
+        let input = image.reshape(1, 784);
+        input = input.div(255.0);  // Normalize to [0, 1]
+        
+        // Make prediction
+        let output = self.model.forward(input, false);
+        
+        // Get the predicted class (digit)
+        return output.argmax(1).get(0);
+    }
+    
+    def saveModel(path: string) -> void {
+        println("Saving model to " + path);
+        self.model.save(path);
+    }
+    
+    def loadModel(path: string) -> void {
+        println("Loading model from " + path);
+        self.model.load(path);
+    }
+}
+
+def loadMNISTData() -> {trainLoader: data.DataLoader, testLoader: data.DataLoader} {
+    println("Loading MNIST dataset...");
+    
+    // Use the data module to load MNIST
+    let mnist = data.loadMNIST();
+    
+    // Preprocess the data
+    let transform = preprocessing.Compose([
+        preprocessing.ToTensor(),
+        preprocessing.Normalize([0.1307], [0.3081])
+    ]);
+    
+    // Create train and test datasets
+    let trainDataset = mnist.trainDataset.map(transform);
+    let testDataset = mnist.testDataset.map(transform);
+    
+    // Create data loaders
+    let trainLoader = new data.DataLoader(trainDataset, {
+        batchSize: 64,
+        shuffle: true
+    });
+    
+    let testLoader = new data.DataLoader(testDataset, {
+        batchSize: 1000,
+        shuffle: false
+    });
+    
+    return {trainLoader, testLoader};
+}
+
+def main() -> int {
+    println("MNIST Digit Classification using Neural Networks in Tocin");
+    
+    // Load data
+    let {trainLoader, testLoader} = loadMNISTData();
+    
+    // Create and train the model
+    let classifier = new DigitClassifier();
+    
+    // Check if saved model exists
+    let modelPath = "mnist_model.tocin";
+    let modelExists = io.fileExists(modelPath);
+    
+    if (modelExists) {
+        // Load pretrained model
+        classifier.loadModel(modelPath);
+        
+        // Evaluate on test set
+        let {accuracy, confusionMatrix} = classifier.evaluate(testLoader);
+        println("Test Accuracy: " + (accuracy * 100).toFixed(2) + "%");
+        
+        // Display confusion matrix
+        println("Confusion Matrix:");
+        println(confusionMatrix.toString());
+    } else {
+        // Train from scratch
+        classifier.train(trainLoader, 5);  // 5 epochs
+        
+        // Evaluate on test set
+        let {accuracy, confusionMatrix} = classifier.evaluate(testLoader);
+        println("Test Accuracy: " + (accuracy * 100).toFixed(2) + "%");
+        
+        // Save the model
+        classifier.saveModel(modelPath);
+    }
+    
+    // Test on a single example
+    println("\nPredicting a sample digit:");
+    let sampleIdx = Math.floor(Math.random() * testLoader.dataset.length);
+    let {inputs, targets} = testLoader.dataset.get(sampleIdx);
+    
+    let prediction = classifier.predict(inputs);
+    let actual = targets.get(0);
+    
+    println("Predicted: " + prediction.toString());
+    println("Actual: " + actual.toString());
+    
+    return 0;
+} 

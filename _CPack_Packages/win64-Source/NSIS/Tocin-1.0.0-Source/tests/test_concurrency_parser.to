@@ -1,0 +1,40 @@
+// Test file for concurrency features in Tocin parser
+
+// Channel creation
+let ch: channel<int> = new channel<int>();
+
+// Goroutine launch
+go(worker_function());
+
+// Channel send
+ch <- 42;
+
+// Channel receive
+let value: int = <-ch;
+
+// Select statement
+select {
+    case ch <- 100:
+        print("Sent 100 to channel");
+    case value := <-ch:
+        print("Received value from channel");
+    default:
+        print("No channel operations ready");
+}
+
+// Function that can be run as a goroutine
+def worker_function() -> None {
+    print("Worker function running in goroutine");
+    ch <- 123;
+}
+
+// Async function with await
+async def async_worker() -> None {
+    let result = await some_async_operation();
+    print("Async operation completed");
+}
+
+// Multiple goroutines
+go(worker_function());
+go(worker_function());
+go(async_worker()); 

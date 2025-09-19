@@ -1,0 +1,448 @@
+/**
+ * Tocin Standard Library - Advanced Math Module (Linear Algebra)
+ * Provides matrix, vector operations and linear algebra utilities.
+ */
+
+// Matrix class for linear algebra operations
+class Matrix {
+    property rows: int;
+    property cols: int;
+    property data: Array<Array<float>>;
+    
+    def initialize(rows: int, cols: int, data: Array<Array<float>>? = null) {
+        self.rows = rows;
+        self.cols = cols;
+        
+        if (data) {
+            if (data.length != rows || data[0].length != cols) {
+                throw ValueError("Data dimensions don't match rows and columns");
+            }
+            self.data = data;
+        } else {
+            // Initialize with zeros
+            self.data = [];
+            for (let i = 0; i < rows; i++) {
+                let row = [];
+                for (let j = 0; j < cols; j++) {
+                    row.push(0.0);
+                }
+                self.data.push(row);
+            }
+        }
+    }
+    
+    // Create identity matrix
+    static def identity(size: int) -> Matrix {
+        let result = Matrix(size, size);
+        for (let i = 0; i < size; i++) {
+            result.data[i][i] = 1.0;
+        }
+        return result;
+    }
+    
+    // Create matrix from array
+    static def from_array(arr: Array<Array<float>>) -> Matrix {
+        let rows = arr.length;
+        let cols = arr[0].length;
+        return Matrix(rows, cols, arr);
+    }
+    
+    // Create matrix with random values
+    static def random(rows: int, cols: int) -> Matrix {
+        let result = Matrix(rows, cols);
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < cols; j++) {
+                result.data[i][j] = math.random();
+            }
+        }
+        return result;
+    }
+    
+    // Matrix addition
+    def add(other: Matrix) -> Matrix {
+        if (self.rows != other.rows || self.cols != other.cols) {
+            throw ValueError("Matrix dimensions must match for addition");
+        }
+        
+        let result = Matrix(self.rows, self.cols);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < self.cols; j++) {
+                result.data[i][j] = self.data[i][j] + other.data[i][j];
+            }
+        }
+        return result;
+    }
+    
+    // Matrix subtraction
+    def subtract(other: Matrix) -> Matrix {
+        if (self.rows != other.rows || self.cols != other.cols) {
+            throw ValueError("Matrix dimensions must match for subtraction");
+        }
+        
+        let result = Matrix(self.rows, self.cols);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < self.cols; j++) {
+                result.data[i][j] = self.data[i][j] - other.data[i][j];
+            }
+        }
+        return result;
+    }
+    
+    // Matrix multiplication
+    def multiply(other: Matrix) -> Matrix {
+        if (self.cols != other.rows) {
+            throw ValueError("Matrix dimensions incompatible for multiplication");
+        }
+        
+        let result = Matrix(self.rows, other.cols);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < other.cols; j++) {
+                let sum = 0.0;
+                for (let k = 0; k < self.cols; k++) {
+                    sum += self.data[i][k] * other.data[k][j];
+                }
+                result.data[i][j] = sum;
+            }
+        }
+        return result;
+    }
+    
+    // Scalar multiplication
+    def scale(scalar: float) -> Matrix {
+        let result = Matrix(self.rows, self.cols);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < self.cols; j++) {
+                result.data[i][j] = self.data[i][j] * scalar;
+            }
+        }
+        return result;
+    }
+    
+    // Matrix transpose
+    def transpose() -> Matrix {
+        let result = Matrix(self.cols, self.rows);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < self.cols; j++) {
+                result.data[j][i] = self.data[i][j];
+            }
+        }
+        return result;
+    }
+    
+    // Matrix determinant
+    def determinant() -> float {
+        if (self.rows != self.cols) {
+            throw ValueError("Determinant only defined for square matrices");
+        }
+        
+        if (self.rows == 1) {
+            return self.data[0][0];
+        }
+        
+        if (self.rows == 2) {
+            return self.data[0][0] * self.data[1][1] - self.data[0][1] * self.data[1][0];
+        }
+        
+        let det = 0.0;
+        for (let j = 0; j < self.cols; j++) {
+            det += (j % 2 == 0 ? 1 : -1) * self.data[0][j] * self.minor(0, j).determinant();
+        }
+        return det;
+    }
+    
+    // Get minor (submatrix with row i and column j removed)
+    def minor(row: int, col: int) -> Matrix {
+        let result = Matrix(self.rows - 1, self.cols - 1);
+        let r = 0;
+        
+        for (let i = 0; i < self.rows; i++) {
+            if (i == row) continue;
+            
+            let c = 0;
+            for (let j = 0; j < self.cols; j++) {
+                if (j == col) continue;
+                result.data[r][c] = self.data[i][j];
+                c++;
+            }
+            r++;
+        }
+        
+        return result;
+    }
+    
+    // Matrix inverse
+    def inverse() -> Matrix {
+        if (self.rows != self.cols) {
+            throw ValueError("Inverse only defined for square matrices");
+        }
+        
+        let det = self.determinant();
+        if (math.abs(det) < 1e-10) {
+            throw ValueError("Matrix is singular, cannot compute inverse");
+        }
+        
+        let result = Matrix(self.rows, self.cols);
+        for (let i = 0; i < self.rows; i++) {
+            for (let j = 0; j < self.cols; j++) {
+                let sign = (i + j) % 2 == 0 ? 1 : -1;
+                result.data[j][i] = sign * self.minor(i, j).determinant() / det;
+            }
+        }
+        
+        return result;
+    }
+    
+    // Get eigenvalues (simplified implementation)
+    def eigenvalues() -> Array<float> {
+        if (self.rows != self.cols) {
+            throw ValueError("Eigenvalues only defined for square matrices");
+        }
+        
+        // This is a simplified implementation using power iteration
+        // A complete implementation would use QR decomposition or similar
+        
+        if (self.rows == 2) {
+            let a = self.data[0][0];
+            let b = self.data[0][1];
+            let c = self.data[1][0];
+            let d = self.data[1][1];
+            
+            let trace = a + d;
+            let det = a * d - b * c;
+            
+            let discriminant = trace * trace - 4 * det;
+            if (discriminant < 0) {
+                throw ValueError("Matrix has complex eigenvalues");
+            }
+            
+            let sqrt_disc = math.sqrt(discriminant);
+            return [(trace + sqrt_disc) / 2, (trace - sqrt_disc) / 2];
+        }
+        
+        throw NotImplementedError("Eigenvalue computation for matrices larger than 2x2 not implemented");
+    }
+    
+    // String representation
+    def toString() -> string {
+        let result = "";
+        for (let i = 0; i < self.rows; i++) {
+            result += "[ ";
+            for (let j = 0; j < self.cols; j++) {
+                result += self.data[i][j].toString();
+                if (j < self.cols - 1) {
+                    result += ", ";
+                }
+            }
+            result += " ]\n";
+        }
+        return result;
+    }
+}
+
+// Vector class (special case of matrix with a single column)
+class Vector {
+    property size: int;
+    property data: Array<float>;
+    
+    def initialize(size: int, data: Array<float>? = null) {
+        self.size = size;
+        
+        if (data) {
+            if (data.length != size) {
+                throw ValueError("Data length doesn't match vector size");
+            }
+            self.data = data;
+        } else {
+            // Initialize with zeros
+            self.data = [];
+            for (let i = 0; i < size; i++) {
+                self.data.push(0.0);
+            }
+        }
+    }
+    
+    // Create vector from array
+    static def from_array(arr: Array<float>) -> Vector {
+        return Vector(arr.length, arr);
+    }
+    
+    // Create vector with random values
+    static def random(size: int) -> Vector {
+        let result = Vector(size);
+        for (let i = 0; i < size; i++) {
+            result.data[i] = math.random();
+        }
+        return result;
+    }
+    
+    // Vector addition
+    def add(other: Vector) -> Vector {
+        if (self.size != other.size) {
+            throw ValueError("Vector dimensions must match for addition");
+        }
+        
+        let result = Vector(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result.data[i] = self.data[i] + other.data[i];
+        }
+        return result;
+    }
+    
+    // Vector subtraction
+    def subtract(other: Vector) -> Vector {
+        if (self.size != other.size) {
+            throw ValueError("Vector dimensions must match for subtraction");
+        }
+        
+        let result = Vector(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result.data[i] = self.data[i] - other.data[i];
+        }
+        return result;
+    }
+    
+    // Scalar multiplication
+    def scale(scalar: float) -> Vector {
+        let result = Vector(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result.data[i] = self.data[i] * scalar;
+        }
+        return result;
+    }
+    
+    // Dot product
+    def dot(other: Vector) -> float {
+        if (self.size != other.size) {
+            throw ValueError("Vector dimensions must match for dot product");
+        }
+        
+        let result = 0.0;
+        for (let i = 0; i < self.size; i++) {
+            result += self.data[i] * other.data[i];
+        }
+        return result;
+    }
+    
+    // Cross product (3D vectors only)
+    def cross(other: Vector) -> Vector {
+        if (self.size != 3 || other.size != 3) {
+            throw ValueError("Cross product only defined for 3D vectors");
+        }
+        
+        let result = Vector(3);
+        result.data[0] = self.data[1] * other.data[2] - self.data[2] * other.data[1];
+        result.data[1] = self.data[2] * other.data[0] - self.data[0] * other.data[2];
+        result.data[2] = self.data[0] * other.data[1] - self.data[1] * other.data[0];
+        return result;
+    }
+    
+    // Vector magnitude (length)
+    def magnitude() -> float {
+        let sum_squares = 0.0;
+        for (let i = 0; i < self.size; i++) {
+            sum_squares += self.data[i] * self.data[i];
+        }
+        return math.sqrt(sum_squares);
+    }
+    
+    // Normalize vector
+    def normalize() -> Vector {
+        let mag = self.magnitude();
+        if (mag < 1e-10) {
+            throw ValueError("Cannot normalize zero vector");
+        }
+        return self.scale(1.0 / mag);
+    }
+    
+    // Convert to a matrix
+    def to_matrix() -> Matrix {
+        let result = Matrix(self.size, 1);
+        for (let i = 0; i < self.size; i++) {
+            result.data[i][0] = self.data[i];
+        }
+        return result;
+    }
+    
+    // String representation
+    def toString() -> string {
+        let result = "[ ";
+        for (let i = 0; i < self.size; i++) {
+            result += self.data[i].toString();
+            if (i < self.size - 1) {
+                result += ", ";
+            }
+        }
+        result += " ]";
+        return result;
+    }
+}
+
+// Linear system solving
+class LinearSolver {
+    // Solve a linear system Ax = b using Gaussian elimination
+    static def solve(A: Matrix, b: Vector) -> Vector {
+        if (A.rows != A.cols) {
+            throw ValueError("Matrix must be square to solve system");
+        }
+        if (A.rows != b.size) {
+            throw ValueError("Matrix and vector dimensions don't match");
+        }
+        
+        let n = A.rows;
+        let augmented = Matrix(n, n + 1);
+        
+        // Create augmented matrix [A|b]
+        for (let i = 0; i < n; i++) {
+            for (let j = 0; j < n; j++) {
+                augmented.data[i][j] = A.data[i][j];
+            }
+            augmented.data[i][n] = b.data[i];
+        }
+        
+        // Forward elimination
+        for (let i = 0; i < n; i++) {
+            // Search for maximum in this column
+            let max_el = math.abs(augmented.data[i][i]);
+            let max_row = i;
+            for (let k = i + 1; k < n; k++) {
+                if (math.abs(augmented.data[k][i]) > max_el) {
+                    max_el = math.abs(augmented.data[k][i]);
+                    max_row = k;
+                }
+            }
+            
+            // Swap maximum row with current row
+            if (max_row != i) {
+                for (let k = i; k <= n; k++) {
+                    let tmp = augmented.data[i][k];
+                    augmented.data[i][k] = augmented.data[max_row][k];
+                    augmented.data[max_row][k] = tmp;
+                }
+            }
+            
+            // Make all rows below this one 0 in current column
+            for (let k = i + 1; k < n; k++) {
+                let c = -augmented.data[k][i] / augmented.data[i][i];
+                for (let j = i; j <= n; j++) {
+                    if (i == j) {
+                        augmented.data[k][j] = 0;
+                    } else {
+                        augmented.data[k][j] += c * augmented.data[i][j];
+                    }
+                }
+            }
+        }
+        
+        // Back substitution
+        let x = Vector(n);
+        for (let i = n - 1; i >= 0; i--) {
+            x.data[i] = augmented.data[i][n];
+            for (let j = i + 1; j < n; j++) {
+                x.data[i] -= augmented.data[i][j] * x.data[j];
+            }
+            x.data[i] /= augmented.data[i][i];
+        }
+        
+        return x;
+    }
+} 

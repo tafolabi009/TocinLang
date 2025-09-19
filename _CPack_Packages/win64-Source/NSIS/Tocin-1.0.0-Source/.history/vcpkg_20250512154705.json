@@ -1,0 +1,13 @@
+{
+    "name": "tocin-compiler",
+    "version": "0.1.0",
+    "dependencies": [
+        "llvm",
+        "v8",
+        "python3",
+        "zlib",
+        "zstd",
+        "libxml2",
+        "libffi"
+    ]
+} 

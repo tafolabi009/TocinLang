@@ -1,0 +1,418 @@
+/**
+ * Tocin Standard Library - Algorithms Module
+ * Provides implementations of common algorithms for sorting and searching.
+ */
+
+/**
+ * Sorting Algorithms
+ */
+class Sorting {
+    /**
+     * Quick sort algorithm
+     */
+    static def quickSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        if (array.length <= 1) {
+            return array;
+        }
+        
+        function partition(arr: Array<T>, low: int, high: int) -> int {
+            let pivot = arr[high];
+            let i = low - 1;
+            
+            for (let j = low; j < high; j++) {
+                if (comparator(arr[j], pivot) <= 0) {
+                    i++;
+                    // Swap elements
+                    let temp = arr[i];
+                    arr[i] = arr[j];
+                    arr[j] = temp;
+                }
+            }
+            
+            // Swap pivot into place
+            let temp = arr[i + 1];
+            arr[i + 1] = arr[high];
+            arr[high] = temp;
+            
+            return i + 1;
+        }
+        
+        function quickSortImpl(arr: Array<T>, low: int, high: int) -> void {
+            if (low < high) {
+                let pi = partition(arr, low, high);
+                
+                quickSortImpl(arr, low, pi - 1);
+                quickSortImpl(arr, pi + 1, high);
+            }
+        }
+        
+        // Create a copy to avoid modifying the original array
+        let result = [...array];
+        quickSortImpl(result, 0, result.length - 1);
+        
+        return result;
+    }
+    
+    /**
+     * Merge sort algorithm
+     */
+    static def mergeSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        if (array.length <= 1) {
+            return array;
+        }
+        
+        function merge(left: Array<T>, right: Array<T>) -> Array<T> {
+            let result = [];
+            let leftIndex = 0;
+            let rightIndex = 0;
+            
+            while (leftIndex < left.length && rightIndex < right.length) {
+                if (comparator(left[leftIndex], right[rightIndex]) <= 0) {
+                    result.push(left[leftIndex]);
+                    leftIndex++;
+                } else {
+                    result.push(right[rightIndex]);
+                    rightIndex++;
+                }
+            }
+            
+            // Add remaining elements
+            return [
+                ...result,
+                ...left.slice(leftIndex),
+                ...right.slice(rightIndex)
+            ];
+        }
+        
+        function mergeSortImpl(arr: Array<T>) -> Array<T> {
+            if (arr.length <= 1) {
+                return arr;
+            }
+            
+            const mid = Math.floor(arr.length / 2);
+            const left = arr.slice(0, mid);
+            const right = arr.slice(mid);
+            
+            return merge(mergeSortImpl(left), mergeSortImpl(right));
+        }
+        
+        return mergeSortImpl([...array]);
+    }
+    
+    /**
+     * Insertion sort algorithm (efficient for small arrays)
+     */
+    static def insertionSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        let result = [...array];
+        let n = result.length;
+        
+        for (let i = 1; i < n; i++) {
+            let key = result[i];
+            let j = i - 1;
+            
+            while (j >= 0 && comparator(result[j], key) > 0) {
+                result[j + 1] = result[j];
+                j--;
+            }
+            
+            result[j + 1] = key;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Bubble sort algorithm
+     */
+    static def bubbleSort<T>(
+        array: Array<T>,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> Array<T> {
+        let result = [...array];
+        let n = result.length;
+        
+        for (let i = 0; i < n - 1; i++) {
+            for (let j = 0; j < n - i - 1; j++) {
+                if (comparator(result[j], result[j + 1]) > 0) {
+                    // Swap elements
+                    let temp = result[j];
+                    result[j] = result[j + 1];
+                    result[j + 1] = temp;
+                }
+            }
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Searching Algorithms
+ */
+class Searching {
+    /**
+     * Binary search algorithm for sorted arrays
+     * Returns the index of the element or -1 if not found
+     */
+    static def binarySearch<T>(
+        array: Array<T>,
+        target: T,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> int {
+        let left = 0;
+        let right = array.length - 1;
+        
+        while (left <= right) {
+            let mid = Math.floor((left + right) / 2);
+            let comparison = comparator(array[mid], target);
+            
+            if (comparison === 0) {
+                return mid; // Element found
+            } else if (comparison < 0) {
+                left = mid + 1; // Search in the right half
+            } else {
+                right = mid - 1; // Search in the left half
+            }
+        }
+        
+        return -1; // Element not found
+    }
+    
+    /**
+     * Linear search algorithm
+     * Returns the index of the first occurrence or -1 if not found
+     */
+    static def linearSearch<T>(
+        array: Array<T>,
+        target: T,
+        comparator: fn(a: T, b: T) -> int = (a, b) => {
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+    ) -> int {
+        for (let i = 0; i < array.length; i++) {
+            if (comparator(array[i], target) === 0) {
+                return i;
+            }
+        }
+        
+        return -1; // Element not found
+    }
+}
+
+/**
+ * Common Graph Algorithms
+ */
+class GraphAlgorithms {
+    /**
+     * Breadth-First Search on a graph represented as an adjacency list
+     * Returns all reachable nodes from the start node
+     */
+    static def breadthFirstSearch<T>(
+        graph: Map<T, Array<T>>,
+        start: T
+    ) -> Array<T> {
+        if (!graph.has(start)) {
+            return [];
+        }
+        
+        let visited = new Set<T>();
+        let queue = [start];
+        let result = [];
+        
+        visited.add(start);
+        
+        while (queue.length > 0) {
+            let node = queue.shift();
+            result.push(node);
+            
+            for (let neighbor of graph.get(node)) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    queue.push(neighbor);
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Depth-First Search on a graph represented as an adjacency list
+     * Returns all reachable nodes from the start node
+     */
+    static def depthFirstSearch<T>(
+        graph: Map<T, Array<T>>,
+        start: T
+    ) -> Array<T> {
+        if (!graph.has(start)) {
+            return [];
+        }
+        
+        let visited = new Set<T>();
+        let result = [];
+        
+        function dfs(node: T) -> void {
+            visited.add(node);
+            result.push(node);
+            
+            for (let neighbor of graph.get(node)) {
+                if (!visited.has(neighbor)) {
+                    dfs(neighbor);
+                }
+            }
+        }
+        
+        dfs(start);
+        return result;
+    }
+    
+    /**
+     * Dijkstra's algorithm for finding shortest paths in a weighted graph
+     * Returns the shortest distances from the start node to all other nodes
+     */
+    static def dijkstra<T>(
+        graph: Map<T, Map<T, float>>,
+        start: T
+    ) -> Map<T, {distance: float, previous: T?}> {
+        if (!graph.has(start)) {
+            return new Map();
+        }
+        
+        let nodes = new Set<T>();
+        let distances = new Map<T, {distance: float, previous: T?}>();
+        
+        // Initialize distances and nodes
+        for (let [node, _] of graph) {
+            distances.set(node, {
+                distance: node === start ? 0 : Infinity,
+                previous: null
+            });
+            nodes.add(node);
+        }
+        
+        while (nodes.size > 0) {
+            // Find node with minimum distance
+            let current = null;
+            let minDistance = Infinity;
+            
+            for (let node of nodes) {
+                let nodeInfo = distances.get(node);
+                if (nodeInfo.distance < minDistance) {
+                    minDistance = nodeInfo.distance;
+                    current = node;
+                }
+            }
+            
+            // No reachable nodes left
+            if (current === null || minDistance === Infinity) {
+                break;
+            }
+            
+            // Remove current node from unprocessed nodes
+            nodes.delete(current);
+            
+            // Update distances to neighbors
+            for (let [neighbor, weight] of graph.get(current)) {
+                if (!nodes.has(neighbor)) {
+                    continue; // Skip processed nodes
+                }
+                
+                let currentInfo = distances.get(current);
+                let neighborInfo = distances.get(neighbor);
+                
+                let newDistance = currentInfo.distance + weight;
+                
+                if (newDistance < neighborInfo.distance) {
+                    distances.set(neighbor, {
+                        distance: newDistance,
+                        previous: current
+                    });
+                }
+            }
+        }
+        
+        return distances;
+    }
+}
+
+/**
+ * String Algorithms
+ */
+class StringAlgorithms {
+    /**
+     * Levenshtein Distance (Edit Distance) between two strings
+     * Returns the minimum number of operations (insertions, deletions, substitutions)
+     * required to convert one string to another
+     */
+    static def levenshteinDistance(str1: string, str2: string) -> int {
+        let m = str1.length;
+        let n = str2.length;
+        
+        // Create DP table
+        let dp = new Array(m + 1);
+        for (let i = 0; i <= m; i++) {
+            dp[i] = new Array(n + 1);
+            dp[i][0] = i; // Deletions
+        }
+        
+        // Initialize first row
+        for (let j = 0; j <= n; j++) {
+            dp[0][j] = j; // Insertions
+        }
+        
+        // Fill dp table
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (str1[i - 1] === str2[j - 1]) {
+                    dp[i][j] = dp[i - 1][j - 1]; // No operation needed
+                } else {
+                    dp[i][j] = 1 + Math.min(
+                        dp[i - 1][j],     // Deletion
+                        dp[i][j - 1],     // Insertion
+                        dp[i - 1][j - 1]  // Substitution
+                    );
+                }
+            }
+        }
+        
+        return dp[m][n];
+    }
+}
+
+export {
+    Sorting,
+    Searching,
+    GraphAlgorithms,
+    StringAlgorithms
+} 

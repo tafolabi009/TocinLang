@@ -1,0 +1,522 @@
+// Example Tocin program demonstrating game development capabilities
+
+// Import necessary game modules
+import game.engine;
+import game.graphics;
+import game.physics;
+import game.input;
+import game.audio;
+import game.shader;
+import math.basic;
+import math.geometry;
+
+/**
+ * A simple 2D platformer game using Tocin's game engine
+ */
+class PlatformerGame extends Game {
+    // Game objects
+    property player: GameObject;
+    property platforms: Array<GameObject>;
+    property coins: Array<GameObject>;
+    property enemies: Array<GameObject>;
+    
+    // Game state
+    property score: int;
+    property lives: int;
+    property gameOver: bool;
+    
+    // Resources
+    property sprites: Map<string, Sprite>;
+    property sounds: Map<string, AudioClip>;
+    property music: AudioSource;
+    
+    def initialize() {
+        // Initialize the game with title, width, and height
+        super.initialize("Tocin Platformer", 800, 600);
+        
+        // Initialize game state
+        self.score = 0;
+        self.lives = 3;
+        self.gameOver = false;
+        
+        // Initialize game objects
+        self.platforms = [];
+        self.coins = [];
+        self.enemies = [];
+        
+        // Load resources and set up the game
+        self.loadResources();
+        self.setupGame();
+    }
+    
+    def loadResources() -> void {
+        println("Loading game resources...");
+        
+        // Load sprites
+        self.sprites = new Map<string, Sprite>();
+        self.sprites.set("player", new Sprite("assets/player.png"));
+        self.sprites.set("platform", new Sprite("assets/platform.png"));
+        self.sprites.set("coin", new Sprite("assets/coin.png"));
+        self.sprites.set("enemy", new Sprite("assets/enemy.png"));
+        self.sprites.set("background", new Sprite("assets/background.png"));
+        
+        // Load audio
+        self.sounds = new Map<string, AudioClip>();
+        self.sounds.set("jump", new AudioClip("assets/jump.wav"));
+        self.sounds.set("coin", new AudioClip("assets/coin.wav"));
+        self.sounds.set("hit", new AudioClip("assets/hit.wav"));
+        
+        // Load and play background music
+        self.music = new AudioSource(new AudioClip("assets/music.mp3"));
+        self.music.loop = true;
+        self.music.volume = 0.5;
+        self.music.play();
+    }
+    
+    def setupGame() -> void {
+        println("Setting up game objects...");
+        
+        // Create player
+        self.player = new GameObject("Player");
+        self.player.addComponent(new SpriteRenderer(self.sprites.get("player")));
+        
+        // Add player physics
+        let playerPhysics = new RigidBody2D();
+        playerPhysics.gravityScale = 1.0;
+        self.player.addComponent(playerPhysics);
+        
+        // Add player collider
+        let playerCollider = new BoxCollider2D(64, 64);
+        self.player.addComponent(playerCollider);
+        
+        // Add player controller
+        self.player.addComponent(new PlayerController(self));
+        
+        // Position the player
+        self.player.transform.position = new Vector2(100, 300);
+        
+        // Create platforms
+        self._createPlatforms();
+        
+        // Create coins
+        self._createCoins();
+        
+        // Create enemies
+        self._createEnemies();
+        
+        // Add all game objects to the scene
+        self.addGameObject(self.player);
+        
+        for (let platform of self.platforms) {
+            self.addGameObject(platform);
+        }
+        
+        for (let coin of self.coins) {
+            self.addGameObject(coin);
+        }
+        
+        for (let enemy of self.enemies) {
+            self.addGameObject(enemy);
+        }
+    }
+    
+    def _createPlatforms() -> void {
+        // Create ground platform
+        let ground = new GameObject("Ground");
+        ground.addComponent(new SpriteRenderer(self.sprites.get("platform")));
+        ground.transform.position = new Vector2(400, 550);
+        ground.transform.scale = new Vector2(800, 50);
+        
+        let groundCollider = new BoxCollider2D(800, 50);
+        groundCollider.isTrigger = false;
+        ground.addComponent(groundCollider);
+        
+        self.platforms.push(ground);
+        
+        // Create floating platforms
+        let platformPositions = [
+            {x: 200, y: 400, width: 150, height: 30},
+            {x: 400, y: 350, width: 150, height: 30},
+            {x: 600, y: 300, width: 150, height: 30},
+            {x: 300, y: 250, width: 150, height: 30},
+            {x: 500, y: 200, width: 150, height: 30}
+        ];
+        
+        for (let p of platformPositions) {
+            let platform = new GameObject("Platform");
+            platform.addComponent(new SpriteRenderer(self.sprites.get("platform")));
+            platform.transform.position = new Vector2(p.x, p.y);
+            platform.transform.scale = new Vector2(p.width, p.height);
+            
+            let platformCollider = new BoxCollider2D(p.width, p.height);
+            platformCollider.isTrigger = false;
+            platform.addComponent(platformCollider);
+            
+            self.platforms.push(platform);
+        }
+    }
+    
+    def _createCoins() -> void {
+        // Create coins at different positions
+        let coinPositions = [
+            {x: 200, y: 370}, {x: 400, y: 320}, {x: 600, y: 270},
+            {x: 300, y: 220}, {x: 500, y: 170}, {x: 100, y: 400},
+            {x: 700, y: 400}, {x: 250, y: 500}, {x: 550, y: 500}
+        ];
+        
+        for (let p of coinPositions) {
+            let coin = new GameObject("Coin");
+            coin.addComponent(new SpriteRenderer(self.sprites.get("coin")));
+            coin.transform.position = new Vector2(p.x, p.y);
+            coin.transform.scale = new Vector2(30, 30);
+            
+            let coinCollider = new CircleCollider2D(15);
+            coinCollider.isTrigger = true;
+            coin.addComponent(coinCollider);
+            
+            // Add coin collector component
+            coin.addComponent(new CoinCollector(self));
+            
+            self.coins.push(coin);
+        }
+    }
+    
+    def _createEnemies() -> void {
+        // Create enemies at different positions
+        let enemyPositions = [
+            {x: 300, y: 520, minX: 200, maxX: 400},
+            {x: 600, y: 520, minX: 500, maxX: 700},
+            {x: 450, y: 320, minX: 400, maxX: 500}
+        ];
+        
+        for (let p of enemyPositions) {
+            let enemy = new GameObject("Enemy");
+            enemy.addComponent(new SpriteRenderer(self.sprites.get("enemy")));
+            enemy.transform.position = new Vector2(p.x, p.y);
+            enemy.transform.scale = new Vector2(50, 50);
+            
+            let enemyCollider = new BoxCollider2D(50, 50);
+            enemyCollider.isTrigger = true;
+            enemy.addComponent(enemyCollider);
+            
+            // Add enemy controller component
+            enemy.addComponent(new EnemyController(self, p.minX, p.maxX));
+            
+            self.enemies.push(enemy);
+        }
+    }
+    
+    override def update(deltaTime: float) -> void {
+        // Call parent update method
+        super.update(deltaTime);
+        
+        // Check if game is over
+        if (self.gameOver) {
+            // Display game over screen
+            if (input.keyboard.wasKeyPressed("Enter")) {
+                self.resetGame();
+            }
+            return;
+        }
+        
+        // Check if player fell off the screen
+        if (self.player.transform.position.y > 600) {
+            self.loseLife();
+            self.resetPlayerPosition();
+        }
+        
+        // Check if all coins are collected
+        if (self.coins.length == 0) {
+            println("Congratulations! You've collected all coins!");
+            self.gameOver = true;
+        }
+    }
+    
+    override def render() -> void {
+        // Clear the screen
+        graphics.clear(new ColorRGBA(0.2, 0.5, 0.8, 1.0));
+        
+        // Render the background
+        graphics.drawSprite(self.sprites.get("background"), 0, 0, 800, 600);
+        
+        // Call parent render method to render all game objects
+        super.render();
+        
+        // Render UI
+        self._renderUI();
+    }
+    
+    def _renderUI() -> void {
+        // Display score
+        graphics.setFont(new Font("Arial", 24));
+        graphics.setFillColor(ColorRGBA.WHITE);
+        graphics.fillText("Score: " + self.score.toString(), 20, 30);
+        
+        // Display lives
+        graphics.fillText("Lives: " + self.lives.toString(), 20, 60);
+        
+        // Display game over message if applicable
+        if (self.gameOver) {
+            graphics.setFont(new Font("Arial", 48));
+            graphics.fillText("GAME OVER", 300, 250);
+            graphics.setFont(new Font("Arial", 24));
+            graphics.fillText("Press Enter to Restart", 300, 300);
+        }
+    }
+    
+    def collectCoin(coin: GameObject) -> void {
+        // Increase score
+        self.score += 10;
+        
+        // Play coin sound
+        audio.playSound(self.sounds.get("coin"));
+        
+        // Remove coin from the game
+        let index = self.coins.indexOf(coin);
+        if (index >= 0) {
+            self.coins.splice(index, 1);
+            self.removeGameObject(coin);
+        }
+    }
+    
+    def hitEnemy() -> void {
+        // Lose a life
+        self.loseLife();
+        
+        // Play hit sound
+        audio.playSound(self.sounds.get("hit"));
+        
+        // Reset player position
+        self.resetPlayerPosition();
+    }
+    
+    def loseLife() -> void {
+        self.lives--;
+        if (self.lives <= 0) {
+            self.gameOver = true;
+        }
+    }
+    
+    def resetPlayerPosition() -> void {
+        self.player.transform.position = new Vector2(100, 300);
+        let rb = self.player.getComponent(RigidBody2D);
+        if (rb) {
+            rb.velocity = Vector2.ZERO;
+        }
+    }
+    
+    def resetGame() -> void {
+        // Reset game state
+        self.score = 0;
+        self.lives = 3;
+        self.gameOver = false;
+        
+        // Remove old game objects
+        for (let coin of self.coins) {
+            self.removeGameObject(coin);
+        }
+        
+        for (let enemy of self.enemies) {
+            self.removeGameObject(enemy);
+        }
+        
+        // Clear arrays
+        self.coins = [];
+        self.enemies = [];
+        
+        // Create new coins and enemies
+        self._createCoins();
+        self._createEnemies();
+        
+        // Add them to the scene
+        for (let coin of self.coins) {
+            self.addGameObject(coin);
+        }
+        
+        for (let enemy of self.enemies) {
+            self.addGameObject(enemy);
+        }
+        
+        // Reset player position
+        self.resetPlayerPosition();
+    }
+}
+
+/**
+ * Player controller component
+ */
+class PlayerController extends Component {
+    property game: PlatformerGame;
+    property jumpForce: float;
+    property moveSpeed: float;
+    property isGrounded: bool;
+    property jumpSound: AudioClip;
+    
+    def initialize(game: PlatformerGame) {
+        self.game = game;
+        self.jumpForce = 400.0;
+        self.moveSpeed = 300.0;
+        self.isGrounded = false;
+        self.jumpSound = game.sounds.get("jump");
+    }
+    
+    override def update(deltaTime: float) -> void {
+        if (self.game.gameOver) {
+            return;
+        }
+        
+        let rb = self.gameObject.getComponent(RigidBody2D);
+        if (!rb) {
+            return;
+        }
+        
+        // Handle horizontal movement
+        let moveX = 0.0;
+        if (input.keyboard.isKeyDown("ArrowLeft") || input.keyboard.isKeyDown("a")) {
+            moveX = -1.0;
+        } else if (input.keyboard.isKeyDown("ArrowRight") || input.keyboard.isKeyDown("d")) {
+            moveX = 1.0;
+        }
+        
+        // Apply horizontal movement
+        rb.velocity.x = moveX * self.moveSpeed;
+        
+        // Handle jumping
+        if (self.isGrounded && (input.keyboard.isKeyDown("ArrowUp") || 
+                               input.keyboard.isKeyDown("w") || 
+                               input.keyboard.isKeyDown("space"))) {
+            rb.applyForce(new Vector2(0, -self.jumpForce));
+            self.isGrounded = false;
+            audio.playSound(self.jumpSound);
+        }
+        
+        // Check for collisions with the ground to reset jumping
+        self._checkGroundCollision();
+        
+        // Check for collisions with enemies
+        self._checkEnemyCollision();
+    }
+    
+    def _checkGroundCollision() -> void {
+        let collider = self.gameObject.getComponent(BoxCollider2D);
+        if (!collider) {
+            return;
+        }
+        
+        // Loop through all platforms
+        for (let platform of self.game.platforms) {
+            let platformCollider = platform.getComponent(BoxCollider2D);
+            if (!platformCollider) {
+                continue;
+            }
+            
+            // Check collision
+            if (physics.checkCollision(collider, platformCollider)) {
+                let playerBottom = self.gameObject.transform.position.y + 
+                                  collider.height / 2;
+                let platformTop = platform.transform.position.y - 
+                                 platformCollider.height / 2;
+                
+                // If player's bottom is near platform's top, set grounded
+                if (Math.abs(playerBottom - platformTop) < 5) {
+                    self.isGrounded = true;
+                    return;
+                }
+            }
+        }
+        
+        self.isGrounded = false;
+    }
+    
+    def _checkEnemyCollision() -> void {
+        let collider = self.gameObject.getComponent(BoxCollider2D);
+        if (!collider) {
+            return;
+        }
+        
+        // Loop through all enemies
+        for (let enemy of self.game.enemies) {
+            let enemyCollider = enemy.getComponent(BoxCollider2D);
+            if (!enemyCollider) {
+                continue;
+            }
+            
+            // Check collision
+            if (physics.checkCollision(collider, enemyCollider)) {
+                self.game.hitEnemy();
+                return;
+            }
+        }
+    }
+}
+
+/**
+ * Enemy controller component
+ */
+class EnemyController extends Component {
+    property game: PlatformerGame;
+    property moveSpeed: float;
+    property minX: float;
+    property maxX: float;
+    property direction: float;
+    
+    def initialize(game: PlatformerGame, minX: float, maxX: float) {
+        self.game = game;
+        self.moveSpeed = 100.0;
+        self.minX = minX;
+        self.maxX = maxX;
+        self.direction = 1.0; // Start moving right
+    }
+    
+    override def update(deltaTime: float) -> void {
+        if (self.game.gameOver) {
+            return;
+        }
+        
+        // Move the enemy
+        let position = self.gameObject.transform.position;
+        position.x += self.direction * self.moveSpeed * deltaTime;
+        
+        // Check bounds and reverse direction if needed
+        if (position.x <= self.minX) {
+            position.x = self.minX;
+            self.direction = 1.0;
+        } else if (position.x >= self.maxX) {
+            position.x = self.maxX;
+            self.direction = -1.0;
+        }
+        
+        self.gameObject.transform.position = position;
+    }
+}
+
+/**
+ * Coin collector component
+ */
+class CoinCollector extends Component {
+    property game: PlatformerGame;
+    
+    def initialize(game: PlatformerGame) {
+        self.game = game;
+    }
+    
+    override def onTriggerEnter(other: Collider) -> void {
+        // Check if player entered the trigger
+        if (other.gameObject.name == "Player") {
+            self.game.collectCoin(self.gameObject);
+        }
+    }
+}
+
+/**
+ * Main function to start the game
+ */
+def main() -> int {
+    println("Starting Tocin Platformer Game");
+    
+    // Create and start the game
+    let game = new PlatformerGame();
+    game.run();
+    
+    return 0;
+} 

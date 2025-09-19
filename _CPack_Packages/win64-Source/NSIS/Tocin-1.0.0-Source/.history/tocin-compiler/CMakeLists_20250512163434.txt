@@ -1,0 +1,251 @@
+﻿cmake_minimum_required(VERSION 3.16)
+project(Tocin LANGUAGES C CXX)
+
+# Set C++ standard to C++23
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Enable verbose output for debugging
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# -------------------------
+# ZLIB Integration
+# -------------------------
+find_package(ZLIB REQUIRED)
+include_directories(${ZLIB_INCLUDE_DIRS})
+
+# -------------------------
+# LLVM Integration
+# -------------------------
+set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm")
+find_package(LLVM REQUIRED CONFIG)
+
+if(LLVM_FOUND)
+    message(STATUS "Found LLVM version ${LLVM_PACKAGE_VERSION}")
+    include_directories(${LLVM_INCLUDE_DIRS})
+    separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+    add_definitions(${LLVM_DEFINITIONS_LIST})
+    link_directories(${LLVM_LIBRARY_DIRS})
+else()
+    message(FATAL_ERROR "LLVM not found. Please ensure LLVM is installed.")
+endif()
+
+# Map LLVM components
+llvm_map_components_to_libnames(llvm_libs
+    core
+    support
+    irreader
+    codegen
+    mc
+    mcparser
+    passes
+    target
+    x86codegen
+    x86asmparser
+    x86desc
+    x86info
+    asmprinter
+    analysis
+    transformutils
+    instcombine
+    scalaropts
+    ExecutionEngine
+    MCJIT
+)
+
+# -------------------------
+# Python Integration
+# -------------------------
+find_package(Python REQUIRED COMPONENTS Interpreter Development.Module Development.Embed)
+include_directories(${Python_INCLUDE_DIRS})
+
+# -------------------------
+# V8 Integration
+# -------------------------
+find_path(V8_INCLUDE_DIR v8.h HINTS "C:/msys64/mingw64/include")
+find_library(V8_LIBRARY NAMES v8 v8.dll.a libv8 libv8.dll.a HINTS "C:/msys64/mingw64/lib")
+
+if(V8_INCLUDE_DIR AND V8_LIBRARY AND NOT V8_LIBRARY STREQUAL "V8_LIBRARY-NOTFOUND")
+    set(V8_FOUND TRUE)
+    message(STATUS "Found V8 headers in: ${V8_INCLUDE_DIR}")
+    message(STATUS "Found V8 library: ${V8_LIBRARY}")
+    include_directories(${V8_INCLUDE_DIR})
+else()
+    set(V8_FOUND FALSE)
+    message(WARNING "V8 not found. V8-related functionality will be disabled.")
+endif()
+
+# -------------------------
+# Abseil Libraries
+# -------------------------
+set(ABSEIL_INCLUDE_DIR "C:/msys64/mingw64/include")
+set(ABSEIL_LIBRARIES
+    "C:/msys64/mingw64/lib/libabsl_base.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_throw_delegate.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_raw_logging_internal.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_log_severity.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_spinlock_wait.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_malloc_internal.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_examine_stack.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_stacktrace.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_symbolize.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_debugging_internal.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_demangle_internal.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_graphcycles_internal.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_hash.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_city.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_low_level_hash.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_container.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_raw_hash_set.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_hashtablez_sampler.dll.a"
+    "C:/msys64/mingw64/lib/libabsl_exponential_biased.dll.a"
+)
+include_directories(${ABSEIL_INCLUDE_DIR})
+
+# -------------------------
+# V8 Platform Dependencies
+# -------------------------
+set(V8_PLATFORM_LIBRARIES
+    "C:/msys64/mingw64/lib/libv8_libplatform.dll.a"
+    "C:/msys64/mingw64/lib/libv8_libbase.dll.a"
+)
+
+# -------------------------
+# FFI (libffi) Integration
+# -------------------------
+set(FFI_INCLUDE_DIR "C:/msys64/mingw64/include")
+set(FFI_LIBRARY "C:/msys64/mingw64/lib/libffi.dll.a")
+include_directories(${FFI_INCLUDE_DIR})
+
+# -------------------------
+# zstd Integration
+# -------------------------
+set(zstd_INCLUDE_DIR "C:/msys64/mingw64/include")
+set(zstd_LIBRARY "C:/msys64/mingw64/lib/libzstd.dll.a")
+include_directories(${zstd_INCLUDE_DIR})
+
+# -------------------------
+# LibXml2 Integration
+# -------------------------
+set(LibXml2_INCLUDE_DIR "C:/msys64/mingw64/include/libxml2")
+set(LibXml2_LIBRARY "C:/msys64/mingw64/lib/libxml2.dll.a")
+include_directories(${LibXml2_INCLUDE_DIR})
+
+# -------------------------
+# Source Files
+# -------------------------
+set(SOURCES
+    src/lexer/lexer.cpp
+    src/lexer/token.cpp
+    src/parser/parser.cpp
+    src/type/type_checker.cpp
+    src/codegen/ir_generator.cpp
+    src/error/error_handler.cpp
+    src/compiler/compilation_context.cpp
+    src/compiler/stdlib.cpp
+    src/ffi/ffi_cpp.cpp
+    src/ffi/ffi_javascript.cpp
+    src/ffi/ffi_python.cpp
+    src/main.cpp
+)
+
+add_executable(tocin ${SOURCES})
+
+# -------------------------
+# Include Project Headers
+# -------------------------
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
+# -------------------------
+# Linking Libraries
+# -------------------------
+set(LINK_LIBS
+    ${llvm_libs}
+    ${Python_LIBRARIES}
+    ${FFI_LIBRARY}
+    ${ZLIB_LIBRARY}
+    ${zstd_LIBRARY}
+    ${LibXml2_LIBRARY}
+    ${ABSEIL_LIBS}
+)
+
+if(V8_FOUND)
+    list(APPEND LINK_LIBS
+        ${V8_LIBRARY}
+        ${V8_PLATFORM_LIBRARIES}
+    )
+endif()
+
+target_link_libraries(tocin PRIVATE ${LINK_LIBS})
+
+# -------------------------
+# CPack Installer Setup
+# -------------------------
+include(InstallRequiredSystemLibraries)
+set(CPACK_PACKAGE_VERSION_MAJOR "1")
+set(CPACK_PACKAGE_VERSION_MINOR "0")
+set(CPACK_PACKAGE_VERSION_PATCH "0")
+set(CPACK_GENERATOR "NSIS")
+set(CPACK_PACKAGE_NAME "tocin")
+set(CPACK_PACKAGE_VENDOR "Afolabi_Oluwatosin")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Tocin Compiler")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "ToCin")
+set(CPACK_NSIS_MODIFY_PATH ON)
+set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+set(CPACK_NSIS_DISPLAY_NAME "Tocin Compiler")
+set(CPACK_NSIS_PACKAGE_NAME "Tocin Compiler")
+set(CPACK_NSIS_HELP_LINK "https://tocin-support.vercel.app/support")
+set(CPACK_NSIS_URL_INFO_ABOUT "https://tocin-support.vercel.app")
+set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/Tocin_Logo.ico")
+
+set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+    "SetOutPath \"$INSTDIR\\bin\"\n
+     CreateDirectory \"$SMPROGRAMS\\tocin\"\n
+     CreateShortCut \"$SMPROGRAMS\\tocin\\tocin.lnk\" \"$INSTDIR\\bin\\tocin.exe\"\n
+     WriteRegStr HKLM \"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\" \"PATH\" \"$INSTDIR\\bin;%PATH%\""
+)
+
+set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+    "DeleteRegValue HKLM \"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\" \"PATH\""
+)
+
+# -------------------------
+# Install required DLLs
+# -------------------------
+install(FILES
+    "C:/msys64/mingw64/bin/libwinpthread-1.dll"
+    "C:/msys64/mingw64/bin/libstdc++-6.dll"
+    "C:/msys64/mingw64/bin/libgcc_s_seh-1.dll"
+    "C:/msys64/mingw64/bin/libpython3.12.dll"
+    "C:/msys64/mingw64/bin/libv8.dll"
+    "C:/msys64/mingw64/bin/zlib1.dll"
+    "C:/msys64/mingw64/bin/libzstd.dll"
+    "C:/msys64/mingw64/bin/libicudt76.dll"
+    "C:/msys64/mingw64/bin/libicuin76.dll"
+    "C:/msys64/mingw64/bin/libicuuc76.dll"
+    "C:/msys64/mingw64/bin/libv8_libbase.dll"
+    "C:/msys64/mingw64/bin/libv8_libplatform.dll"
+    "C:/msys64/mingw64/bin/libabsl_base.dll"
+    "C:/msys64/mingw64/bin/libabsl_throw_delegate.dll"
+    "C:/msys64/mingw64/bin/libabsl_raw_logging_internal.dll"
+    "C:/msys64/mingw64/bin/libabsl_log_severity.dll"
+    "C:/msys64/mingw64/bin/libabsl_spinlock_wait.dll"
+    "C:/msys64/mingw64/bin/libabsl_malloc_internal.dll"
+    "C:/msys64/mingw64/bin/libabsl_examine_stack.dll"
+    "C:/msys64/mingw64/bin/libabsl_stacktrace.dll"
+    "C:/msys64/mingw64/bin/libabsl_symbolize.dll"
+    "C:/msys64/mingw64/bin/libabsl_debugging_internal.dll"
+    "C:/msys64/mingw64/bin/libabsl_demangle_internal.dll"
+    DESTINATION bin
+)
+
+install(TARGETS tocin DESTINATION bin)
+
+# -------------------------
+# CPack Final Setup
+# -------------------------
+set(CPACK_COMPONENT_APPLICATIONS_DISPLAY_NAME "Tocin Compiler Application")
+set(CPACK_COMPONENT_LIBRARIES_DISPLAY_NAME "Runtime Libraries")
+set(CPACK_COMPONENT_APPLICATIONS_DEPENDS libraries)
+
+include(CPack)

@@ -1,0 +1,851 @@
+/**
+ * Tocin Standard Library - Machine Learning Module (Computer Vision)
+ * Provides components for image processing and computer vision tasks.
+ */
+
+import ml.neural_network;
+import ml.deep_learning;
+import math.linear;
+
+/**
+ * Convolutional Neural Network components
+ */
+class Conv2D {
+    property in_channels: int;
+    property out_channels: int;
+    property kernel_size: int;
+    property stride: int;
+    property padding: int;
+    property weights: Tensor;
+    property bias: Tensor;
+    property input_cache: Tensor?;
+    
+    def initialize(in_channels: int, out_channels: int, kernel_size: int, 
+                  stride: int = 1, padding: int = 0) {
+        self.in_channels = in_channels;
+        self.out_channels = out_channels;
+        self.kernel_size = kernel_size;
+        self.stride = stride;
+        self.padding = padding;
+        
+        // Initialize weights with Kaiming initialization
+        let scale = math.sqrt(2.0 / (in_channels * kernel_size * kernel_size));
+        self.weights = Tensor.randn([out_channels, in_channels, kernel_size, kernel_size]).scale(scale);
+        self.bias = Tensor.zeros([out_channels]);
+    }
+    
+    def forward(x: Tensor) -> Tensor {
+        // Cache input for backward pass
+        self.input_cache = x;
+        
+        // Apply 2D convolution
+        return x.conv2d(self.weights, self.bias, self.stride, self.padding);
+    }
+    
+    def backward(grad_output: Tensor) -> Tensor {
+        // Compute gradients with respect to weights and input
+        let x = self.input_cache!;
+        
+        // Gradient with respect to weights
+        let weight_grad = grad_output.transpose(0, 1).conv2d_transpose(
+            x.transpose(0, 1), None, self.stride, self.padding
+        );
+        
+        // Gradient with respect to bias
+        let bias_grad = grad_output.sum([0, 2, 3]);
+        
+        // Gradient with respect to input
+        let input_grad = grad_output.conv2d_transpose(
+            self.weights, None, self.stride, self.padding
+        );
+        
+        return input_grad;
+    }
+}
+
+/**
+ * Max Pooling layer
+ */
+class MaxPool2D {
+    property kernel_size: int;
+    property stride: int;
+    property padding: int;
+    property indices_cache: Tensor?;
+    property input_cache: Tensor?;
+    
+    def initialize(kernel_size: int, stride: int? = null, padding: int = 0) {
+        self.kernel_size = kernel_size;
+        self.stride = stride ?? kernel_size;
+        self.padding = padding;
+    }
+    
+    def forward(x: Tensor) -> Tensor {
+        self.input_cache = x;
+        
+        // Apply max pooling and store indices for backward pass
+        let output, indices = x.max_pool2d_with_indices(
+            self.kernel_size, self.stride, self.padding
+        );
+        
+        self.indices_cache = indices;
+        return output;
+    }
+    
+    def backward(grad_output: Tensor) -> Tensor {
+        // Use stored indices to route gradients back
+        return grad_output.max_pool2d_backward(
+            self.input_cache!, self.indices_cache!, 
+            self.kernel_size, self.stride, self.padding
+        );
+    }
+}
+
+/**
+ * Average Pooling layer
+ */
+class AvgPool2D {
+    property kernel_size: int;
+    property stride: int;
+    property padding: int;
+    property input_shape: Array<int>?;
+    
+    def initialize(kernel_size: int, stride: int? = null, padding: int = 0) {
+        self.kernel_size = kernel_size;
+        self.stride = stride ?? kernel_size;
+        self.padding = padding;
+    }
+    
+    def forward(x: Tensor) -> Tensor {
+        self.input_shape = x.shape;
+        
+        // Apply average pooling
+        return x.avg_pool2d(self.kernel_size, self.stride, self.padding);
+    }
+    
+    def backward(grad_output: Tensor) -> Tensor {
+        // Distribute gradients evenly
+        return grad_output.avg_pool2d_backward(
+            self.input_shape!, self.kernel_size, self.stride, self.padding
+        );
+    }
+}
+
+/**
+ * Batch Normalization for CNNs
+ */
+class BatchNorm2D {
+    property num_features: int;
+    property gamma: Tensor;
+    property beta: Tensor;
+    property running_mean: Tensor;
+    property running_var: Tensor;
+    property momentum: float;
+    property epsilon: float;
+    property input_cache: Tensor?;
+    property norm_cache: Tensor?;
+    property training: bool;
+    
+    def initialize(num_features: int, epsilon: float = 1e-5, momentum: float = 0.1) {
+        self.num_features = num_features;
+        self.epsilon = epsilon;
+        self.momentum = momentum;
+        self.training = true;
+        
+        // Learnable parameters
+        self.gamma = Tensor.ones([num_features]);
+        self.beta = Tensor.zeros([num_features]);
+        
+        // Running statistics
+        self.running_mean = Tensor.zeros([num_features]);
+        self.running_var = Tensor.ones([num_features]);
+    }
+    
+    def forward(x: Tensor) -> Tensor {
+        self.input_cache = x;
+        
+        if (self.training) {
+            // Calculate batch statistics
+            let batch_mean = x.mean([0, 2, 3]);
+            let batch_var = x.var([0, 2, 3], unbiased=false);
+            
+            // Update running statistics
+            self.running_mean = self.running_mean * (1 - self.momentum) + batch_mean * self.momentum;
+            self.running_var = self.running_var * (1 - self.momentum) + batch_var * self.momentum;
+            
+            // Normalize
+            let x_norm = (x - batch_mean.view(1, -1, 1, 1)) / 
+                         (batch_var.view(1, -1, 1, 1) + self.epsilon).sqrt();
+            
+            self.norm_cache = x_norm;
+            
+            // Scale and shift
+            return x_norm * self.gamma.view(1, -1, 1, 1) + self.beta.view(1, -1, 1, 1);
+        } else {
+            // Use running statistics for inference
+            return (x - self.running_mean.view(1, -1, 1, 1)) / 
+                   (self.running_var.view(1, -1, 1, 1) + self.epsilon).sqrt() * 
+                   self.gamma.view(1, -1, 1, 1) + self.beta.view(1, -1, 1, 1);
+        }
+    }
+    
+    def backward(grad_output: Tensor) -> Tensor {
+        let batch_size = self.input_cache!.shape[0];
+        let x_norm = self.norm_cache!;
+        
+        // Gradient with respect to gamma and beta
+        let gamma_grad = (grad_output * x_norm).sum([0, 2, 3]);
+        let beta_grad = grad_output.sum([0, 2, 3]);
+        
+        // Gradient with respect to input
+        let gamma_reshaped = self.gamma.view(1, -1, 1, 1);
+        
+        let grad_norm = grad_output * gamma_reshaped;
+        let grad_var = grad_norm * (self.input_cache! - self.running_mean.view(1, -1, 1, 1));
+        grad_var = grad_var * -0.5 * (self.running_var.view(1, -1, 1, 1) + self.epsilon).pow(-1.5);
+        grad_var = grad_var.sum([0, 2, 3]);
+        
+        let grad_mean = grad_norm * -1.0 / (self.running_var.view(1, -1, 1, 1) + self.epsilon).sqrt();
+        grad_mean = grad_mean.sum([0, 2, 3]);
+        
+        let grad_input = grad_norm / (self.running_var.view(1, -1, 1, 1) + self.epsilon).sqrt();
+        grad_input += 2.0 * grad_var.view(1, -1, 1, 1) * (self.input_cache! - self.running_mean.view(1, -1, 1, 1)) / batch_size;
+        grad_input += grad_mean.view(1, -1, 1, 1) / batch_size;
+        
+        return grad_input;
+    }
+    
+    def eval() {
+        self.training = false;
+    }
+    
+    def train() {
+        self.training = true;
+    }
+}
+
+/**
+ * ResNet block for deep CNNs
+ */
+class ResNetBlock {
+    property conv1: Conv2D;
+    property bn1: BatchNorm2D;
+    property conv2: Conv2D;
+    property bn2: BatchNorm2D;
+    property shortcut: Conv2D?;
+    property shortcut_bn: BatchNorm2D?;
+    
+    def initialize(in_channels: int, out_channels: int, stride: int = 1) {
+        self.conv1 = Conv2D(in_channels, out_channels, 3, stride, 1);
+        self.bn1 = BatchNorm2D(out_channels);
+        self.conv2 = Conv2D(out_channels, out_channels, 3, 1, 1);
+        self.bn2 = BatchNorm2D(out_channels);
+        
+        // Shortcut connection if dimensions change
+        if (stride != 1 || in_channels != out_channels) {
+            self.shortcut = Conv2D(in_channels, out_channels, 1, stride, 0);
+            self.shortcut_bn = BatchNorm2D(out_channels);
+        } else {
+            self.shortcut = null;
+            self.shortcut_bn = null;
+        }
+    }
+    
+    def forward(x: Tensor) -> Tensor {
+        let identity = x;
+        
+        // First conv block
+        let out = self.conv1.forward(x);
+        out = self.bn1.forward(out);
+        out = out.relu();
+        
+        // Second conv block
+        out = self.conv2.forward(out);
+        out = self.bn2.forward(out);
+        
+        // Apply shortcut if needed
+        if (self.shortcut != null) {
+            identity = self.shortcut!.forward(x);
+            identity = self.shortcut_bn!.forward(identity);
+        }
+        
+        // Add shortcut connection and apply ReLU
+        out = out + identity;
+        out = out.relu();
+        
+        return out;
+    }
+}
+
+/**
+ * Image preprocessing utilities
+ */
+class ImageProcessing {
+    /**
+     * Resize an image tensor
+     */
+    static def resize(image: Tensor, height: int, width: int, mode: string = "bilinear") -> Tensor {
+        // Mode can be "nearest", "bilinear", or "bicubic"
+        return image.resize(height, width, mode);
+    }
+    
+    /**
+     * Normalize an image tensor using mean and standard deviation
+     */
+    static def normalize(image: Tensor, mean: Array<float>, std: Array<float>) -> Tensor {
+        let mean_tensor = Tensor.tensor(mean).view(1, -1, 1, 1);
+        let std_tensor = Tensor.tensor(std).view(1, -1, 1, 1);
+        
+        return (image - mean_tensor) / std_tensor;
+    }
+    
+    /**
+     * Apply random crop to an image tensor
+     */
+    static def random_crop(image: Tensor, height: int, width: int) -> Tensor {
+        let batch_size = image.shape[0];
+        let channels = image.shape[1];
+        let img_height = image.shape[2];
+        let img_width = image.shape[3];
+        
+        // Calculate valid ranges for cropping
+        let h_start_max = img_height - height;
+        let w_start_max = img_width - width;
+        
+        if (h_start_max < 0 || w_start_max < 0) {
+            throw ValueError("Crop dimensions larger than image dimensions");
+        }
+        
+        let h_start = math.floor(math.random() * (h_start_max + 1));
+        let w_start = math.floor(math.random() * (w_start_max + 1));
+        
+        return image[:, :, h_start:h_start+height, w_start:w_start+width];
+    }
+    
+    /**
+     * Apply random horizontal flip to an image tensor
+     */
+    static def random_horizontal_flip(image: Tensor, p: float = 0.5) -> Tensor {
+        if (math.random() < p) {
+            return image.flip(3);
+        }
+        return image;
+    }
+    
+    /**
+     * Apply random rotation to an image tensor
+     */
+    static def random_rotation(image: Tensor, max_angle: float = 30.0) -> Tensor {
+        let angle = (math.random() * 2 - 1) * max_angle;
+        return image.rotate(angle);
+    }
+    
+    /**
+     * Adjust brightness of an image tensor
+     */
+    static def adjust_brightness(image: Tensor, factor: float) -> Tensor {
+        return image * factor;
+    }
+    
+    /**
+     * Adjust contrast of an image tensor
+     */
+    static def adjust_contrast(image: Tensor, factor: float) -> Tensor {
+        let mean = image.mean([2, 3], keepdim=true);
+        return (image - mean) * factor + mean;
+    }
+    
+    /**
+     * Convert RGB image to grayscale
+     */
+    static def rgb_to_grayscale(image: Tensor) -> Tensor {
+        // Using standard conversion weights
+        let weights = Tensor.tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1);
+        return (image * weights).sum(1, keepdim=true);
+    }
+}
+
+/**
+ * Common CNN architectures
+ */
+class CNNArchitectures {
+    /**
+     * Create a simple CNN for image classification
+     */
+    static def simple_cnn(in_channels: int, num_classes: int) -> Array<any> {
+        return [
+            Conv2D(in_channels, 16, 3, 1, 1),
+            Tensor.relu,
+            MaxPool2D(2),
+            Conv2D(16, 32, 3, 1, 1),
+            Tensor.relu,
+            MaxPool2D(2),
+            Conv2D(32, 64, 3, 1, 1),
+            Tensor.relu,
+            MaxPool2D(2),
+            // The following would need a flatten operation in a real implementation
+            Dense(64 * (image_size//8) * (image_size//8), 128),
+            Tensor.relu,
+            Dense(128, num_classes)
+        ];
+    }
+    
+    /**
+     * Create a VGG-style CNN
+     */
+    static def vgg(in_channels: int, num_classes: int) -> Array<any> {
+        // Simplified VGG architecture
+        return [
+            // Block 1
+            Conv2D(in_channels, 64, 3, 1, 1),
+            BatchNorm2D(64),
+            Tensor.relu,
+            Conv2D(64, 64, 3, 1, 1),
+            BatchNorm2D(64),
+            Tensor.relu,
+            MaxPool2D(2),
+            
+            // Block 2
+            Conv2D(64, 128, 3, 1, 1),
+            BatchNorm2D(128),
+            Tensor.relu,
+            Conv2D(128, 128, 3, 1, 1),
+            BatchNorm2D(128),
+            Tensor.relu,
+            MaxPool2D(2),
+            
+            // Block 3
+            Conv2D(128, 256, 3, 1, 1),
+            BatchNorm2D(256),
+            Tensor.relu,
+            Conv2D(256, 256, 3, 1, 1),
+            BatchNorm2D(256),
+            Tensor.relu,
+            Conv2D(256, 256, 3, 1, 1),
+            BatchNorm2D(256),
+            Tensor.relu,
+            MaxPool2D(2),
+            
+            // Block 4
+            Conv2D(256, 512, 3, 1, 1),
+            BatchNorm2D(512),
+            Tensor.relu,
+            Conv2D(512, 512, 3, 1, 1),
+            BatchNorm2D(512),
+            Tensor.relu,
+            Conv2D(512, 512, 3, 1, 1),
+            BatchNorm2D(512),
+            Tensor.relu,
+            MaxPool2D(2),
+            
+            // Classifier
+            // The following would need a flatten operation in a real implementation
+            Dense(512 * (image_size//16) * (image_size//16), 4096),
+            Tensor.relu,
+            Dropout(0.5),
+            Dense(4096, 4096),
+            Tensor.relu,
+            Dropout(0.5),
+            Dense(4096, num_classes)
+        ];
+    }
+    
+    /**
+     * Create a ResNet-style CNN
+     */
+    static def resnet(in_channels: int, num_classes: int) -> Array<ResNetBlock> {
+        // Simplified ResNet architecture
+        let blocks = [];
+        
+        // Initial convolution
+        blocks.push(Conv2D(in_channels, 64, 7, 2, 3));
+        blocks.push(BatchNorm2D(64));
+        blocks.push(Tensor.relu);
+        blocks.push(MaxPool2D(3, 2, 1));
+        
+        // Layer 1
+        blocks.push(ResNetBlock(64, 64));
+        blocks.push(ResNetBlock(64, 64));
+        
+        // Layer 2
+        blocks.push(ResNetBlock(64, 128, 2));
+        blocks.push(ResNetBlock(128, 128));
+        
+        // Layer 3
+        blocks.push(ResNetBlock(128, 256, 2));
+        blocks.push(ResNetBlock(256, 256));
+        
+        // Layer 4
+        blocks.push(ResNetBlock(256, 512, 2));
+        blocks.push(ResNetBlock(512, 512));
+        
+        // Global average pooling and classifier
+        blocks.push(AvgPool2D(7));
+        // The following would need a flatten operation in a real implementation
+        blocks.push(Dense(512, num_classes));
+        
+        return blocks;
+    }
+}
+
+/**
+ * Object detection models
+ */
+class ObjectDetection {
+    /**
+     * Intersection over Union calculation
+     */
+    static def iou(box1: Tensor, box2: Tensor) -> Tensor {
+        // Extract coordinates
+        let x1_1 = box1[:, 0];
+        let y1_1 = box1[:, 1];
+        let x2_1 = box1[:, 2];
+        let y2_1 = box1[:, 3];
+        
+        let x1_2 = box2[:, 0];
+        let y1_2 = box2[:, 1];
+        let x2_2 = box2[:, 2];
+        let y2_2 = box2[:, 3];
+        
+        // Calculate intersection area
+        let x1_i = x1_1.maximum(x1_2);
+        let y1_i = y1_1.maximum(y1_2);
+        let x2_i = x2_1.minimum(x2_2);
+        let y2_i = y2_1.minimum(y2_2);
+        
+        let w_i = (x2_i - x1_i).maximum(0);
+        let h_i = (y2_i - y1_i).maximum(0);
+        
+        let area_i = w_i * h_i;
+        
+        // Calculate union area
+        let area_1 = (x2_1 - x1_1) * (y2_1 - y1_1);
+        let area_2 = (x2_2 - x1_2) * (y2_2 - y1_2);
+        
+        let area_u = area_1 + area_2 - area_i;
+        
+        return area_i / area_u;
+    }
+    
+    /**
+     * Non-maximum suppression for object detection
+     */
+    static def nms(boxes: Tensor, scores: Tensor, iou_threshold: float = 0.5) -> Tensor {
+        // Sort boxes by score
+        let values, indices = scores.sort(0, descending=true);
+        
+        let keep = [];
+        let count = 0;
+        
+        while (indices.size > 0) {
+            // Keep the box with highest score
+            let idx = indices[0];
+            keep.push(idx);
+            count++;
+            
+            // Calculate IoU of the kept box with the rest
+            let others = indices[1:];
+            let box = boxes[idx].unsqueeze(0);
+            let other_boxes = boxes.index_select(0, others);
+            
+            let ious = ObjectDetection.iou(box, other_boxes);
+            
+            // Find boxes with IoU less than threshold
+            let mask = ious <= iou_threshold;
+            indices = others[mask];
+        }
+        
+        return Tensor.tensor(keep);
+    }
+    
+    /**
+     * Simplified YOLO-style detection head
+     */
+    class YOLOHead {
+        property num_classes: int;
+        property num_anchors: int;
+        property conv: Conv2D;
+        
+        def initialize(in_channels: int, num_anchors: int, num_classes: int) {
+            self.num_classes = num_classes;
+            self.num_anchors = num_anchors;
+            
+            // Each anchor predicts: 4 box coordinates + 1 objectness + num_classes
+            let out_channels = num_anchors * (5 + num_classes);
+            self.conv = Conv2D(in_channels, out_channels, 1);
+        }
+        
+        def forward(x: Tensor) -> Tensor {
+            // x shape: [batch_size, in_channels, height, width]
+            let batch_size = x.shape[0];
+            let height = x.shape[2];
+            let width = x.shape[3];
+            
+            // Apply 1x1 convolution
+            let output = self.conv.forward(x);
+            
+            // Reshape to [batch_size, num_anchors, height, width, 5 + num_classes]
+            output = output.view(
+                batch_size, 
+                self.num_anchors, 
+                5 + self.num_classes, 
+                height, 
+                width
+            ).permute(0, 1, 3, 4, 2);
+            
+            return output;
+        }
+        
+        def decode_output(output: Tensor, anchors: Tensor, stride: int) -> Tensor {
+            // output shape: [batch_size, num_anchors, height, width, 5 + num_classes]
+            let batch_size = output.shape[0];
+            let num_anchors = output.shape[1];
+            let height = output.shape[2];
+            let width = output.shape[3];
+            
+            // Create grid cells
+            let grid_y = Tensor.arange(height).view(1, 1, height, 1, 1).repeat(batch_size, num_anchors, 1, width, 1);
+            let grid_x = Tensor.arange(width).view(1, 1, 1, width, 1).repeat(batch_size, num_anchors, height, 1, 1);
+            
+            // Extract predictions
+            let box_xy = output[:, :, :, :, 0:2].sigmoid();
+            let box_wh = output[:, :, :, :, 2:4].exp() * anchors.view(1, num_anchors, 1, 1, 2);
+            let objectness = output[:, :, :, :, 4].sigmoid();
+            let class_probs = output[:, :, :, :, 5:].sigmoid();
+            
+            // Convert to absolute coordinates
+            box_xy = box_xy + Tensor.cat([grid_x, grid_y], 4);
+            box_xy = box_xy * stride;
+            
+            // Convert to [x1, y1, x2, y2] format
+            let boxes = Tensor.zeros_like(box_xy.repeat(1, 1, 1, 1, 2));
+            boxes[:, :, :, :, 0] = box_xy[:, :, :, :, 0] - box_wh[:, :, :, :, 0] / 2;
+            boxes[:, :, :, :, 1] = box_xy[:, :, :, :, 1] - box_wh[:, :, :, :, 1] / 2;
+            boxes[:, :, :, :, 2] = box_xy[:, :, :, :, 0] + box_wh[:, :, :, :, 0] / 2;
+            boxes[:, :, :, :, 3] = box_xy[:, :, :, :, 1] + box_wh[:, :, :, :, 1] / 2;
+            
+            // Reshape to [batch_size, num_anchors*height*width, 4]
+            boxes = boxes.view(batch_size, -1, 4);
+            objectness = objectness.view(batch_size, -1, 1);
+            class_probs = class_probs.view(batch_size, -1, self.num_classes);
+            
+            // Combine objectness and class probabilities
+            let class_scores = objectness * class_probs;
+            
+            return {
+                boxes: boxes,
+                scores: class_scores
+            };
+        }
+    }
+}
+
+/**
+ * Semantic segmentation models
+ */
+class Segmentation {
+    /**
+     * UNet encoder-decoder block
+     */
+    class UNetBlock {
+        property encoder: Array<Conv2D>;
+        property encoder_bn: Array<BatchNorm2D>;
+        property decoder: Array<Conv2D>;
+        property decoder_bn: Array<BatchNorm2D>;
+        
+        def initialize(in_channels: int, out_channels: int) {
+            self.encoder = [
+                Conv2D(in_channels, out_channels, 3, 1, 1),
+                Conv2D(out_channels, out_channels, 3, 1, 1)
+            ];
+            
+            self.encoder_bn = [
+                BatchNorm2D(out_channels),
+                BatchNorm2D(out_channels)
+            ];
+            
+            self.decoder = [
+                Conv2D(out_channels * 2, out_channels, 3, 1, 1),
+                Conv2D(out_channels, out_channels, 3, 1, 1)
+            ];
+            
+            self.decoder_bn = [
+                BatchNorm2D(out_channels),
+                BatchNorm2D(out_channels)
+            ];
+        }
+        
+        def encode(x: Tensor) -> Tensor {
+            let out = x;
+            
+            // Apply convolutions with ReLU and batch norm
+            out = self.encoder[0].forward(out);
+            out = self.encoder_bn[0].forward(out);
+            out = out.relu();
+            
+            out = self.encoder[1].forward(out);
+            out = self.encoder_bn[1].forward(out);
+            out = out.relu();
+            
+            return out;
+        }
+        
+        def decode(x: Tensor, skip_connection: Tensor) -> Tensor {
+            // Concatenate with skip connection along channel dimension
+            let out = Tensor.cat([x, skip_connection], 1);
+            
+            // Apply convolutions with ReLU and batch norm
+            out = self.decoder[0].forward(out);
+            out = self.decoder_bn[0].forward(out);
+            out = out.relu();
+            
+            out = self.decoder[1].forward(out);
+            out = self.decoder_bn[1].forward(out);
+            out = out.relu();
+            
+            return out;
+        }
+    }
+    
+    /**
+     * Create a UNet architecture for semantic segmentation
+     */
+    static def unet(in_channels: int, num_classes: int) -> any {
+        return {
+            // Encoder blocks
+            enc1: UNetBlock(in_channels, 64),
+            enc2: UNetBlock(64, 128),
+            enc3: UNetBlock(128, 256),
+            enc4: UNetBlock(256, 512),
+            
+            // Bottleneck
+            bottleneck: UNetBlock(512, 1024),
+            
+            // Decoder blocks
+            dec4: UNetBlock(1024, 512),
+            dec3: UNetBlock(512, 256),
+            dec2: UNetBlock(256, 128),
+            dec1: UNetBlock(128, 64),
+            
+            // Final convolution
+            final_conv: Conv2D(64, num_classes, 1),
+            
+            // Pooling and upsampling
+            pool: MaxPool2D(2),
+            upsample: (x: Tensor) => x.upsample_bilinear(scale_factor=2),
+            
+            // Forward pass function
+            forward: (x: Tensor) => {
+                // Encoder path with skip connections
+                let e1 = this.enc1.encode(x);
+                let e2 = this.enc2.encode(this.pool(e1));
+                let e3 = this.enc3.encode(this.pool(e2));
+                let e4 = this.enc4.encode(this.pool(e3));
+                
+                // Bottleneck
+                let b = this.bottleneck.encode(this.pool(e4));
+                
+                // Decoder path with skip connections
+                let d4 = this.dec4.decode(this.upsample(b), e4);
+                let d3 = this.dec3.decode(this.upsample(d4), e3);
+                let d2 = this.dec2.decode(this.upsample(d3), e2);
+                let d1 = this.dec1.decode(this.upsample(d2), e1);
+                
+                // Final convolution
+                return this.final_conv(d1);
+            }
+        };
+    }
+}
+
+/**
+ * Image feature extraction and similarity
+ */
+class ImageFeatures {
+    /**
+     * Extract features from an image using a pre-trained CNN
+     */
+    static def extract_features(image: Tensor, model: any, layer_name: string) -> Tensor {
+        // This is a simplified implementation
+        // In a real implementation, we would hook into intermediate layer outputs
+        return model.forward_to_layer(image, layer_name);
+    }
+    
+    /**
+     * Compute cosine similarity between feature vectors
+     */
+    static def cosine_similarity(features1: Tensor, features2: Tensor) -> Tensor {
+        // Normalize features
+        let norm1 = features1.norm(2, 1, keepdim=true);
+        let norm2 = features2.norm(2, 1, keepdim=true);
+        
+        let normalized1 = features1 / norm1;
+        let normalized2 = features2 / norm2;
+        
+        // Compute dot product
+        return normalized1.matmul(normalized2.transpose(0, 1));
+    }
+    
+    /**
+     * Generate a feature descriptor using SIFT-like approach
+     */
+    static def sift_descriptor(image: Tensor, keypoints: Tensor) -> Tensor {
+        // This is a simplified implementation of SIFT feature descriptors
+        // In a real implementation, this would compute gradient histograms around keypoints
+        
+        let descriptors = [];
+        let patch_size = 16;
+        let num_bins = 8;
+        
+        for (let i = 0; i < keypoints.shape[0]; i++) {
+            let x = keypoints[i, 0];
+            let y = keypoints[i, 1];
+            
+            // Extract patch around keypoint
+            let patch = image[:, :, 
+                y - patch_size/2:y + patch_size/2, 
+                x - patch_size/2:x + patch_size/2
+            ];
+            
+            // Compute gradients
+            let dx = patch[:, :, 1:, :] - patch[:, :, :-1, :];
+            let dy = patch[:, :, :, 1:] - patch[:, :, :, :-1];
+            
+            // Compute magnitude and orientation
+            let magnitude = (dx.pow(2) + dy.pow(2)).sqrt();
+            let orientation = dy.atan2(dx);
+            
+            // Compute histogram in 4x4 cells
+            let descriptor = [];
+            
+            for (let cy = 0; cy < 4; cy++) {
+                for (let cx = 0; cx < 4; cx++) {
+                    let cell_mag = magnitude[:, :, cy*4:(cy+1)*4, cx*4:(cx+1)*4];
+                    let cell_ori = orientation[:, :, cy*4:(cy+1)*4, cx*4:(cx+1)*4];
+                    
+                    let hist = Tensor.zeros([num_bins]);
+                    
+                    // Accumulate weighted orientations
+                    for (let i = 0; i < num_bins; i++) {
+                        let bin_start = -math.PI + i * (2 * math.PI / num_bins);
+                        let bin_end = -math.PI + (i + 1) * (2 * math.PI / num_bins);
+                        
+                        let weight = ((cell_ori >= bin_start) & (cell_ori < bin_end)).cast(float);
+                        hist[i] = (cell_mag * weight).sum();
+                    }
+                    
+                    descriptor.push(hist);
+                }
+            }
+            
+            // Flatten descriptor
+            let flat_descriptor = Tensor.cat(descriptor, 0);
+            
+            // Normalize descriptor
+            flat_descriptor = flat_descriptor / flat_descriptor.norm();
+            
+            descriptors.push(flat_descriptor);
+        }
+        
+        return Tensor.stack(descriptors, 0);
+    }
+} 

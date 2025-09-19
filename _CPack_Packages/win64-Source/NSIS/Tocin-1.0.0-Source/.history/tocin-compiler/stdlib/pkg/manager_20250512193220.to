@@ -1,0 +1,985 @@
+/**
+ * Tocin Standard Library - Package Manager
+ * Provides functionality for managing packages, dependencies, and versioning.
+ */
+
+import fs;
+import net.http;
+
+/**
+ * Semantic versioning
+ */
+class Version {
+    property major: int;
+    property minor: int;
+    property patch: int;
+    property prerelease: string?;
+    property build: string?;
+    
+    def initialize(major: int = 0, minor: int = 0, patch: int = 0, prerelease: string? = null, build: string? = null) {
+        self.major = major;
+        self.minor = minor;
+        self.patch = patch;
+        self.prerelease = prerelease;
+        self.build = build;
+    }
+    
+    /**
+     * Parse a version string
+     */
+    static def parse(version: string) -> Version {
+        // Basic format: MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
+        let major = 0;
+        let minor = 0;
+        let patch = 0;
+        let prerelease = null;
+        let build = null;
+        
+        // Extract build metadata if present
+        let buildPos = version.indexOf('+');
+        if (buildPos > 0) {
+            build = version.substring(buildPos + 1);
+            version = version.substring(0, buildPos);
+        }
+        
+        // Extract prerelease if present
+        let prereleasePos = version.indexOf('-');
+        if (prereleasePos > 0) {
+            prerelease = version.substring(prereleasePos + 1);
+            version = version.substring(0, prereleasePos);
+        }
+        
+        // Parse major.minor.patch
+        let parts = version.split('.');
+        if (parts.length > 0) major = int.parse(parts[0]) ?? 0;
+        if (parts.length > 1) minor = int.parse(parts[1]) ?? 0;
+        if (parts.length > 2) patch = int.parse(parts[2]) ?? 0;
+        
+        return new Version(major, minor, patch, prerelease, build);
+    }
+    
+    /**
+     * Convert to string
+     */
+    def toString() -> string {
+        let version = `${self.major}.${self.minor}.${self.patch}`;
+        
+        if (self.prerelease != null) {
+            version += `-${self.prerelease}`;
+        }
+        
+        if (self.build != null) {
+            version += `+${self.build}`;
+        }
+        
+        return version;
+    }
+    
+    /**
+     * Compare versions
+     * Returns:
+     *  - negative if this < other
+     *  - 0 if this == other
+     *  - positive if this > other
+     */
+    def compare(other: Version) -> int {
+        // Compare major.minor.patch
+        if (self.major != other.major) {
+            return self.major - other.major;
+        }
+        
+        if (self.minor != other.minor) {
+            return self.minor - other.minor;
+        }
+        
+        if (self.patch != other.patch) {
+            return self.patch - other.patch;
+        }
+        
+        // If we get here, the major.minor.patch are equal
+        
+        // Pre-release versions have lower precedence
+        if (self.prerelease == null && other.prerelease != null) {
+            return 1;
+        }
+        
+        if (self.prerelease != null && other.prerelease == null) {
+            return -1;
+        }
+        
+        if (self.prerelease != null && other.prerelease != null) {
+            // Compare pre-release identifiers
+            let selfParts = self.prerelease.split('.');
+            let otherParts = other.prerelease.split('.');
+            
+            let minLength = math.min(selfParts.length, otherParts.length);
+            
+            for (let i = 0; i < minLength; i++) {
+                let selfIsNum = /^[0-9]+$/.test(selfParts[i]);
+                let otherIsNum = /^[0-9]+$/.test(otherParts[i]);
+                
+                if (selfIsNum && otherIsNum) {
+                    // Numeric parts are compared numerically
+                    let selfNum = int.parse(selfParts[i]) ?? 0;
+                    let otherNum = int.parse(otherParts[i]) ?? 0;
+                    
+                    if (selfNum != otherNum) {
+                        return selfNum - otherNum;
+                    }
+                } else if (selfIsNum) {
+                    // Numeric has lower precedence than non-numeric
+                    return -1;
+                } else if (otherIsNum) {
+                    // Numeric has lower precedence than non-numeric
+                    return 1;
+                } else {
+                    // Non-numeric are compared lexically
+                    let cmp = selfParts[i].localeCompare(otherParts[i]);
+                    
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                }
+            }
+            
+            // If we get here, the common parts are equal
+            return selfParts.length - otherParts.length;
+        }
+        
+        // Everything is equal, so build metadata doesn't matter
+        return 0;
+    }
+    
+    /**
+     * Check if this version is greater than another
+     */
+    def greaterThan(other: Version) -> bool {
+        return self.compare(other) > 0;
+    }
+    
+    /**
+     * Check if this version is less than another
+     */
+    def lessThan(other: Version) -> bool {
+        return self.compare(other) < 0;
+    }
+    
+    /**
+     * Check if this version is equal to another
+     */
+    def equals(other: Version) -> bool {
+        return self.compare(other) == 0;
+    }
+    
+    /**
+     * Check if this version is greater than or equal to another
+     */
+    def greaterThanOrEqual(other: Version) -> bool {
+        return self.compare(other) >= 0;
+    }
+    
+    /**
+     * Check if this version is less than or equal to another
+     */
+    def lessThanOrEqual(other: Version) -> bool {
+        return self.compare(other) <= 0;
+    }
+}
+
+/**
+ * Version range for dependency specification
+ */
+class VersionRange {
+    property min: Version?;
+    property max: Version?;
+    property includeMin: bool;
+    property includeMax: bool;
+    
+    def initialize(min: Version? = null, max: Version? = null, 
+                  includeMin: bool = true, includeMax: bool = false) {
+        self.min = min;
+        self.max = max;
+        self.includeMin = includeMin;
+        self.includeMax = includeMax;
+    }
+    
+    /**
+     * Parse a version range string
+     */
+    static def parse(range: string) -> VersionRange {
+        // Common formats:
+        // ^1.2.3 - compatible with 1.2.3, allowing minor and patch updates (>=1.2.3 <2.0.0)
+        // ~1.2.3 - compatible with 1.2.3, allowing patch updates (>=1.2.3 <1.3.0)
+        // >=1.2.3 - greater than or equal to 1.2.3
+        // >1.2.3 - greater than 1.2.3
+        // <=1.2.3 - less than or equal to 1.2.3
+        // <1.2.3 - less than 1.2.3
+        // 1.2.3 - exactly 1.2.3
+        // 1.2.x or 1.2.* - any version with major 1 and minor 2
+        // * or x - any version
+        
+        range = range.trim();
+        
+        // Exact version
+        if (/^[0-9]+(\.[0-9]+(\.[0-9]+)?)?$/.test(range)) {
+            let version = Version.parse(range);
+            return new VersionRange(version, version, true, true);
+        }
+        
+        // Caret range (^)
+        if (range.startsWith('^')) {
+            let version = Version.parse(range.substring(1));
+            let maxVersion;
+            
+            if (version.major > 0) {
+                // ^1.2.3 -> >=1.2.3 <2.0.0
+                maxVersion = new Version(version.major + 1, 0, 0);
+            } else if (version.minor > 0) {
+                // ^0.2.3 -> >=0.2.3 <0.3.0
+                maxVersion = new Version(0, version.minor + 1, 0);
+            } else {
+                // ^0.0.3 -> >=0.0.3 <0.0.4
+                maxVersion = new Version(0, 0, version.patch + 1);
+            }
+            
+            return new VersionRange(version, maxVersion, true, false);
+        }
+        
+        // Tilde range (~)
+        if (range.startsWith('~')) {
+            let version = Version.parse(range.substring(1));
+            let maxVersion = new Version(version.major, version.minor + 1, 0);
+            
+            return new VersionRange(version, maxVersion, true, false);
+        }
+        
+        // X-ranges (1.2.x or 1.2.*)
+        if (range.includes('x') || range.includes('*')) {
+            let parts = range.split('.');
+            
+            if (parts.length == 1 && (parts[0] == '*' || parts[0] == 'x')) {
+                // * or x -> any version
+                return new VersionRange();
+            }
+            
+            let major = parts[0] == 'x' || parts[0] == '*' ? 0 : int.parse(parts[0]) ?? 0;
+            let minor = parts.length < 2 || parts[1] == 'x' || parts[1] == '*' ? 0 : int.parse(parts[1]) ?? 0;
+            
+            if (parts.length == 1 || (parts.length >= 2 && (parts[1] == 'x' || parts[1] == '*'))) {
+                // 1.x or 1.* -> >=1.0.0 <2.0.0
+                return new VersionRange(
+                    new Version(major, 0, 0),
+                    new Version(major + 1, 0, 0),
+                    true, false
+                );
+            }
+            
+            if (parts.length == 2 || (parts.length >= 3 && (parts[2] == 'x' || parts[2] == '*'))) {
+                // 1.2.x or 1.2.* -> >=1.2.0 <1.3.0
+                return new VersionRange(
+                    new Version(major, minor, 0),
+                    new Version(major, minor + 1, 0),
+                    true, false
+                );
+            }
+        }
+        
+        // Comparison operators
+        let min = null;
+        let max = null;
+        let includeMin = false;
+        let includeMax = false;
+        
+        if (range.startsWith('>=')) {
+            min = Version.parse(range.substring(2));
+            includeMin = true;
+        } else if (range.startsWith('>')) {
+            min = Version.parse(range.substring(1));
+            includeMin = false;
+        } else if (range.startsWith('<=')) {
+            max = Version.parse(range.substring(2));
+            includeMax = true;
+        } else if (range.startsWith('<')) {
+            max = Version.parse(range.substring(1));
+            includeMax = false;
+        }
+        
+        return new VersionRange(min, max, includeMin, includeMax);
+    }
+    
+    /**
+     * Convert to string
+     */
+    def toString() -> string {
+        if (self.min != null && self.max != null) {
+            if (self.min.equals(self.max) && self.includeMin && self.includeMax) {
+                return self.min.toString();
+            }
+            
+            let minStr = self.includeMin ? '>=' : '>';
+            let maxStr = self.includeMax ? '<=' : '<';
+            
+            return `${minStr}${self.min.toString()} ${maxStr}${self.max.toString()}`;
+        } else if (self.min != null) {
+            return `${self.includeMin ? '>=' : '>'}${self.min.toString()}`;
+        } else if (self.max != null) {
+            return `${self.includeMax ? '<=' : '<'}${self.max.toString()}`;
+        }
+        
+        return '*';
+    }
+    
+    /**
+     * Check if a version satisfies this range
+     */
+    def satisfies(version: Version) -> bool {
+        if (self.min != null) {
+            let cmp = version.compare(self.min);
+            
+            if (cmp < 0 || (cmp == 0 && !self.includeMin)) {
+                return false;
+            }
+        }
+        
+        if (self.max != null) {
+            let cmp = version.compare(self.max);
+            
+            if (cmp > 0 || (cmp == 0 && !self.includeMax)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+}
+
+/**
+ * Package dependency
+ */
+class Dependency {
+    property name: string;
+    property versionRange: VersionRange;
+    property isDevDependency: bool;
+    property repository: string?;
+    
+    def initialize(name: string, versionRange: VersionRange, 
+                  isDevDependency: bool = false, repository: string? = null) {
+        self.name = name;
+        self.versionRange = versionRange;
+        self.isDevDependency = isDevDependency;
+        self.repository = repository;
+    }
+    
+    static def parse(name: string, spec: string | any) -> Dependency {
+        if (typeof spec == 'string') {
+            return new Dependency(name, VersionRange.parse(spec));
+        } else {
+            let versionRange = VersionRange.parse(spec.version ?? '*');
+            let isDevDependency = spec.dev ?? false;
+            let repository = spec.repository ?? null;
+            
+            return new Dependency(name, versionRange, isDevDependency, repository);
+        }
+    }
+}
+
+/**
+ * Package manifest (tocin.json)
+ */
+class PackageManifest {
+    property name: string;
+    property version: Version;
+    property description: string;
+    property author: string?;
+    property license: string?;
+    property repository: string?;
+    property main: string?;
+    property dependencies: Map<string, Dependency>;
+    property devDependencies: Map<string, Dependency>;
+    
+    def initialize(name: string, version: Version | string, description: string = "") {
+        self.name = name;
+        self.version = typeof version == 'string' ? Version.parse(version) : version;
+        self.description = description;
+        self.author = null;
+        self.license = null;
+        self.repository = null;
+        self.main = null;
+        self.dependencies = new Map();
+        self.devDependencies = new Map();
+    }
+    
+    /**
+     * Parse a manifest from JSON
+     */
+    static def fromJSON(json: string | any) -> PackageManifest {
+        let data = typeof json == 'string' ? JSON.parse(json) : json;
+        
+        let manifest = new PackageManifest(
+            data.name ?? 'unnamed-package',
+            data.version ?? '0.0.0',
+            data.description ?? ''
+        );
+        
+        manifest.author = data.author ?? null;
+        manifest.license = data.license ?? null;
+        manifest.repository = data.repository ?? null;
+        manifest.main = data.main ?? null;
+        
+        // Parse dependencies
+        if (data.dependencies != null) {
+            for (let name in data.dependencies) {
+                let dep = Dependency.parse(name, data.dependencies[name]);
+                manifest.dependencies.set(name, dep);
+            }
+        }
+        
+        // Parse dev dependencies
+        if (data.devDependencies != null) {
+            for (let name in data.devDependencies) {
+                let dep = Dependency.parse(name, data.devDependencies[name]);
+                dep.isDevDependency = true;
+                manifest.devDependencies.set(name, dep);
+            }
+        }
+        
+        return manifest;
+    }
+    
+    /**
+     * Read a manifest from a file
+     */
+    static async def fromFile(path: string) -> PackageManifest {
+        let content = await fs.readFile(path);
+        return PackageManifest.fromJSON(content);
+    }
+    
+    /**
+     * Convert to JSON object
+     */
+    def toJSON() -> any {
+        let dependencies = {};
+        let devDependencies = {};
+        
+        for (let [name, dep] of self.dependencies) {
+            dependencies[name] = dep.versionRange.toString();
+        }
+        
+        for (let [name, dep] of self.devDependencies) {
+            devDependencies[name] = dep.versionRange.toString();
+        }
+        
+        return {
+            name: self.name,
+            version: self.version.toString(),
+            description: self.description,
+            author: self.author,
+            license: self.license,
+            repository: self.repository,
+            main: self.main,
+            dependencies,
+            devDependencies
+        };
+    }
+    
+    /**
+     * Convert to JSON string
+     */
+    def toJSONString(pretty: bool = true) -> string {
+        return JSON.stringify(self.toJSON(), null, pretty ? 2 : 0);
+    }
+    
+    /**
+     * Write manifest to a file
+     */
+    async def save(path: string, pretty: bool = true) -> void {
+        await fs.writeFile(path, self.toJSONString(pretty));
+    }
+    
+    /**
+     * Add a dependency
+     */
+    def addDependency(name: string, version: string, isDev: bool = false) -> void {
+        let dep = new Dependency(name, VersionRange.parse(version), isDev);
+        
+        if (isDev) {
+            self.devDependencies.set(name, dep);
+        } else {
+            self.dependencies.set(name, dep);
+        }
+    }
+    
+    /**
+     * Remove a dependency
+     */
+    def removeDependency(name: string, isDev: bool = false) -> bool {
+        if (isDev) {
+            return self.devDependencies.delete(name);
+        } else {
+            return self.dependencies.delete(name);
+        }
+    }
+    
+    /**
+     * Update a dependency version
+     */
+    def updateDependency(name: string, version: string, isDev: bool = false) -> bool {
+        let deps = isDev ? self.devDependencies : self.dependencies;
+        
+        if (deps.has(name)) {
+            deps.get(name).versionRange = VersionRange.parse(version);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Get all dependencies (including dev if specified)
+     */
+    def getAllDependencies(includeDev: bool = false) -> Array<Dependency> {
+        let result = Array.from(self.dependencies.values());
+        
+        if (includeDev) {
+            result = result.concat(Array.from(self.devDependencies.values()));
+        }
+        
+        return result;
+    }
+}
+
+/**
+ * Package registry
+ */
+class PackageRegistry {
+    property baseUrl: string;
+    
+    def initialize(baseUrl: string = "https://registry.tocin.io") {
+        self.baseUrl = baseUrl;
+    }
+    
+    /**
+     * Get package information
+     */
+    async def getPackage(name: string) -> any {
+        try {
+            let response = await http.get(`${self.baseUrl}/packages/${name}`);
+            return JSON.parse(response.body);
+        } catch (error) {
+            throw Error(`Failed to get package info for ${name}: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Get all versions of a package
+     */
+    async def getVersions(name: string) -> Array<Version> {
+        try {
+            let packageInfo = await self.getPackage(name);
+            let versions = [];
+            
+            for (let versionStr in packageInfo.versions) {
+                versions.push(Version.parse(versionStr));
+            }
+            
+            // Sort versions in descending order
+            versions.sort((a, b) => b.compare(a));
+            
+            return versions;
+        } catch (error) {
+            throw Error(`Failed to get versions for ${name}: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Find the best version matching a range
+     */
+    async def findBestVersion(name: string, range: VersionRange) -> Version? {
+        let versions = await self.getVersions(name);
+        
+        for (let version of versions) {
+            if (range.satisfies(version)) {
+                return version;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Download a package
+     */
+    async def downloadPackage(name: string, version: Version, destPath: string) -> void {
+        try {
+            let url = `${self.baseUrl}/packages/${name}/download/${version.toString()}`;
+            let response = await http.get(url, { responseType: 'arraybuffer' });
+            
+            // Extract package to destination
+            await fs.ensureDir(destPath);
+            
+            // In a real implementation, this would extract the tarball
+            // For now, let's just pretend we extracted it
+            await fs.writeFile(`${destPath}/package.json`, JSON.stringify({
+                name,
+                version: version.toString(),
+                _downloaded: true
+            }));
+            
+            console.log(`Downloaded ${name}@${version.toString()} to ${destPath}`);
+        } catch (error) {
+            throw Error(`Failed to download ${name}@${version.toString()}: ${error.message}`);
+        }
+    }
+}
+
+/**
+ * Package manager
+ */
+class PackageManager {
+    property manifest: PackageManifest?;
+    property registry: PackageRegistry;
+    property rootDir: string;
+    property packagesDir: string;
+    
+    def initialize(rootDir: string = ".", registryUrl: string? = null) {
+        self.rootDir = rootDir;
+        self.packagesDir = `${rootDir}/packages`;
+        self.registry = new PackageRegistry(registryUrl);
+        self.manifest = null;
+    }
+    
+    /**
+     * Initialize a new package
+     */
+    async def init(name: string, version: string = "0.1.0", description: string = "") -> PackageManifest {
+        let manifest = new PackageManifest(name, version, description);
+        self.manifest = manifest;
+        
+        // Create package directory structure
+        await fs.ensureDir(self.rootDir);
+        await fs.ensureDir(`${self.rootDir}/src`);
+        await fs.ensureDir(self.packagesDir);
+        
+        // Write manifest
+        await manifest.save(`${self.rootDir}/tocin.json`);
+        
+        return manifest;
+    }
+    
+    /**
+     * Load an existing package
+     */
+    async def load() -> PackageManifest {
+        let manifestPath = `${self.rootDir}/tocin.json`;
+        
+        try {
+            self.manifest = await PackageManifest.fromFile(manifestPath);
+            return self.manifest;
+        } catch (error) {
+            throw Error(`Failed to load package manifest: ${error.message}`);
+        }
+    }
+    
+    /**
+     * Install a specific package
+     */
+    async def installPackage(name: string, versionRange: string = "latest", isDev: bool = false) -> void {
+        if (self.manifest == null) {
+            await self.load();
+        }
+        
+        let range = versionRange == "latest" ? 
+            new VersionRange() : // Any version
+            VersionRange.parse(versionRange);
+        
+        // Find best matching version
+        let version = await self.registry.findBestVersion(name, range);
+        
+        if (version == null) {
+            throw Error(`No version found for ${name} matching ${range.toString()}`);
+        }
+        
+        // Download and install package
+        let packageDir = `${self.packagesDir}/${name}`;
+        await self.registry.downloadPackage(name, version, packageDir);
+        
+        // Add to dependencies
+        self.manifest.addDependency(name, `^${version.toString()}`, isDev);
+        
+        // Save manifest
+        await self.manifest.save(`${self.rootDir}/tocin.json`);
+        
+        console.log(`Installed ${name}@${version.toString()}`);
+    }
+    
+    /**
+     * Install all dependencies
+     */
+    async def installDependencies(includeDev: bool = true) -> void {
+        if (self.manifest == null) {
+            await self.load();
+        }
+        
+        let dependencies = self.manifest.getAllDependencies(includeDev);
+        
+        for (let dep of dependencies) {
+            if (!fs.existsSync(`${self.packagesDir}/${dep.name}`)) {
+                let version = await self.registry.findBestVersion(dep.name, dep.versionRange);
+                
+                if (version == null) {
+                    console.error(`No version found for ${dep.name} matching ${dep.versionRange.toString()}`);
+                    continue;
+                }
+                
+                await self.registry.downloadPackage(
+                    dep.name, 
+                    version, 
+                    `${self.packagesDir}/${dep.name}`
+                );
+                
+                console.log(`Installed ${dep.name}@${version.toString()}`);
+            }
+        }
+    }
+    
+    /**
+     * Update all dependencies
+     */
+    async def updateDependencies(includeDev: bool = true) -> void {
+        if (self.manifest == null) {
+            await self.load();
+        }
+        
+        let dependencies = self.manifest.getAllDependencies(includeDev);
+        
+        for (let dep of dependencies) {
+            let version = await self.registry.findBestVersion(dep.name, dep.versionRange);
+            
+            if (version == null) {
+                console.error(`No version found for ${dep.name} matching ${dep.versionRange.toString()}`);
+                continue;
+            }
+            
+            await self.registry.downloadPackage(
+                dep.name, 
+                version, 
+                `${self.packagesDir}/${dep.name}`
+            );
+            
+            console.log(`Updated ${dep.name} to ${version.toString()}`);
+        }
+    }
+    
+    /**
+     * Uninstall a package
+     */
+    async def uninstallPackage(name: string) -> void {
+        if (self.manifest == null) {
+            await self.load();
+        }
+        
+        // Remove from dependencies
+        let removed = self.manifest.removeDependency(name, false);
+        let removedDev = self.manifest.removeDependency(name, true);
+        
+        if (!removed && !removedDev) {
+            console.log(`Package ${name} is not in dependencies`);
+            return;
+        }
+        
+        // Remove package directory
+        let packageDir = `${self.packagesDir}/${name}`;
+        
+        if (fs.existsSync(packageDir)) {
+            await fs.remove(packageDir);
+        }
+        
+        // Save manifest
+        await self.manifest.save(`${self.rootDir}/tocin.json`);
+        
+        console.log(`Uninstalled ${name}`);
+    }
+    
+    /**
+     * Publish package to registry
+     */
+    async def publish() -> void {
+        if (self.manifest == null) {
+            await self.load();
+        }
+        
+        try {
+            // Create tarball of package
+            let tarballPath = `${self.rootDir}/${self.manifest.name}-${self.manifest.version.toString()}.tgz`;
+            
+            // In a real implementation, this would create a tarball
+            console.log(`Creating package tarball at ${tarballPath}`);
+            
+            // Upload to registry
+            let url = `${self.registry.baseUrl}/publish`;
+            let formData = {
+                tarball: fs.readFileSync(tarballPath),
+                manifest: self.manifest.toJSONString(false)
+            };
+            
+            // In a real implementation, this would upload the tarball
+            console.log(`Uploading to ${url}`);
+            
+            console.log(`Published ${self.manifest.name}@${self.manifest.version.toString()}`);
+        } catch (error) {
+            throw Error(`Failed to publish package: ${error.message}`);
+        }
+    }
+}
+
+// Command-line interface for package manager
+class PackageManagerCLI {
+    property pm: PackageManager;
+    
+    def initialize(rootDir: string = ".") {
+        self.pm = new PackageManager(rootDir);
+    }
+    
+    /**
+     * Process a command
+     */
+    async def processCommand(args: Array<string>) -> void {
+        if (args.length == 0) {
+            self.printHelp();
+            return;
+        }
+        
+        let command = args[0];
+        let restArgs = args.slice(1);
+        
+        switch (command) {
+            case "init":
+                await self.init(restArgs);
+                break;
+            case "install":
+            case "i":
+                await self.install(restArgs);
+                break;
+            case "uninstall":
+            case "remove":
+                await self.uninstall(restArgs);
+                break;
+            case "update":
+                await self.update(restArgs);
+                break;
+            case "publish":
+                await self.publish(restArgs);
+                break;
+            case "help":
+                self.printHelp();
+                break;
+            default:
+                console.error(`Unknown command: ${command}`);
+                self.printHelp();
+                break;
+        }
+    }
+    
+    /**
+     * Initialize a new package
+     */
+    async def init(args: Array<string>) -> void {
+        let name = args[0] ?? fs.basename(process.cwd());
+        let version = args[1] ?? "0.1.0";
+        let description = args[2] ?? "";
+        
+        console.log(`Initializing new package: ${name}@${version}`);
+        await self.pm.init(name, version, description);
+    }
+    
+    /**
+     * Install packages
+     */
+    async def install(args: Array<string>) -> void {
+        if (args.length == 0) {
+            console.log("Installing all dependencies...");
+            await self.pm.installDependencies();
+            return;
+        }
+        
+        let isDev = false;
+        
+        // Check for --dev flag
+        let pkgArgs = args.filter(arg => {
+            if (arg == "--dev" || arg == "-D") {
+                isDev = true;
+                return false;
+            }
+            return true;
+        });
+        
+        for (let pkg of pkgArgs) {
+            // Check for name@version format
+            let parts = pkg.split('@');
+            let name = parts[0];
+            let version = parts.length > 1 ? parts[1] : "latest";
+            
+            console.log(`Installing ${name}@${version}${isDev ? " (dev)" : ""}...`);
+            await self.pm.installPackage(name, version, isDev);
+        }
+    }
+    
+    /**
+     * Uninstall packages
+     */
+    async def uninstall(args: Array<string>) -> void {
+        for (let name of args) {
+            console.log(`Uninstalling ${name}...`);
+            await self.pm.uninstallPackage(name);
+        }
+    }
+    
+    /**
+     * Update packages
+     */
+    async def update(args: Array<string>) -> void {
+        console.log("Updating dependencies...");
+        await self.pm.updateDependencies();
+    }
+    
+    /**
+     * Publish package
+     */
+    async def publish(args: Array<string>) -> void {
+        console.log("Publishing package...");
+        await self.pm.publish();
+    }
+    
+    /**
+     * Print help
+     */
+    def printHelp() -> void {
+        console.log(`
+Tocin Package Manager
+
+Usage: tpm [command] [args]
+
+Commands:
+  init [name] [version] [description]  Initialize a new package
+  install, i [package[@version]]       Install package(s)
+  uninstall, remove [package]          Uninstall package(s)
+  update                               Update dependencies
+  publish                              Publish package
+  help                                 Show this help
+
+Options:
+  --dev, -D                            Install as development dependency
+`);
+    }
+}
+
+// Export public classes and functions
+export {
+    Version,
+    VersionRange,
+    Dependency,
+    PackageManifest,
+    PackageRegistry,
+    PackageManager,
+    PackageManagerCLI
+} 

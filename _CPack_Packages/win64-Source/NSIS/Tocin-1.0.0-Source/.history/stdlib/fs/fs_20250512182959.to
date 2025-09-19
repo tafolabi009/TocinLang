@@ -1,0 +1,525 @@
+/**
+ * File System Module for Tocin
+ * Provides file and directory operations
+ */
+
+module fs {
+    // File access modes
+    export enum FileMode {
+        READ = 0,
+        WRITE = 1,
+        APPEND = 2,
+        READ_WRITE = 3,
+        READ_APPEND = 4,
+        CREATE = 8,
+        TRUNCATE = 16,
+        BINARY = 32
+    }
+
+    // Error type for file operations
+    export class FileError: Error {
+        constructor(message: string) {
+            super(message);
+        }
+    }
+
+    // File handle class
+    export class File {
+        private handle: int;
+        private path: string;
+        private mode: FileMode;
+        
+        // Internal constructor, use fs.open() instead
+        constructor(handle: int, path: string, mode: FileMode) {
+            this.handle = handle;
+            this.path = path;
+            this.mode = mode;
+        }
+        
+        // Read entire file as string
+        def readAll() -> string {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            if this.mode & FileMode.READ == 0 {
+                throw new FileError("File not opened for reading");
+            }
+            
+            @extern("fs", "readAll")
+            def _c_read_all(handle: int) -> string;
+            
+            return _c_read_all(this.handle);
+        }
+        
+        // Read specified number of bytes
+        def read(size: int) -> string {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            if this.mode & FileMode.READ == 0 {
+                throw new FileError("File not opened for reading");
+            }
+            
+            @extern("fs", "read")
+            def _c_read(handle: int, size: int) -> string;
+            
+            return _c_read(this.handle, size);
+        }
+        
+        // Read a line from file
+        def readLine() -> string {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            if this.mode & FileMode.READ == 0 {
+                throw new FileError("File not opened for reading");
+            }
+            
+            @extern("fs", "readLine")
+            def _c_read_line(handle: int) -> string;
+            
+            return _c_read_line(this.handle);
+        }
+        
+        // Read all lines into a list
+        def readLines() -> list<string> {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            if this.mode & FileMode.READ == 0 {
+                throw new FileError("File not opened for reading");
+            }
+            
+            let lines = new list<string>();
+            let line = this.readLine();
+            
+            while line != nil {
+                lines.push(line);
+                line = this.readLine();
+            }
+            
+            return lines;
+        }
+        
+        // Write string to file
+        def write(data: string) -> int {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            if (this.mode & FileMode.WRITE == 0) && (this.mode & FileMode.APPEND == 0) {
+                throw new FileError("File not opened for writing");
+            }
+            
+            @extern("fs", "write")
+            def _c_write(handle: int, data: string) -> int;
+            
+            return _c_write(this.handle, data);
+        }
+        
+        // Write list of strings to file
+        def writeLines(lines: list<string>) -> int {
+            let totalBytes = 0;
+            for line in lines {
+                totalBytes += this.write(line + "\n");
+            }
+            return totalBytes;
+        }
+        
+        // Flush file buffers
+        def flush() {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            @extern("fs", "flush")
+            def _c_flush(handle: int);
+            
+            _c_flush(this.handle);
+        }
+        
+        // Close the file
+        def close() {
+            if this.handle <= 0 {
+                return;
+            }
+            
+            @extern("fs", "close")
+            def _c_close(handle: int);
+            
+            _c_close(this.handle);
+            this.handle = 0;
+        }
+        
+        // Get current position in file
+        def position() -> int {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            @extern("fs", "tell")
+            def _c_tell(handle: int) -> int;
+            
+            return _c_tell(this.handle);
+        }
+        
+        // Seek to position in file
+        def seek(position: int) {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            @extern("fs", "seek")
+            def _c_seek(handle: int, position: int);
+            
+            _c_seek(this.handle, position);
+        }
+        
+        // Get file size
+        def size() -> int {
+            if this.handle <= 0 {
+                throw new FileError("Invalid file handle");
+            }
+            
+            @extern("fs", "size")
+            def _c_size(handle: int) -> int;
+            
+            return _c_size(this.handle);
+        }
+    }
+    
+    // Open a file and return a File object
+    export def open(path: string, mode: FileMode = FileMode.READ) -> File {
+        @extern("fs", "open")
+        def _c_open(path: string, mode: int) -> int;
+        
+        let handle = _c_open(path, mode as int);
+        if handle <= 0 {
+            throw new FileError(f"Could not open file: {path}");
+        }
+        
+        return new File(handle, path, mode);
+    }
+    
+    // Check if file exists
+    export def exists(path: string) -> bool {
+        @extern("fs", "exists")
+        def _c_exists(path: string) -> bool;
+        
+        return _c_exists(path);
+    }
+    
+    // Remove a file
+    export def remove(path: string) -> bool {
+        @extern("fs", "remove")
+        def _c_remove(path: string) -> bool;
+        
+        return _c_remove(path);
+    }
+    
+    // Rename a file
+    export def rename(oldPath: string, newPath: string) -> bool {
+        @extern("fs", "rename")
+        def _c_rename(oldPath: string, newPath: string) -> bool;
+        
+        return _c_rename(oldPath, newPath);
+    }
+    
+    // Copy a file
+    export def copy(source: string, destination: string) -> bool {
+        if !exists(source) {
+            throw new FileError(f"Source file does not exist: {source}");
+        }
+        
+        let srcFile = open(source, FileMode.READ | FileMode.BINARY);
+        let dstFile = open(destination, FileMode.WRITE | FileMode.CREATE | FileMode.BINARY);
+        
+        const BUFFER_SIZE = 8192;
+        let buffer = srcFile.read(BUFFER_SIZE);
+        
+        while buffer.length() > 0 {
+            dstFile.write(buffer);
+            buffer = srcFile.read(BUFFER_SIZE);
+        }
+        
+        srcFile.close();
+        dstFile.close();
+        
+        return true;
+    }
+    
+    // Get file stats
+    export class FileStat {
+        size: int;
+        isDirectory: bool;
+        isFile: bool;
+        createdTime: int;
+        modifiedTime: int;
+        accessedTime: int;
+        
+        constructor(size: int, isDirectory: bool, isFile: bool, 
+                   createdTime: int, modifiedTime: int, accessedTime: int) {
+            this.size = size;
+            this.isDirectory = isDirectory;
+            this.isFile = isFile;
+            this.createdTime = createdTime;
+            this.modifiedTime = modifiedTime;
+            this.accessedTime = accessedTime;
+        }
+    }
+    
+    // Get file statistics
+    export def stat(path: string) -> FileStat {
+        @extern("fs", "stat_size")
+        def _c_stat_size(path: string) -> int;
+        
+        @extern("fs", "stat_is_dir")
+        def _c_stat_is_dir(path: string) -> bool;
+        
+        @extern("fs", "stat_is_file")
+        def _c_stat_is_file(path: string) -> bool;
+        
+        @extern("fs", "stat_created")
+        def _c_stat_created(path: string) -> int;
+        
+        @extern("fs", "stat_modified")
+        def _c_stat_modified(path: string) -> int;
+        
+        @extern("fs", "stat_accessed")
+        def _c_stat_accessed(path: string) -> int;
+        
+        if !exists(path) {
+            throw new FileError(f"Path does not exist: {path}");
+        }
+        
+        return new FileStat(
+            _c_stat_size(path),
+            _c_stat_is_dir(path),
+            _c_stat_is_file(path),
+            _c_stat_created(path),
+            _c_stat_modified(path),
+            _c_stat_accessed(path)
+        );
+    }
+    
+    // Convenience functions
+    
+    // Read entire file as string
+    export def readFile(path: string) -> string {
+        let file = open(path, FileMode.READ);
+        let content = file.readAll();
+        file.close();
+        return content;
+    }
+    
+    // Read file as lines
+    export def readLines(path: string) -> list<string> {
+        let file = open(path, FileMode.READ);
+        let lines = file.readLines();
+        file.close();
+        return lines;
+    }
+    
+    // Write string to file
+    export def writeFile(path: string, content: string, append: bool = false) {
+        let mode = append ? FileMode.APPEND | FileMode.CREATE : FileMode.WRITE | FileMode.CREATE;
+        let file = open(path, mode);
+        file.write(content);
+        file.close();
+    }
+    
+    // Write lines to file
+    export def writeLines(path: string, lines: list<string>, append: bool = false) {
+        let mode = append ? FileMode.APPEND | FileMode.CREATE : FileMode.WRITE | FileMode.CREATE;
+        let file = open(path, mode);
+        file.writeLines(lines);
+        file.close();
+    }
+    
+    // Append string to file
+    export def appendFile(path: string, content: string) {
+        writeFile(path, content, true);
+    }
+    
+    // Append lines to file
+    export def appendLines(path: string, lines: list<string>) {
+        writeLines(path, lines, true);
+    }
+}
+
+// Directory operations module
+module fs.dir {
+    // Create a directory
+    export def create(path: string) -> bool {
+        @extern("fs", "mkdir")
+        def _c_mkdir(path: string) -> bool;
+        
+        return _c_mkdir(path);
+    }
+    
+    // Create directory and parent directories if needed
+    export def createAll(path: string) -> bool {
+        @extern("fs", "mkdirp")
+        def _c_mkdirp(path: string) -> bool;
+        
+        return _c_mkdirp(path);
+    }
+    
+    // Remove a directory
+    export def remove(path: string) -> bool {
+        @extern("fs", "rmdir")
+        def _c_rmdir(path: string) -> bool;
+        
+        return _c_rmdir(path);
+    }
+    
+    // Remove directory and all contents recursively
+    export def removeAll(path: string) -> bool {
+        @extern("fs", "rmdirr")
+        def _c_rmdirr(path: string) -> bool;
+        
+        return _c_rmdirr(path);
+    }
+    
+    // List directory contents
+    export def list(path: string) -> list<string> {
+        @extern("fs", "readdir")
+        def _c_readdir(path: string) -> list<string>;
+        
+        if !fs.exists(path) {
+            throw new fs.FileError(f"Directory does not exist: {path}");
+        }
+        
+        let stat = fs.stat(path);
+        if !stat.isDirectory {
+            throw new fs.FileError(f"Path is not a directory: {path}");
+        }
+        
+        return _c_readdir(path);
+    }
+    
+    // Current working directory
+    export def current() -> string {
+        @extern("fs", "getcwd")
+        def _c_getcwd() -> string;
+        
+        return _c_getcwd();
+    }
+    
+    // Change current working directory
+    export def changeTo(path: string) -> bool {
+        @extern("fs", "chdir")
+        def _c_chdir(path: string) -> bool;
+        
+        return _c_chdir(path);
+    }
+    
+    // Create temporary directory
+    export def temp() -> string {
+        @extern("fs", "tempdir")
+        def _c_tempdir() -> string;
+        
+        return _c_tempdir();
+    }
+    
+    // Iterate through directory recursively
+    export def walk(path: string) -> list<string> {
+        @extern("fs", "walk")
+        def _c_walk(path: string) -> list<string>;
+        
+        if !fs.exists(path) {
+            throw new fs.FileError(f"Directory does not exist: {path}");
+        }
+        
+        let stat = fs.stat(path);
+        if !stat.isDirectory {
+            throw new fs.FileError(f"Path is not a directory: {path}");
+        }
+        
+        return _c_walk(path);
+    }
+}
+
+// Path operations module
+module fs.path {
+    // OS-specific path separator
+    export const SEPARATOR: string = @extern("fs", "path_separator") as string;
+    
+    // Join path segments
+    export def join(segments: list<string>) -> string {
+        @extern("fs", "path_join")
+        def _c_path_join(segments: list<string>) -> string;
+        
+        return _c_path_join(segments);
+    }
+    
+    // Convenience overload for two segments
+    export def join(a: string, b: string) -> string {
+        return join([a, b]);
+    }
+    
+    // Convenience overload for three segments
+    export def join(a: string, b: string, c: string) -> string {
+        return join([a, b, c]);
+    }
+    
+    // Get directory name (parent directory)
+    export def dirname(path: string) -> string {
+        @extern("fs", "path_dirname")
+        def _c_path_dirname(path: string) -> string;
+        
+        return _c_path_dirname(path);
+    }
+    
+    // Get base name (file name)
+    export def basename(path: string) -> string {
+        @extern("fs", "path_basename")
+        def _c_path_basename(path: string) -> string;
+        
+        return _c_path_basename(path);
+    }
+    
+    // Get file extension
+    export def extension(path: string) -> string {
+        @extern("fs", "path_extension")
+        def _c_path_extension(path: string) -> string;
+        
+        return _c_path_extension(path);
+    }
+    
+    // Get absolute path
+    export def absolute(path: string) -> string {
+        @extern("fs", "path_abspath")
+        def _c_path_abspath(path: string) -> string;
+        
+        return _c_path_abspath(path);
+    }
+    
+    // Normalize path (resolve "../" etc.)
+    export def normalize(path: string) -> string {
+        @extern("fs", "path_normalize")
+        def _c_path_normalize(path: string) -> string;
+        
+        return _c_path_normalize(path);
+    }
+    
+    // Check if path is absolute
+    export def isAbsolute(path: string) -> bool {
+        @extern("fs", "path_is_absolute")
+        def _c_path_is_absolute(path: string) -> bool;
+        
+        return _c_path_is_absolute(path);
+    }
+    
+    // Get relative path
+    export def relative(from: string, to: string) -> string {
+        @extern("fs", "path_relpath")
+        def _c_path_relpath(from: string, to: string) -> string;
+        
+        return _c_path_relpath(from, to);
+    }
+} 

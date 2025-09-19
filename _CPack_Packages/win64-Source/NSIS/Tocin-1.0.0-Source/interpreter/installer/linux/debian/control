@@ -1,0 +1,24 @@
+Source: tocin
+Section: devel
+Priority: optional
+Maintainer: Oluwatosin Afolabi <afolabi@genovotech.com>
+Build-Depends: debhelper (>= 11), cmake (>= 3.10), g++ (>= 7), libllvm-dev (>= 10), libboost-all-dev (>= 1.65)
+
+Package: tocin
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libllvm10 (>= 10), libboost-system1.65.1, libboost-filesystem1.65.1
+Description: Tocin Programming Language Interpreter
+ The Tocin interpreter is a modern, high-performance interpreter
+ for the Tocin programming language. It features:
+ .
+  * Strong type system
+  * Pattern matching
+  * First-class functions
+  * Object-oriented programming
+  * Module system
+  * Concurrency support
+  * Generics
+  * JIT compilation
+  * Advanced optimization
+  * Memory safety
+  * Comprehensive standard library 

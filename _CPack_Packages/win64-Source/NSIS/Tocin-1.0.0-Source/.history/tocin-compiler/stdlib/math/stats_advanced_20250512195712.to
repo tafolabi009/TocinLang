@@ -1,0 +1,942 @@
+/**
+ * Tocin Standard Library - Advanced Statistics Module
+ * Provides advanced statistical functions, probability distributions, 
+ * hypothesis testing, and regression analysis.
+ */
+
+import math.basic;
+
+/**
+ * Probability Distributions
+ */
+
+/**
+ * Normal (Gaussian) distribution
+ */
+class NormalDistribution {
+    property mean: float;
+    property standardDeviation: float;
+    
+    def initialize(mean: float = 0.0, standardDeviation: float = 1.0) {
+        if (standardDeviation <= 0) {
+            throw Error("Standard deviation must be positive");
+        }
+        
+        self.mean = mean;
+        self.standardDeviation = standardDeviation;
+    }
+    
+    /**
+     * Probability density function
+     */
+    def pdf(x: float) -> float {
+        let variance = self.standardDeviation * self.standardDeviation;
+        let normalization = 1.0 / math.sqrt(2.0 * math.PI * variance);
+        let exponent = -0.5 * ((x - self.mean) * (x - self.mean)) / variance;
+        
+        return normalization * math.exp(exponent);
+    }
+    
+    /**
+     * Cumulative distribution function
+     * Uses approximation from Abramowitz and Stegun
+     */
+    def cdf(x: float) -> float {
+        let z = (x - self.mean) / (self.standardDeviation * math.SQRT2);
+        return 0.5 * (1.0 + erf(z));
+    }
+    
+    /**
+     * Inverse cumulative distribution function (quantile function)
+     */
+    def quantile(p: float) -> float {
+        if (p < 0 || p > 1) {
+            throw Error("Probability must be between 0 and 1");
+        }
+        
+        // Approximation from Abramowitz and Stegun
+        let c0 = 2.515517;
+        let c1 = 0.802853;
+        let c2 = 0.010328;
+        let d1 = 1.432788;
+        let d2 = 0.189269;
+        let d3 = 0.001308;
+        
+        let q = p - 0.5;
+        
+        if (math.abs(q) <= 0.42) {
+            // Use approximation for central region
+            let r = q * q;
+            let t = q * (((c2 * r + c1) * r + c0) /
+                        ((((d3 * r + d2) * r + d1) * r + 1)));
+            
+            return self.mean + self.standardDeviation * t;
+        } else {
+            // Use approximation for tail regions
+            let r = p < 0.5 ? p : 1 - p;
+            let s = math.sqrt(-math.log(r));
+            let t = 2.0 / (math.PI * s) + s;
+            
+            if (p < 0.5) {
+                return self.mean - self.standardDeviation * t;
+            } else {
+                return self.mean + self.standardDeviation * t;
+            }
+        }
+    }
+    
+    /**
+     * Generate a random sample from the distribution
+     */
+    def sample() -> float {
+        // Box-Muller transform
+        let u1 = Math.random();
+        let u2 = Math.random();
+        
+        let z = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.PI * u2);
+        return self.mean + self.standardDeviation * z;
+    }
+}
+
+/**
+ * Student's t-distribution
+ */
+class TDistribution {
+    property degreesOfFreedom: float;
+    
+    def initialize(degreesOfFreedom: float) {
+        if (degreesOfFreedom <= 0) {
+            throw Error("Degrees of freedom must be positive");
+        }
+        
+        self.degreesOfFreedom = degreesOfFreedom;
+    }
+    
+    /**
+     * Probability density function
+     */
+    def pdf(x: float) -> float {
+        let n = self.degreesOfFreedom;
+        let c = gammaFunction((n + 1) / 2) / (math.sqrt(n * math.PI) * gammaFunction(n / 2));
+        let p = math.pow(1 + (x * x) / n, -(n + 1) / 2);
+        
+        return c * p;
+    }
+    
+    /**
+     * Cumulative distribution function
+     */
+    def cdf(x: float) -> float {
+        let n = self.degreesOfFreedom;
+        
+        // Handle special cases
+        if (x == 0) {
+            return 0.5;
+        }
+        
+        // For large degrees of freedom, approximate with normal distribution
+        if (n > 100) {
+            let normalDist = new NormalDistribution(0, 1);
+            return normalDist.cdf(x);
+        }
+        
+        // For general case, we need to use incomplete beta function
+        // This is a simplified implementation
+        let t = n / (n + x * x);
+        let a = n / 2;
+        let b = 0.5;
+        
+        if (x < 0) {
+            return 0.5 * incompleteBeta(a, b, t);
+        } else {
+            return 1 - 0.5 * incompleteBeta(a, b, t);
+        }
+    }
+}
+
+/**
+ * Chi-squared distribution
+ */
+class ChiSquaredDistribution {
+    property degreesOfFreedom: int;
+    
+    def initialize(degreesOfFreedom: int) {
+        if (degreesOfFreedom <= 0) {
+            throw Error("Degrees of freedom must be positive");
+        }
+        
+        self.degreesOfFreedom = degreesOfFreedom;
+    }
+    
+    /**
+     * Probability density function
+     */
+    def pdf(x: float) -> float {
+        if (x <= 0) {
+            return 0;
+        }
+        
+        let k = self.degreesOfFreedom;
+        let p = math.pow(x, k/2 - 1) * math.exp(-x/2);
+        let normalization = 1 / (math.pow(2, k/2) * gammaFunction(k/2));
+        
+        return normalization * p;
+    }
+    
+    /**
+     * Cumulative distribution function
+     */
+    def cdf(x: float) -> float {
+        if (x <= 0) {
+            return 0;
+        }
+        
+        let k = self.degreesOfFreedom;
+        return lowerGammaP(k/2, x/2);
+    }
+}
+
+/**
+ * F-distribution
+ */
+class FDistribution {
+    property d1: int;  // Numerator degrees of freedom
+    property d2: int;  // Denominator degrees of freedom
+    
+    def initialize(d1: int, d2: int) {
+        if (d1 <= 0 || d2 <= 0) {
+            throw Error("Degrees of freedom must be positive");
+        }
+        
+        self.d1 = d1;
+        self.d2 = d2;
+    }
+    
+    /**
+     * Probability density function
+     */
+    def pdf(x: float) -> float {
+        if (x <= 0) {
+            return 0;
+        }
+        
+        let d1 = self.d1;
+        let d2 = self.d2;
+        
+        let t1 = math.pow(d1 * x, d1) * math.pow(d2, d2);
+        let t2 = math.pow(d1 * x + d2, d1 + d2);
+        
+        let beta = gammaFunction(d1/2) * gammaFunction(d2/2) / gammaFunction((d1+d2)/2);
+        let normalization = 1 / (x * beta * math.pow(d1/d2, d1/2));
+        
+        return normalization * math.sqrt(t1 / t2);
+    }
+}
+
+/**
+ * Helper functions for distributions
+ */
+
+/**
+ * Error function
+ * Uses approximation from Abramowitz and Stegun
+ */
+def erf(x: float) -> float {
+    // Constants
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
+    
+    // Save the sign of x
+    let sign = x < 0 ? -1 : 1;
+    x = math.abs(x);
+    
+    // Formula 7.1.26 in Abramowitz and Stegun
+    let t = 1.0 / (1.0 + p * x);
+    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x);
+    
+    return sign * y;
+}
+
+/**
+ * Approximation of the gamma function
+ * Using Lanczos approximation
+ */
+def gammaFunction(x: float) -> float {
+    if (x <= 0) {
+        // Handle special cases
+        if (x == 0 || (x < 0 && x == math.floor(x))) {
+            return Infinity;
+        }
+        
+        // Use reflection formula for negative values
+        return math.PI / (math.sin(math.PI * x) * gammaFunction(1 - x));
+    }
+    
+    // Lanczos approximation coefficients
+    let p = [
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7
+    ];
+    
+    let g = 7;
+    
+    if (x < 0.5) {
+        return math.PI / (math.sin(math.PI * x) * gammaFunction(1 - x));
+    }
+    
+    x -= 1;
+    let a = 0.99999999999980993;
+    
+    for (let i = 0; i < p.length; i++) {
+        a += p[i] / (x + i + 1);
+    }
+    
+    let t = x + g + 0.5;
+    return math.sqrt(2 * math.PI) * math.pow(t, x + 0.5) * math.exp(-t) * a;
+}
+
+/**
+ * Lower incomplete gamma function regularized P(a,x)
+ */
+def lowerGammaP(a: float, x: float) -> float {
+    if (x <= 0) {
+        return 0;
+    }
+    
+    if (x >= a + 1) {
+        // Use continued fraction representation for large x
+        return 1 - upperGammaQ(a, x);
+    }
+    
+    // Use series expansion for small x
+    let sum = 0;
+    let term = 1 / a;
+    let i = 0;
+    
+    while (i < 100) {  // Arbitrary limit to prevent infinite loop
+        sum += term;
+        term *= x / (a + i + 1);
+        
+        if (term < 1e-10) break;
+        
+        i++;
+    }
+    
+    return sum * math.exp(-x + a * math.log(x) - math.log(gammaFunction(a)));
+}
+
+/**
+ * Upper incomplete gamma function regularized Q(a,x)
+ */
+def upperGammaQ(a: float, x: float) -> float {
+    if (x <= 0) {
+        return 1;
+    }
+    
+    // Continued fraction representation (Lentz's method)
+    let fpmin = 1e-30;
+    let eps = 1e-10;
+    
+    let b = x + 1 - a;
+    let c = 1 / fpmin;
+    let d = 1 / b;
+    let h = d;
+    
+    let i = 1;
+    while (i <= 100) {  // Arbitrary limit to prevent infinite loop
+        let an = -i * (i - a);
+        b += 2;
+        
+        d = an * d + b;
+        if (math.abs(d) < fpmin) d = fpmin;
+        
+        c = b + an / c;
+        if (math.abs(c) < fpmin) c = fpmin;
+        
+        d = 1 / d;
+        let del = d * c;
+        h *= del;
+        
+        if (math.abs(del - 1) < eps) break;
+        
+        i++;
+    }
+    
+    return h * math.exp(-x + a * math.log(x) - math.log(gammaFunction(a)));
+}
+
+/**
+ * Regularized incomplete beta function
+ */
+def incompleteBeta(a: float, b: float, x: float) -> float {
+    if (x == 0) return 0;
+    if (x == 1) return 1;
+    
+    // Use continued fraction for computational efficiency
+    let eps = 1e-10;
+    let qab = a + b;
+    let qap = a + 1;
+    let qam = a - 1;
+    
+    let c = 1;
+    let d = 1 - qab * x / qap;
+    if (math.abs(d) < 1e-30) d = 1e-30;
+    d = 1 / d;
+    let h = d;
+    
+    for (let m = 1; m <= 100; m++) {
+        let m2 = 2 * m;
+        let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        
+        // Even terms
+        d = 1 + aa * d;
+        if (math.abs(d) < 1e-30) d = 1e-30;
+        
+        c = 1 + aa / c;
+        if (math.abs(c) < 1e-30) c = 1e-30;
+        
+        d = 1 / d;
+        h *= d * c;
+        
+        // Odd terms
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        
+        d = 1 + aa * d;
+        if (math.abs(d) < 1e-30) d = 1e-30;
+        
+        c = 1 + aa / c;
+        if (math.abs(c) < 1e-30) c = 1e-30;
+        
+        d = 1 / d;
+        del = d * c;
+        h *= del;
+        
+        if (math.abs(del - 1) < eps) break;
+    }
+    
+    let beta = gammaFunction(a) * gammaFunction(b) / gammaFunction(a + b);
+    return h * math.exp(a * math.log(x) + b * math.log(1 - x) - math.log(beta)) / a;
+}
+
+/**
+ * Hypothesis Testing
+ */
+
+/**
+ * One-sample t-test
+ */
+def tTest(sample: Array<float>, populationMean: float) -> {
+    t: float,            // t-statistic
+    pValue: float,       // p-value (two-tailed)
+    degreesOfFreedom: int  // degrees of freedom
+} {
+    let n = sample.length;
+    if (n <= 1) {
+        throw Error("Sample must have at least 2 elements");
+    }
+    
+    // Calculate sample statistics
+    let sum = 0;
+    for (let value of sample) {
+        sum += value;
+    }
+    let sampleMean = sum / n;
+    
+    // Calculate sample standard deviation
+    let sumSquaredDiff = 0;
+    for (let value of sample) {
+        let diff = value - sampleMean;
+        sumSquaredDiff += diff * diff;
+    }
+    let sampleVariance = sumSquaredDiff / (n - 1);
+    let sampleStdDev = math.sqrt(sampleVariance);
+    let standardError = sampleStdDev / math.sqrt(n);
+    
+    // Calculate t-statistic
+    let t = (sampleMean - populationMean) / standardError;
+    let df = n - 1;
+    
+    // Calculate p-value
+    let tDist = new TDistribution(df);
+    let pValue = 2 * (1 - tDist.cdf(math.abs(t)));
+    
+    return {
+        t,
+        pValue,
+        degreesOfFreedom: df
+    };
+}
+
+/**
+ * Two-sample t-test (independent samples)
+ */
+def tTestTwoSample(sample1: Array<float>, sample2: Array<float>, equalVariance: bool = false) -> {
+    t: float,            // t-statistic
+    pValue: float,       // p-value (two-tailed)
+    degreesOfFreedom: float  // degrees of freedom
+} {
+    let n1 = sample1.length;
+    let n2 = sample2.length;
+    
+    if (n1 <= 1 || n2 <= 1) {
+        throw Error("Each sample must have at least 2 elements");
+    }
+    
+    // Calculate means
+    let sum1 = 0;
+    for (let value of sample1) {
+        sum1 += value;
+    }
+    let mean1 = sum1 / n1;
+    
+    let sum2 = 0;
+    for (let value of sample2) {
+        sum2 += value;
+    }
+    let mean2 = sum2 / n2;
+    
+    // Calculate variances
+    let sumSquaredDiff1 = 0;
+    for (let value of sample1) {
+        let diff = value - mean1;
+        sumSquaredDiff1 += diff * diff;
+    }
+    let variance1 = sumSquaredDiff1 / (n1 - 1);
+    
+    let sumSquaredDiff2 = 0;
+    for (let value of sample2) {
+        let diff = value - mean2;
+        sumSquaredDiff2 += diff * diff;
+    }
+    let variance2 = sumSquaredDiff2 / (n2 - 1);
+    
+    let t, df;
+    
+    if (equalVariance) {
+        // Pooled t-test
+        let pooledVariance = ((n1 - 1) * variance1 + (n2 - 1) * variance2) / (n1 + n2 - 2);
+        let standardError = math.sqrt(pooledVariance * (1/n1 + 1/n2));
+        
+        t = (mean1 - mean2) / standardError;
+        df = n1 + n2 - 2;
+    } else {
+        // Welch's t-test
+        let standardError = math.sqrt(variance1/n1 + variance2/n2);
+        
+        t = (mean1 - mean2) / standardError;
+        
+        // Welch-Satterthwaite equation for degrees of freedom
+        let numerator = math.pow(variance1/n1 + variance2/n2, 2);
+        let denominator = math.pow(variance1/n1, 2)/(n1-1) + math.pow(variance2/n2, 2)/(n2-1);
+        df = numerator / denominator;
+    }
+    
+    // Calculate p-value
+    let tDist = new TDistribution(df);
+    let pValue = 2 * (1 - tDist.cdf(math.abs(t)));
+    
+    return {
+        t,
+        pValue,
+        degreesOfFreedom: df
+    };
+}
+
+/**
+ * Chi-squared test of independence
+ */
+def chiSquaredTest(contingencyTable: Array<Array<float>>) -> {
+    chiSquared: float,    // chi-squared statistic
+    pValue: float,        // p-value
+    degreesOfFreedom: int  // degrees of freedom
+} {
+    let rows = contingencyTable.length;
+    if (rows === 0) {
+        throw Error("Contingency table must have at least one row");
+    }
+    
+    let cols = contingencyTable[0].length;
+    if (cols === 0) {
+        throw Error("Contingency table must have at least one column");
+    }
+    
+    // Calculate row and column sums
+    let rowSums = Array(rows).fill(0);
+    let colSums = Array(cols).fill(0);
+    let total = 0;
+    
+    for (let i = 0; i < rows; i++) {
+        if (contingencyTable[i].length !== cols) {
+            throw Error("All rows must have the same number of columns");
+        }
+        
+        for (let j = 0; j < cols; j++) {
+            let value = contingencyTable[i][j];
+            rowSums[i] += value;
+            colSums[j] += value;
+            total += value;
+        }
+    }
+    
+    // Calculate expected values and chi-squared statistic
+    let chiSquared = 0;
+    
+    for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+            let observed = contingencyTable[i][j];
+            let expected = rowSums[i] * colSums[j] / total;
+            
+            chiSquared += Math.pow(observed - expected, 2) / expected;
+        }
+    }
+    
+    // Calculate degrees of freedom
+    let df = (rows - 1) * (cols - 1);
+    
+    // Calculate p-value
+    let chiDist = new ChiSquaredDistribution(df);
+    let pValue = 1 - chiDist.cdf(chiSquared);
+    
+    return {
+        chiSquared,
+        pValue,
+        degreesOfFreedom: df
+    };
+}
+
+/**
+ * ANOVA (Analysis of Variance)
+ */
+def anova(groups: Array<Array<float>>) -> {
+    F: float,             // F-statistic
+    pValue: float,        // p-value
+    dfBetween: int,       // degrees of freedom between groups
+    dfWithin: int,        // degrees of freedom within groups
+    MSB: float,           // mean square between groups
+    MSW: float            // mean square within groups
+} {
+    let k = groups.length;  // Number of groups
+    
+    if (k < 2) {
+        throw Error("ANOVA requires at least two groups");
+    }
+    
+    // Calculate overall mean and count total observations
+    let totalSum = 0;
+    let totalCount = 0;
+    let groupMeans = [];
+    let groupCounts = [];
+    
+    for (let group of groups) {
+        let n = group.length;
+        if (n < 1) {
+            throw Error("Each group must have at least one observation");
+        }
+        
+        let sum = 0;
+        for (let value of group) {
+            sum += value;
+            totalSum += value;
+        }
+        
+        groupMeans.push(sum / n);
+        groupCounts.push(n);
+        totalCount += n;
+    }
+    
+    let overallMean = totalSum / totalCount;
+    
+    // Calculate sum of squares between groups (SSB)
+    let SSB = 0;
+    for (let i = 0; i < k; i++) {
+        SSB += groupCounts[i] * Math.pow(groupMeans[i] - overallMean, 2);
+    }
+    
+    // Calculate sum of squares within groups (SSW)
+    let SSW = 0;
+    for (let i = 0; i < k; i++) {
+        for (let value of groups[i]) {
+            SSW += Math.pow(value - groupMeans[i], 2);
+        }
+    }
+    
+    // Calculate degrees of freedom
+    let dfBetween = k - 1;
+    let dfWithin = totalCount - k;
+    
+    // Calculate mean squares
+    let MSB = SSB / dfBetween;
+    let MSW = SSW / dfWithin;
+    
+    // Calculate F-statistic
+    let F = MSB / MSW;
+    
+    // Calculate p-value
+    let fDist = new FDistribution(dfBetween, dfWithin);
+    let pValue = 1 - fDist.cdf(F);
+    
+    return {
+        F,
+        pValue,
+        dfBetween,
+        dfWithin,
+        MSB,
+        MSW
+    };
+}
+
+/**
+ * Regression Analysis
+ */
+
+/**
+ * Simple linear regression
+ */
+def linearRegression(x: Array<float>, y: Array<float>) -> {
+    slope: float,            // slope (b1)
+    intercept: float,        // intercept (b0)
+    rSquared: float,         // coefficient of determination
+    standardError: float,    // standard error of the regression
+    tStatSlope: float,       // t-statistic for slope
+    pValueSlope: float,      // p-value for slope
+    confidenceIntervals: {   // 95% confidence intervals
+        slope: [float, float],
+        intercept: [float, float]
+    }
+} {
+    let n = x.length;
+    
+    if (n !== y.length) {
+        throw Error("x and y arrays must have the same length");
+    }
+    
+    if (n < 3) {
+        throw Error("At least 3 data points are required for regression analysis");
+    }
+    
+    // Calculate means
+    let sumX = 0;
+    let sumY = 0;
+    
+    for (let i = 0; i < n; i++) {
+        sumX += x[i];
+        sumY += y[i];
+    }
+    
+    let meanX = sumX / n;
+    let meanY = sumY / n;
+    
+    // Calculate slope and intercept
+    let numerator = 0;
+    let denominator = 0;
+    
+    for (let i = 0; i < n; i++) {
+        let diffX = x[i] - meanX;
+        numerator += diffX * (y[i] - meanY);
+        denominator += diffX * diffX;
+    }
+    
+    let slope = numerator / denominator;
+    let intercept = meanY - slope * meanX;
+    
+    // Calculate R-squared
+    let SST = 0;  // Total sum of squares
+    let SSR = 0;  // Regression sum of squares
+    let SSE = 0;  // Error sum of squares
+    
+    for (let i = 0; i < n; i++) {
+        let predicted = intercept + slope * x[i];
+        let residual = y[i] - predicted;
+        
+        SST += Math.pow(y[i] - meanY, 2);
+        SSR += Math.pow(predicted - meanY, 2);
+        SSE += Math.pow(residual, 2);
+    }
+    
+    let rSquared = SSR / SST;
+    
+    // Calculate standard error of the regression
+    let standardError = Math.sqrt(SSE / (n - 2));
+    
+    // Calculate standard error of the slope
+    let slopeStdError = standardError / Math.sqrt(denominator);
+    
+    // Calculate t-statistic for slope
+    let tStatSlope = slope / slopeStdError;
+    
+    // Calculate p-value for slope
+    let df = n - 2;
+    let tDist = new TDistribution(df);
+    let pValueSlope = 2 * (1 - tDist.cdf(Math.abs(tStatSlope)));
+    
+    // Calculate 95% confidence intervals
+    let tCritical = tDist.quantile(0.975);  // Two-tailed 95% confidence
+    
+    let slopeCI = [
+        slope - tCritical * slopeStdError,
+        slope + tCritical * slopeStdError
+    ];
+    
+    // Standard error of the intercept
+    let interceptStdError = standardError * Math.sqrt(1/n + Math.pow(meanX, 2)/denominator);
+    
+    let interceptCI = [
+        intercept - tCritical * interceptStdError,
+        intercept + tCritical * interceptStdError
+    ];
+    
+    return {
+        slope,
+        intercept,
+        rSquared,
+        standardError,
+        tStatSlope,
+        pValueSlope,
+        confidenceIntervals: {
+            slope: slopeCI,
+            intercept: interceptCI
+        }
+    };
+}
+
+/**
+ * Multiple linear regression
+ * Uses matrix operations for calculation
+ */
+def multipleRegression(X: Array<Array<float>>, y: Array<float>) -> {
+    coefficients: Array<float>,  // Regression coefficients [b0, b1, b2, ...]
+    rSquared: float,             // Coefficient of determination
+    standardError: float,        // Standard error of the regression
+    tStats: Array<float>,        // t-statistics for each coefficient
+    pValues: Array<float>,       // p-values for each coefficient
+    residuals: Array<float>      // Residuals (y - predicted)
+} {
+    // Requires the linear algebra module for implementation
+    throw Error("Multiple regression requires the linear algebra module");
+}
+
+/**
+ * Time Series Analysis
+ */
+
+/**
+ * Moving average
+ */
+def movingAverage(data: Array<float>, window: int) -> Array<float> {
+    if (window <= 0 || window > data.length) {
+        throw Error("Window size must be positive and not larger than the data length");
+    }
+    
+    let result = [];
+    
+    for (let i = 0; i <= data.length - window; i++) {
+        let sum = 0;
+        for (let j = 0; j < window; j++) {
+            sum += data[i + j];
+        }
+        result.push(sum / window);
+    }
+    
+    return result;
+}
+
+/**
+ * Exponential smoothing
+ */
+def exponentialSmoothing(data: Array<float>, alpha: float) -> Array<float> {
+    if (alpha < 0 || alpha > 1) {
+        throw Error("Alpha must be between 0 and 1");
+    }
+    
+    if (data.length === 0) {
+        return [];
+    }
+    
+    let result = [data[0]];
+    
+    for (let i = 1; i < data.length; i++) {
+        result.push(alpha * data[i] + (1 - alpha) * result[i - 1]);
+    }
+    
+    return result;
+}
+
+/**
+ * Autocorrelation function
+ */
+def autocorrelation(data: Array<float>, maxLag: int) -> Array<float> {
+    if (maxLag >= data.length) {
+        throw Error("Maximum lag must be less than the data length");
+    }
+    
+    let n = data.length;
+    let mean = 0;
+    
+    for (let value of data) {
+        mean += value;
+    }
+    mean /= n;
+    
+    // Calculate variance
+    let variance = 0;
+    for (let value of data) {
+        variance += Math.pow(value - mean, 2);
+    }
+    variance /= n;
+    
+    // Calculate autocorrelation for each lag
+    let result = [];
+    
+    for (let lag = 0; lag <= maxLag; lag++) {
+        let sum = 0;
+        
+        for (let i = 0; i < n - lag; i++) {
+            sum += (data[i] - mean) * (data[i + lag] - mean);
+        }
+        
+        let autocorr = sum / (n * variance);
+        result.push(autocorr);
+    }
+    
+    return result;
+}
+
+export {
+    // Distributions
+    NormalDistribution,
+    TDistribution,
+    ChiSquaredDistribution,
+    FDistribution,
+    
+    // Helper functions
+    erf,
+    gammaFunction,
+    lowerGammaP,
+    upperGammaQ,
+    incompleteBeta,
+    
+    // Hypothesis testing
+    tTest,
+    tTestTwoSample,
+    chiSquaredTest,
+    anova,
+    
+    // Regression
+    linearRegression,
+    multipleRegression,
+    
+    // Time series
+    movingAverage,
+    exponentialSmoothing,
+    autocorrelation
+} 

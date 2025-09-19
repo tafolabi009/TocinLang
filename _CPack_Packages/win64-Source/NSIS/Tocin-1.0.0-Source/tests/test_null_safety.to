@@ -1,0 +1,18 @@
+// Test file for null safety features in Tocin
+
+let s: string? = null;
+
+// Safe call
+let len = s?.length;
+print("Length (safe call): " + len);
+
+// Not-null assertion
+// let force_len = s!.length; // Should error if s is null
+
+// Elvis operator
+let value = s ?: "default";
+print("Value (Elvis): " + value);
+
+// Negative test: safe call on non-nullable
+let t: string = "hello";
+// let bad = t?.length; // Should error 

@@ -1,0 +1,130 @@
+// Example Tocin program demonstrating traits
+
+// Define a trait for objects that can be converted to a string
+trait ToString {
+    fn toString() -> string;
+}
+
+// Define a trait for objects that can be compared for equality
+trait Equals {
+    fn equals(other: Self) -> bool;
+}
+
+// Define a trait for objects that can be ordered
+trait Ordered: Equals {  // Ordered extends Equals
+    fn lessThan(other: Self) -> bool;
+    fn greaterThan(other: Self) -> bool;
+    
+    // Default implementation using lessThan
+    fn lessThanOrEqual(other: Self) -> bool {
+        return self.lessThan(other) || self.equals(other);
+    }
+    
+    // Default implementation using lessThan
+    fn greaterThanOrEqual(other: Self) -> bool {
+        return self.greaterThan(other) || self.equals(other);
+    }
+}
+
+// Define a Point struct
+struct Point {
+    x: int;
+    y: int;
+    
+    // Constructor
+    fn new(x: int, y: int) -> Point {
+        return Point { x: x, y: y };
+    }
+}
+
+// Implement ToString for Point
+impl ToString for Point {
+    fn toString() -> string {
+        return "(" + self.x.toString() + ", " + self.y.toString() + ")";
+    }
+}
+
+// Implement Equals for Point
+impl Equals for Point {
+    fn equals(other: Point) -> bool {
+        return self.x == other.x && self.y == other.y;
+    }
+}
+
+// Implement Ordered for Point (Manhattan distance from origin)
+impl Ordered for Point {
+    fn lessThan(other: Point) -> bool {
+        let selfDist = self.x.abs() + self.y.abs();
+        let otherDist = other.x.abs() + other.y.abs();
+        return selfDist < otherDist;
+    }
+    
+    fn greaterThan(other: Point) -> bool {
+        let selfDist = self.x.abs() + self.y.abs();
+        let otherDist = other.x.abs() + other.y.abs();
+        return selfDist > otherDist;
+    }
+}
+
+// Define a generic function that works with any ToString implementor
+fn printValue<T: ToString>(value: T) {
+    println(value.toString());
+}
+
+// Define a generic function that works with any Ordered implementor
+fn max<T: Ordered>(a: T, b: T) -> T {
+    if a.greaterThan(b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+// Generic sorting function for any type that implements Ordered
+fn sort<T: Ordered>(array: Array<T>) -> Array<T> {
+    // Simple bubble sort implementation
+    let result = array.clone();
+    let n = result.length();
+    
+    for i in 0..n {
+        for j in 0..(n - i - 1) {
+            if result[j].greaterThan(result[j + 1]) {
+                // Swap elements
+                let temp = result[j];
+                result[j] = result[j + 1];
+                result[j + 1] = temp;
+            }
+        }
+    }
+    
+    return result;
+}
+
+fn main() {
+    // Create some points
+    let p1 = Point.new(3, 4);
+    let p2 = Point.new(1, 2);
+    let p3 = Point.new(5, 12);
+    
+    // Use the ToString implementation
+    printValue(p1);  // Outputs: (3, 4)
+    
+    // Use the Equals implementation
+    println("p1 equals p2: " + p1.equals(p2).toString());  // Outputs: p1 equals p2: false
+    
+    // Use the Ordered implementation
+    println("p1 less than p2: " + p1.lessThan(p2).toString());  // Based on Manhattan distance
+    
+    // Use the generic max function
+    let furthestPoint = max(p1, p3);
+    println("Furthest point: " + furthestPoint.toString());  // Should be p3 (5, 12)
+    
+    // Use the generic sort function
+    let points = [p1, p2, p3];
+    let sortedPoints = sort(points);
+    
+    println("Sorted points (by distance from origin):");
+    for point in sortedPoints {
+        printValue(point);
+    }
+} 

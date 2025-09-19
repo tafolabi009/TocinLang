@@ -130,7 +130,8 @@ namespace lexer
                 column = 1;
                 atLineStart = true;
                 advance();
-                break;
+                // Don't break here - continue to handle indentation on next line
+                continue;
             }
             else if (c == '#')
             {
@@ -144,15 +145,28 @@ namespace lexer
                         {
                             ++line;
                             column = 1;
+                            atLineStart = true;
                         }
                         advance();
                     }
                     if (match('#')) advance(); // consume closing ##
+                    // Continue the loop to handle any subsequent whitespace/comments
+                    continue;
                 }
                 else // Single-line comment
                 {
                     while (!isAtEnd() && peek() != '\n')
                         advance();
+                    // If we hit a newline, advance past it and set atLineStart
+                    if (!isAtEnd() && peek() == '\n')
+                    {
+                        ++line;
+                        column = 1;
+                        atLineStart = true;
+                        advance();
+                        // Continue the loop to handle any subsequent whitespace/comments
+                        continue;
+                    }
                 }
             }
             else
@@ -189,8 +203,42 @@ namespace lexer
             return;
         }
 
-        if (peek() == '\n' || peek() == '#' || isAtEnd())
+        if (peek() == '\n' || isAtEnd())
         {
+            return;
+        }
+        
+        if (peek() == '#')
+        {
+            // Handle comments at the start of a line
+            advance(); // consume '#'
+            if (match('#')) // ## for multi-line comments
+            {
+                while (!isAtEnd() && !(peek() == '#' && peekNext() == '#'))
+                {
+                    if (peek() == '\n')
+                    {
+                        ++line;
+                        column = 1;
+                        atLineStart = true;
+                    }
+                    advance();
+                }
+                if (match('#')) advance(); // consume closing ##
+            }
+            else // Single-line comment
+            {
+                while (!isAtEnd() && peek() != '\n')
+                    advance();
+                // If we hit a newline, advance past it and set atLineStart
+                if (!isAtEnd() && peek() == '\n')
+                {
+                    ++line;
+                    column = 1;
+                    atLineStart = true;
+                    advance();
+                }
+            }
             return;
         }
 
@@ -477,9 +525,18 @@ namespace lexer
     }
 
     void Lexer::scanToken()
-    {
+{
+    if (atLineStart) {
+        handleIndentation();
+        atLineStart = false;
+        // Skip any remaining whitespace after indentation
+        while (peek() == ' ' || peek() == '\r' || peek() == '\t') {
+            advance();
+        }
+    } else {
         skipWhitespace();
-        start = current;
+    }
+    start = current;
         if (isAtEnd())
             return;
 

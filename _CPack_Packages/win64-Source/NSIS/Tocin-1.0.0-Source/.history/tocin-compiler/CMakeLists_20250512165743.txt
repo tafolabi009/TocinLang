@@ -1,0 +1,62 @@
+﻿cmake_minimum_required(VERSION 3.16)
+project(Tocin LANGUAGES C CXX)
+
+# Set C++ standard to C++17 for better compatibility
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Enable verbose output for debugging
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# Add compiler flags
+add_definitions(-D_WIN32_WINNT=0x0601)
+add_definitions(-DWIN32_LEAN_AND_MEAN)
+add_definitions(-DNOMINMAX)
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+add_definitions(-D__STDC_CONSTANT_MACROS)
+add_definitions(-D__STDC_FORMAT_MACROS)
+add_definitions(-D__STDC_LIMIT_MACROS)
+
+# LLVM Integration
+set(LLVM_DIR "C:/msys64/mingw64/lib/cmake/llvm")
+find_package(LLVM REQUIRED CONFIG)
+
+if(LLVM_FOUND)
+    message(STATUS "Found LLVM version ${LLVM_PACKAGE_VERSION}")
+    include_directories(${LLVM_INCLUDE_DIRS})
+    add_definitions(${LLVM_DEFINITIONS})
+
+    # Map LLVM components - only include what we need
+    llvm_map_components_to_libnames(llvm_libs
+        core
+        support
+        irreader
+    )
+else()
+    message(FATAL_ERROR "LLVM not found. Please ensure LLVM is installed.")
+endif()
+
+# Source Files
+set(SOURCES
+    src/main.cpp
+)
+
+# Create a simple executable
+add_executable(tocin ${SOURCES})
+
+# Include Project Headers
+target_include_directories(tocin PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${LLVM_INCLUDE_DIRS}
+    C:/msys64/mingw64/include
+)
+
+# Linking Libraries - minimal set
+target_link_libraries(tocin PRIVATE
+    -lmingw32
+    ${llvm_libs}
+)
+
+# Install target
+install(TARGETS tocin DESTINATION bin)

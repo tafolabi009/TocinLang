@@ -1,0 +1,1107 @@
+/**
+ * Tocin Standard Library - Game Engine Core
+ * Provides core functionality for game development.
+ */
+
+import math.basic;
+import math.geometry;
+import gui.core;
+
+/**
+ * Game time and timing utilities
+ */
+class Time {
+    static property deltaTime: float = 0; // Time since last frame in seconds
+    static property time: float = 0;      // Total time since start
+    static property frameCount: int = 0;  // Total frames since start
+    static property frameRate: float = 0; // Current frame rate
+    
+    private static property _lastFrameTime: float = 0;
+    private static property _fpsUpdateInterval: float = 0.5;
+    private static property _fpsAccumulator: float = 0;
+    private static property _frameCountTemp: int = 0;
+    
+    /**
+     * Update time values (called by the game loop)
+     */
+    static def update(currentTime: float) {
+        if (Time._lastFrameTime == 0) {
+            Time._lastFrameTime = currentTime;
+            return;
+        }
+        
+        // Calculate delta time
+        Time.deltaTime = (currentTime - Time._lastFrameTime) / 1000.0;
+        Time._lastFrameTime = currentTime;
+        
+        // Update total time
+        Time.time += Time.deltaTime;
+        
+        // Update frame count
+        Time.frameCount++;
+        Time._frameCountTemp++;
+        
+        // Update FPS counter
+        Time._fpsAccumulator += Time.deltaTime;
+        if (Time._fpsAccumulator >= Time._fpsUpdateInterval) {
+            Time.frameRate = Time._frameCountTemp / Time._fpsAccumulator;
+            Time._frameCountTemp = 0;
+            Time._fpsAccumulator = 0;
+        }
+    }
+}
+
+/**
+ * Input state for keyboard, mouse, and touch
+ */
+class Input {
+    static property keys: Map<string, bool> = new Map();
+    static property keysDown: Set<string> = new Set();
+    static property keysUp: Set<string> = new Set();
+    
+    static property mousePosition: Vector2 = new Vector2();
+    static property mouseButtons: Array<bool> = [false, false, false];
+    static property mouseButtonsDown: Array<bool> = [false, false, false];
+    static property mouseButtonsUp: Array<bool> = [false, false, false];
+    static property mouseWheel: Vector2 = new Vector2();
+    
+    static property touches: Array<{id: int, position: Vector2, phase: string}> = [];
+    
+    /**
+     * Reset per-frame input states (called at end of frame)
+     */
+    static def reset() {
+        // Clear key events
+        Input.keysDown.clear();
+        Input.keysUp.clear();
+        
+        // Clear mouse button events
+        for (let i = 0; i < Input.mouseButtonsDown.length; i++) {
+            Input.mouseButtonsDown[i] = false;
+            Input.mouseButtonsUp[i] = false;
+        }
+        
+        // Reset mouse wheel
+        Input.mouseWheel.x = 0;
+        Input.mouseWheel.y = 0;
+        
+        // Update touch phases
+        for (let i = Input.touches.length - 1; i >= 0; i--) {
+            if (Input.touches[i].phase == "ended" || Input.touches[i].phase == "canceled") {
+                Input.touches.splice(i, 1);
+            } else if (Input.touches[i].phase == "began") {
+                Input.touches[i].phase = "moved";
+            }
+        }
+    }
+    
+    /**
+     * Check if a key is currently pressed
+     */
+    static def isKeyPressed(key: string) -> bool {
+        return Input.keys.get(key) ?? false;
+    }
+    
+    /**
+     * Check if a key was pressed this frame
+     */
+    static def isKeyDown(key: string) -> bool {
+        return Input.keysDown.has(key);
+    }
+    
+    /**
+     * Check if a key was released this frame
+     */
+    static def isKeyUp(key: string) -> bool {
+        return Input.keysUp.has(key);
+    }
+    
+    /**
+     * Check if a mouse button is currently pressed
+     */
+    static def isMouseButtonPressed(button: int) -> bool {
+        return Input.mouseButtons[button] ?? false;
+    }
+    
+    /**
+     * Check if a mouse button was pressed this frame
+     */
+    static def isMouseButtonDown(button: int) -> bool {
+        return Input.mouseButtonsDown[button] ?? false;
+    }
+    
+    /**
+     * Check if a mouse button was released this frame
+     */
+    static def isMouseButtonUp(button: int) -> bool {
+        return Input.mouseButtonsUp[button] ?? false;
+    }
+    
+    /**
+     * Handle keyboard events
+     */
+    static def handleKeyEvent(event: KeyEvent) {
+        if (event.type == "keydown") {
+            let wasPressed = Input.keys.get(event.key) ?? false;
+            Input.keys.set(event.key, true);
+            
+            if (!wasPressed) {
+                Input.keysDown.add(event.key);
+            }
+        } else if (event.type == "keyup") {
+            Input.keys.set(event.key, false);
+            Input.keysUp.add(event.key);
+        }
+    }
+    
+    /**
+     * Handle mouse events
+     */
+    static def handleMouseEvent(event: MouseEvent) {
+        Input.mousePosition.x = event.x;
+        Input.mousePosition.y = event.y;
+        
+        if (event.type == "mousemove") {
+            // Just update position
+        } else if (event.type == "mousedown") {
+            Input.mouseButtons[event.button] = true;
+            Input.mouseButtonsDown[event.button] = true;
+        } else if (event.type == "mouseup") {
+            Input.mouseButtons[event.button] = false;
+            Input.mouseButtonsUp[event.button] = true;
+        } else if (event.type == "wheel") {
+            Input.mouseWheel.x += event.deltaX ?? 0;
+            Input.mouseWheel.y += event.deltaY ?? 0;
+        }
+    }
+    
+    /**
+     * Handle touch events
+     */
+    static def handleTouchEvent(event: TouchEvent) {
+        if (event.type == "touchstart") {
+            for (let touch of event.touches) {
+                Input.touches.push({
+                    id: touch.id,
+                    position: new Vector2(touch.x, touch.y),
+                    phase: "began"
+                });
+            }
+        } else if (event.type == "touchmove") {
+            for (let touch of event.touches) {
+                let existingTouch = Input.touches.find(t => t.id == touch.id);
+                if (existingTouch) {
+                    existingTouch.position.x = touch.x;
+                    existingTouch.position.y = touch.y;
+                    existingTouch.phase = "moved";
+                }
+            }
+        } else if (event.type == "touchend" || event.type == "touchcancel") {
+            for (let touch of event.touches) {
+                let existingTouch = Input.touches.find(t => t.id == touch.id);
+                if (existingTouch) {
+                    existingTouch.position.x = touch.x;
+                    existingTouch.position.y = touch.y;
+                    existingTouch.phase = event.type == "touchend" ? "ended" : "canceled";
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Base component class for Entity-Component-System
+ */
+class Component {
+    property entity: Entity?;
+    property enabled: bool;
+    
+    def initialize() {
+        self.entity = null;
+        self.enabled = true;
+    }
+    
+    def start() {
+        // Called when the component is first enabled
+    }
+    
+    def update() {
+        // Called every frame
+    }
+    
+    def render(context: RenderContext) {
+        // Called during rendering
+    }
+    
+    def destroy() {
+        // Called when the component is removed or the entity is destroyed
+    }
+}
+
+/**
+ * Entity class for the Entity-Component-System
+ */
+class Entity {
+    property id: string;
+    property name: string;
+    property transform: Transform2D;
+    property parent: Entity?;
+    property children: Array<Entity>;
+    property components: Array<Component>;
+    property active: bool;
+    property scene: Scene?;
+    property tags: Set<string>;
+    
+    def initialize(name: string = "Entity") {
+        self.id = generateId();
+        self.name = name;
+        self.transform = new Transform2D();
+        self.parent = null;
+        self.children = [];
+        self.components = [];
+        self.active = true;
+        self.scene = null;
+        self.tags = new Set();
+    }
+    
+    /**
+     * Add a component to the entity
+     */
+    def addComponent<T extends Component>(component: T) -> T {
+        component.entity = self;
+        self.components.push(component);
+        
+        if (self.scene?.isRunning ?? false) {
+            component.start();
+        }
+        
+        return component;
+    }
+    
+    /**
+     * Get a component by type
+     */
+    def getComponent<T extends Component>(componentType: fn() -> T) -> T? {
+        for (let component of self.components) {
+            if (component instanceof componentType) {
+                return component;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Remove a component
+     */
+    def removeComponent(component: Component) -> bool {
+        let index = self.components.indexOf(component);
+        
+        if (index >= 0) {
+            component.destroy();
+            component.entity = null;
+            self.components.splice(index, 1);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Add a child entity
+     */
+    def addChild(entity: Entity) -> Entity {
+        if (entity.parent) {
+            entity.parent.removeChild(entity);
+        }
+        
+        entity.parent = self;
+        self.children.push(entity);
+        entity.scene = self.scene;
+        
+        return entity;
+    }
+    
+    /**
+     * Remove a child entity
+     */
+    def removeChild(entity: Entity) -> bool {
+        let index = self.children.indexOf(entity);
+        
+        if (index >= 0) {
+            entity.parent = null;
+            self.children.splice(index, 1);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Add a tag to the entity
+     */
+    def addTag(tag: string) -> Entity {
+        self.tags.add(tag);
+        return self;
+    }
+    
+    /**
+     * Remove a tag from the entity
+     */
+    def removeTag(tag: string) -> bool {
+        return self.tags.delete(tag);
+    }
+    
+    /**
+     * Check if the entity has a tag
+     */
+    def hasTag(tag: string) -> bool {
+        return self.tags.has(tag);
+    }
+    
+    /**
+     * Start all components
+     */
+    def start() {
+        if (!self.active) return;
+        
+        for (let component of self.components) {
+            if (component.enabled) {
+                component.start();
+            }
+        }
+        
+        for (let child of self.children) {
+            child.start();
+        }
+    }
+    
+    /**
+     * Update all components
+     */
+    def update() {
+        if (!self.active) return;
+        
+        for (let component of self.components) {
+            if (component.enabled) {
+                component.update();
+            }
+        }
+        
+        for (let child of self.children) {
+            child.update();
+        }
+    }
+    
+    /**
+     * Render all components
+     */
+    def render(context: RenderContext) {
+        if (!self.active) return;
+        
+        context.save();
+        
+        // Apply transform
+        context.translate(self.transform.position.x, self.transform.position.y);
+        context.rotate(self.transform.rotation);
+        context.scale(self.transform.scale.x, self.transform.scale.y);
+        
+        for (let component of self.components) {
+            if (component.enabled) {
+                component.render(context);
+            }
+        }
+        
+        for (let child of self.children) {
+            child.render(context);
+        }
+        
+        context.restore();
+    }
+    
+    /**
+     * Destroy the entity and all its components
+     */
+    def destroy() {
+        // Destroy all components
+        for (let component of self.components) {
+            component.destroy();
+            component.entity = null;
+        }
+        
+        // Clear components
+        self.components = [];
+        
+        // Destroy all children
+        for (let child of self.children) {
+            child.destroy();
+        }
+        
+        // Clear children
+        self.children = [];
+        
+        // Remove from parent
+        if (self.parent) {
+            self.parent.removeChild(self);
+        }
+        
+        // Remove from scene
+        if (self.scene) {
+            self.scene.removeEntity(self);
+            self.scene = null;
+        }
+    }
+    
+    /**
+     * Get the global transform of the entity
+     */
+    def getGlobalTransform() -> Transform2D {
+        let transform = self.transform.clone();
+        
+        let current = self.parent;
+        while (current) {
+            transform = current.transform.combine(transform);
+            current = current.parent;
+        }
+        
+        return transform;
+    }
+}
+
+/**
+ * Scene class for managing entities
+ */
+class Scene {
+    property name: string;
+    property entities: Array<Entity>;
+    property isRunning: bool;
+    
+    def initialize(name: string = "Scene") {
+        self.name = name;
+        self.entities = [];
+        self.isRunning = false;
+    }
+    
+    /**
+     * Add an entity to the scene
+     */
+    def addEntity(entity: Entity) -> Entity {
+        // Only add root entities (those without a parent)
+        if (!entity.parent) {
+            entity.scene = self;
+            self.entities.push(entity);
+            
+            if (self.isRunning) {
+                entity.start();
+            }
+        }
+        
+        return entity;
+    }
+    
+    /**
+     * Remove an entity from the scene
+     */
+    def removeEntity(entity: Entity) -> bool {
+        let index = self.entities.indexOf(entity);
+        
+        if (index >= 0) {
+            entity.scene = null;
+            self.entities.splice(index, 1);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Find an entity by name
+     */
+    def findEntityByName(name: string) -> Entity? {
+        // First, check root entities
+        for (let entity of self.entities) {
+            if (entity.name == name) {
+                return entity;
+            }
+        }
+        
+        // If not found, search recursively through children
+        for (let entity of self.entities) {
+            let result = self._findEntityByNameRecursive(entity, name);
+            if (result) {
+                return result;
+            }
+        }
+        
+        return null;
+    }
+    
+    private def _findEntityByNameRecursive(entity: Entity, name: string) -> Entity? {
+        for (let child of entity.children) {
+            if (child.name == name) {
+                return child;
+            }
+            
+            let result = self._findEntityByNameRecursive(child, name);
+            if (result) {
+                return result;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Find entities by tag
+     */
+    def findEntitiesByTag(tag: string) -> Array<Entity> {
+        let result = [];
+        
+        function findRecursive(entity: Entity) {
+            if (entity.hasTag(tag)) {
+                result.push(entity);
+            }
+            
+            for (let child of entity.children) {
+                findRecursive(child);
+            }
+        }
+        
+        for (let entity of self.entities) {
+            findRecursive(entity);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Start the scene
+     */
+    def start() {
+        self.isRunning = true;
+        
+        for (let entity of self.entities) {
+            entity.start();
+        }
+    }
+    
+    /**
+     * Update the scene
+     */
+    def update() {
+        for (let entity of self.entities) {
+            entity.update();
+        }
+    }
+    
+    /**
+     * Render the scene
+     */
+    def render(context: RenderContext) {
+        for (let entity of self.entities) {
+            entity.render(context);
+        }
+    }
+    
+    /**
+     * Destroy all entities in the scene
+     */
+    def destroy() {
+        for (let entity of self.entities.slice()) {
+            entity.destroy();
+        }
+        
+        self.entities = [];
+        self.isRunning = false;
+    }
+}
+
+/**
+ * Game class that manages the game loop and scenes
+ */
+class Game {
+    property canvas: HTMLCanvasElement;
+    property context: RenderContext;
+    property scenes: Map<string, Scene>;
+    property currentScene: Scene?;
+    property isRunning: bool;
+    property targetFPS: int;
+    property animFrameId: int?;
+    
+    def initialize(canvas: HTMLCanvasElement, options: any = {}) {
+        self.canvas = canvas;
+        self.context = canvas.getContext('2d');
+        self.scenes = new Map();
+        self.currentScene = null;
+        self.isRunning = false;
+        self.targetFPS = options.targetFPS ?? 60;
+        self.animFrameId = null;
+        
+        // Set up event listeners
+        self._setupEventListeners();
+    }
+    
+    private def _setupEventListeners() {
+        // Keyboard events
+        window.addEventListener('keydown', (event) => {
+            Input.handleKeyEvent(event);
+        });
+        
+        window.addEventListener('keyup', (event) => {
+            Input.handleKeyEvent(event);
+        });
+        
+        // Mouse events
+        self.canvas.addEventListener('mousemove', (event) => {
+            let rect = self.canvas.getBoundingClientRect();
+            let x = event.clientX - rect.left;
+            let y = event.clientY - rect.top;
+            
+            Input.handleMouseEvent({
+                type: 'mousemove',
+                x,
+                y,
+                button: 0
+            });
+        });
+        
+        self.canvas.addEventListener('mousedown', (event) => {
+            let rect = self.canvas.getBoundingClientRect();
+            let x = event.clientX - rect.left;
+            let y = event.clientY - rect.top;
+            
+            Input.handleMouseEvent({
+                type: 'mousedown',
+                x,
+                y,
+                button: event.button
+            });
+        });
+        
+        self.canvas.addEventListener('mouseup', (event) => {
+            let rect = self.canvas.getBoundingClientRect();
+            let x = event.clientX - rect.left;
+            let y = event.clientY - rect.top;
+            
+            Input.handleMouseEvent({
+                type: 'mouseup',
+                x,
+                y,
+                button: event.button
+            });
+        });
+        
+        self.canvas.addEventListener('wheel', (event) => {
+            Input.handleMouseEvent({
+                type: 'wheel',
+                x: Input.mousePosition.x,
+                y: Input.mousePosition.y,
+                deltaX: event.deltaX,
+                deltaY: event.deltaY
+            });
+        });
+        
+        // Touch events
+        self.canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            let touches = [];
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                let touch = event.touches[i];
+                let rect = self.canvas.getBoundingClientRect();
+                
+                touches.push({
+                    id: touch.identifier,
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                });
+            }
+            
+            Input.handleTouchEvent({
+                type: 'touchstart',
+                touches
+            });
+        });
+        
+        self.canvas.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            let touches = [];
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                let touch = event.touches[i];
+                let rect = self.canvas.getBoundingClientRect();
+                
+                touches.push({
+                    id: touch.identifier,
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                });
+            }
+            
+            Input.handleTouchEvent({
+                type: 'touchmove',
+                touches
+            });
+        });
+        
+        self.canvas.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            let touches = [];
+            
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                let touch = event.changedTouches[i];
+                let rect = self.canvas.getBoundingClientRect();
+                
+                touches.push({
+                    id: touch.identifier,
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                });
+            }
+            
+            Input.handleTouchEvent({
+                type: 'touchend',
+                touches
+            });
+        });
+        
+        self.canvas.addEventListener('touchcancel', (event) => {
+            event.preventDefault();
+            let touches = [];
+            
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                let touch = event.changedTouches[i];
+                let rect = self.canvas.getBoundingClientRect();
+                
+                touches.push({
+                    id: touch.identifier,
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                });
+            }
+            
+            Input.handleTouchEvent({
+                type: 'touchcancel',
+                touches
+            });
+        });
+    }
+    
+    /**
+     * Add a scene to the game
+     */
+    def addScene(scene: Scene) -> Game {
+        self.scenes.set(scene.name, scene);
+        return self;
+    }
+    
+    /**
+     * Load a scene by name
+     */
+    def loadScene(name: string) -> bool {
+        let scene = self.scenes.get(name);
+        
+        if (!scene) {
+            console.error(`Scene '${name}' not found`);
+            return false;
+        }
+        
+        // Destroy current scene if exists
+        if (self.currentScene) {
+            self.currentScene.destroy();
+        }
+        
+        self.currentScene = scene;
+        
+        if (self.isRunning) {
+            scene.start();
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Start the game loop
+     */
+    def start() {
+        if (self.isRunning) return;
+        
+        self.isRunning = true;
+        
+        // Start current scene if exists
+        if (self.currentScene) {
+            self.currentScene.start();
+        }
+        
+        // Start game loop
+        let lastFrameTime = 0;
+        const frameTime = 1000 / self.targetFPS;
+        
+        function gameLoop(timestamp: float) {
+            // Calculate time since last frame
+            Time.update(timestamp);
+            
+            // Update
+            self._update();
+            
+            // Render
+            self._render();
+            
+            // Reset input states
+            Input.reset();
+            
+            // Request next frame
+            self.animFrameId = requestAnimationFrame(gameLoop);
+        }
+        
+        self.animFrameId = requestAnimationFrame(gameLoop);
+    }
+    
+    /**
+     * Stop the game loop
+     */
+    def stop() {
+        if (!self.isRunning) return;
+        
+        self.isRunning = false;
+        
+        if (self.animFrameId != null) {
+            cancelAnimationFrame(self.animFrameId);
+            self.animFrameId = null;
+        }
+    }
+    
+    /**
+     * Resize the canvas
+     */
+    def resize(width: int, height: int) {
+        self.canvas.width = width;
+        self.canvas.height = height;
+    }
+    
+    /**
+     * Update the game
+     */
+    private def _update() {
+        if (self.currentScene) {
+            self.currentScene.update();
+        }
+    }
+    
+    /**
+     * Render the game
+     */
+    private def _render() {
+        // Clear canvas
+        self.context.clear(ColorRGBA.BLACK);
+        
+        if (self.currentScene) {
+            self.currentScene.render(self.context);
+        }
+    }
+}
+
+// Utility function to generate a unique ID
+function generateId() -> string {
+    return Math.random().toString(36).substring(2, 15) + 
+           Math.random().toString(36).substring(2, 15);
+}
+
+// Common components
+
+/**
+ * Sprite component for rendering images
+ */
+class SpriteRenderer extends Component {
+    property image: any;
+    property sourceRect: Rect?;
+    property color: ColorRGBA;
+    property flipX: bool;
+    property flipY: bool;
+    property pivot: Vector2;
+    
+    def initialize(image: any) {
+        super.initialize();
+        self.image = image;
+        self.sourceRect = null;
+        self.color = ColorRGBA.WHITE;
+        self.flipX = false;
+        self.flipY = false;
+        self.pivot = new Vector2(0.5, 0.5);
+    }
+    
+    override def render(context: RenderContext) {
+        if (!self.image) return;
+        
+        context.save();
+        
+        // Apply color tint
+        if (self.color.r != 1 || self.color.g != 1 || self.color.b != 1 || self.color.a != 1) {
+            // This would use a color shader in a real implementation
+            context.setFillColor(self.color);
+        }
+        
+        // Calculate dimensions
+        let width = self.sourceRect ? self.sourceRect.width : self.image.width;
+        let height = self.sourceRect ? self.sourceRect.height : self.image.height;
+        
+        // Apply pivot
+        let pivotX = width * self.pivot.x;
+        let pivotY = height * self.pivot.y;
+        context.translate(-pivotX, -pivotY);
+        
+        // Apply flipping
+        if (self.flipX || self.flipY) {
+            context.scale(self.flipX ? -1 : 1, self.flipY ? -1 : 1);
+            if (self.flipX) context.translate(-width, 0);
+            if (self.flipY) context.translate(0, -height);
+        }
+        
+        // Draw image
+        if (self.sourceRect) {
+            context.drawImage(
+                self.image,
+                self.sourceRect.x, self.sourceRect.y, self.sourceRect.width, self.sourceRect.height,
+                0, 0, width, height
+            );
+        } else {
+            context.drawImage(self.image, 0, 0);
+        }
+        
+        context.restore();
+    }
+}
+
+/**
+ * Animation clip
+ */
+class AnimationClip {
+    property name: string;
+    property frames: Array<Rect>;
+    property frameRate: float;
+    property loop: bool;
+    
+    def initialize(name: string, frames: Array<Rect>, frameRate: float = 12, loop: bool = true) {
+        self.name = name;
+        self.frames = frames;
+        self.frameRate = frameRate;
+        self.loop = loop;
+    }
+    
+    def getDuration() -> float {
+        return self.frames.length / self.frameRate;
+    }
+}
+
+/**
+ * Animator component for sprite animations
+ */
+class Animator extends Component {
+    property spriteRenderer: SpriteRenderer?;
+    property clips: Map<string, AnimationClip>;
+    property currentClip: AnimationClip?;
+    property currentTime: float;
+    property currentFrame: int;
+    property isPlaying: bool;
+    
+    def initialize() {
+        super.initialize();
+        self.spriteRenderer = null;
+        self.clips = new Map();
+        self.currentClip = null;
+        self.currentTime = 0;
+        self.currentFrame = 0;
+        self.isPlaying = false;
+    }
+    
+    /**
+     * Add an animation clip
+     */
+    def addClip(clip: AnimationClip) -> Animator {
+        self.clips.set(clip.name, clip);
+        return self;
+    }
+    
+    /**
+     * Play an animation
+     */
+    def play(clipName: string) -> bool {
+        let clip = self.clips.get(clipName);
+        
+        if (!clip) {
+            console.error(`Animation clip '${clipName}' not found`);
+            return false;
+        }
+        
+        self.currentClip = clip;
+        self.currentTime = 0;
+        self.currentFrame = 0;
+        self.isPlaying = true;
+        
+        self._updateFrame();
+        
+        return true;
+    }
+    
+    /**
+     * Stop the current animation
+     */
+    def stop() {
+        self.isPlaying = false;
+    }
+    
+    override def start() {
+        // Find sprite renderer if not set
+        if (!self.spriteRenderer && self.entity) {
+            self.spriteRenderer = self.entity.getComponent(SpriteRenderer);
+        }
+    }
+    
+    override def update() {
+        if (!self.isPlaying || !self.currentClip || !self.spriteRenderer) return;
+        
+        // Update animation time
+        self.currentTime += Time.deltaTime;
+        
+        // Calculate new frame
+        let frameCount = self.currentClip.frames.length;
+        let frameDuration = 1.0 / self.currentClip.frameRate;
+        let frameIndex = math.floor(self.currentTime / frameDuration);
+        
+        // Handle looping
+        if (frameIndex >= frameCount) {
+            if (self.currentClip.loop) {
+                self.currentTime = self.currentTime % (frameCount * frameDuration);
+                frameIndex = math.floor(self.currentTime / frameDuration);
+            } else {
+                frameIndex = frameCount - 1;
+                self.isPlaying = false;
+            }
+        }
+        
+        if (self.currentFrame != frameIndex) {
+            self.currentFrame = frameIndex;
+            self._updateFrame();
+        }
+    }
+    
+    private def _updateFrame() {
+        if (!self.spriteRenderer || !self.currentClip) return;
+        
+        let frameIndex = math.min(self.currentFrame, self.currentClip.frames.length - 1);
+        self.spriteRenderer.sourceRect = self.currentClip.frames[frameIndex];
+    }
+}
+
+// Export public classes
+export {
+    Time,
+    Input,
+    Component,
+    Entity,
+    Scene,
+    Game,
+    SpriteRenderer,
+    AnimationClip,
+    Animator
+} 

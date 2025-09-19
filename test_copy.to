@@ -1,0 +1,168 @@
+// Comprehensive Concurrency Demo for Tocin
+// This example demonstrates all the concurrency features implemented in the parser
+
+// Import necessary modules
+import concurrency.channel;
+import concurrency.coroutine;
+import system.time;
+
+// Channel types for different data
+let int_channel: channel<int> = new channel<int>();
+let string_channel: channel<string> = new channel<string>();
+let bool_channel: channel<bool> = new channel<bool>();
+
+// Producer function - sends data to channels
+def producer() -> None {
+    for i in 1..10 {
+        int_channel <- i;
+        string_channel <- "Message " + str(i);
+        bool_channel <- (i % 2 == 0);
+        print("Producer sent: " + str(i));
+    }
+    // Send completion signal
+    int_channel <- -1;
+}
+
+// Consumer function - receives data from channels
+def consumer() -> None {
+    while true {
+        let value: int = <-int_channel;
+        if value == -1 {
+            print("Consumer received completion signal");
+            break;
+        }
+        print("Consumer received: " + str(value));
+    }
+}
+
+// String processor function
+def string_processor() -> None {
+    while true {
+        let message: string = <-string_channel;
+        print("String processor: " + message);
+    }
+}
+
+// Boolean processor function
+def bool_processor() -> None {
+    while true {
+        let flag: bool = <-bool_channel;
+        if flag {
+            print("Boolean processor: Received true");
+        } else {
+            print("Boolean processor: Received false");
+        }
+    }
+}
+
+// Select example - handles multiple channels
+def select_processor() -> None {
+    let counter: int = 0;
+    while counter < 5 {
+        select {
+            case value := <-int_channel:
+                print("Select: received int " + str(value));
+                counter = counter + 1;
+            case message := <-string_channel:
+                print("Select: received string " + message);
+                counter = counter + 1;
+            case flag := <-bool_channel:
+                print("Select: received bool " + str(flag));
+                counter = counter + 1;
+            default:
+                print("Select: no channels ready, waiting...");
+        }
+    }
+}
+
+// Async function example
+async def async_processor() -> None {
+    print("Async processor starting...");
+    // Simulate some async work
+    let result = await simulate_async_work();
+    print("Async processor completed with result: " + str(result));
+}
+
+// Simulate async work
+async def simulate_async_work() -> int {
+    // Simulate delay
+    await delay(1000);
+    return 42;
+}
+
+// Delay function (placeholder for async delay)
+async def delay(milliseconds: int) -> None {
+    // This would be implemented by the runtime
+    print("Delaying for " + str(milliseconds) + "ms");
+}
+
+// Main function that orchestrates everything
+def main() -> None {
+    print("Starting Concurrency Demo");
+    
+    // Launch goroutines
+    go(producer());
+    go(consumer());
+    go(string_processor());
+    go(bool_processor());
+    go(select_processor());
+    go(async_processor());
+    
+    // Send some direct messages
+    int_channel <- 999;
+    string_channel <- "Direct message";
+    bool_channel <- true;
+    
+    print("Main function completed");
+}
+
+// Channel with custom type
+struct Message {
+    let id: int;
+    let content: string;
+    let timestamp: int;
+}
+
+let message_channel: channel<Message> = new channel<Message>();
+
+// Message processor
+def message_processor() -> None {
+    while true {
+        let msg: Message = <-message_channel;
+        print("Message " + str(msg.id) + ": " + msg.content);
+    }
+}
+
+// Message sender
+def message_sender() -> None {
+    for i in 1..5 {
+        let msg = Message {
+            id: i,
+            content: "Hello from sender " + str(i),
+            timestamp: i * 1000
+        };
+        message_channel <- msg;
+    }
+}
+
+// Launch message processing goroutines
+go(message_processor());
+go(message_sender());
+
+// Complex select with send and receive
+def complex_select() -> None {
+    select {
+        case int_channel <- 100:
+            print("Sent 100 to int channel");
+        case value := <-int_channel:
+            print("Received " + str(value) + " from int channel");
+        case string_channel <- "Complex select message":
+            print("Sent message to string channel");
+        case message := <-string_channel:
+            print("Received message: " + message);
+        default:
+            print("No operations ready in complex select");
+    }
+}
+
+go(complex_select()); 

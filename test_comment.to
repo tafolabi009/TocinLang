@@ -1,0 +1,4 @@
+# This is a comment
+def main() -> int {
+    return 0;
+}
