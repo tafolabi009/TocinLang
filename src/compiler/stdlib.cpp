@@ -1,4 +1,4 @@
-#include "stdlib.h"
+#include "tocin_stdlib.h"
 #include <cmath>
 #include <iostream>
 #include <ostream>

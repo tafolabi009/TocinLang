@@ -27,9 +27,9 @@ option(WITH_ZSTD "Enable zstd compression" ON)
 option(WITH_XML "Enable XML support (LibXml2)" ON)
 option(WITH_MACROS "Enable macro system" ON)
 option(WITH_ASYNC "Enable async/await support" ON)
-option(WITH_DEBUGGER "Enable debugger support" ON)
-option(WITH_WASM "Enable WebAssembly target" ON)
-option(WITH_PACKAGE_MANAGER "Enable package manager" ON)
+option(WITH_DEBUGGER "Enable debugger support" OFF)
+option(WITH_WASM "Enable WebAssembly target" OFF)
+option(WITH_PACKAGE_MANAGER "Enable package manager" OFF)
 
 # -------------------------
 # ZLIB Integration
@@ -528,13 +528,19 @@ endif()
 install(TARGETS tocin DESTINATION bin COMPONENT Applications)
 
 if(WIN32)
-    # Base system DLLs
-    install(FILES
-        "C:/msys64/mingw64/bin/libwinpthread-1.dll"
-        "C:/msys64/mingw64/bin/libstdc++-6.dll"
-        "C:/msys64/mingw64/bin/libgcc_s_seh-1.dll"
-        DESTINATION bin COMPONENT Applications
-    )
+    # Base system DLLs - use dynamic path detection
+    if(EXISTS "${CMAKE_CXX_COMPILER}")
+        get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        get_filename_component(MINGW_ROOT "${COMPILER_DIR}" DIRECTORY)
+        set(MINGW_BIN_DIR "${MINGW_ROOT}/bin")
+        
+        install(FILES
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+            "${MINGW_BIN_DIR}/libstdc++-6.dll"
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+            DESTINATION bin COMPONENT Applications
+        )
+    endif()
 
     # Python DLLs (if Python is found)
     if(Python_FOUND)
@@ -548,58 +554,72 @@ if(WIN32)
     # V8 DLLs (if V8 is found)
     if(V8_FOUND)
         install(FILES
-            "C:/msys64/mingw64/bin/libv8.dll"
+            "${MINGW_BIN_DIR}/libv8.dll"
             DESTINATION bin COMPONENT Applications
         )
 
         # Try to find additional V8 DLLs
-        if(EXISTS "C:/msys64/mingw64/bin/libv8_libbase.dll")
-            install(FILES "C:/msys64/mingw64/bin/libv8_libbase.dll" DESTINATION bin COMPONENT Applications)
+        if(EXISTS "${MINGW_BIN_DIR}/libv8_libbase.dll")
+            install(FILES "${MINGW_BIN_DIR}/libv8_libbase.dll" DESTINATION bin COMPONENT Applications)
         endif()
 
-        if(EXISTS "C:/msys64/mingw64/bin/libv8_libplatform.dll")
-            install(FILES "C:/msys64/mingw64/bin/libv8_libplatform.dll" DESTINATION bin COMPONENT Applications)
+        if(EXISTS "${MINGW_BIN_DIR}/libv8_libplatform.dll")
+            install(FILES "${MINGW_BIN_DIR}/libv8_libplatform.dll" DESTINATION bin COMPONENT Applications)
         endif()
     endif()
 
     # ICU DLLs (for V8)
-    if(EXISTS "C:/msys64/mingw64/bin/libicudt*.dll")
-        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicudt*.dll")
+    if(EXISTS "${MINGW_BIN_DIR}/libicudt*.dll")
+        file(GLOB ICU_DLLS "${MINGW_BIN_DIR}/libicudt*.dll")
         install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
 
-    if(EXISTS "C:/msys64/mingw64/bin/libicuin*.dll")
-        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuin*.dll")
+    if(EXISTS "${MINGW_BIN_DIR}/libicuin*.dll")
+        file(GLOB ICU_DLLS "${MINGW_BIN_DIR}/libicuin*.dll")
         install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
 
-    if(EXISTS "C:/msys64/mingw64/bin/libicuuc*.dll")
-        file(GLOB ICU_DLLS "C:/msys64/mingw64/bin/libicuuc*.dll")
+    if(EXISTS "${MINGW_BIN_DIR}/libicuuc*.dll")
+        file(GLOB ICU_DLLS "${MINGW_BIN_DIR}/libicuuc*.dll")
         install(FILES ${ICU_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
 
     # zlib DLLs
-    install(FILES "C:/msys64/mingw64/bin/libzlib.dll" DESTINATION bin COMPONENT Applications)
+    install(FILES "${MINGW_BIN_DIR}/libzlib.dll" DESTINATION bin COMPONENT Applications)
 
     # zstd DLLs (if zstd is found)
     if(zstd_FOUND)
-        if(EXISTS "C:/msys64/mingw64/bin/libzstd.dll")
-            install(FILES "C:/msys64/mingw64/bin/libzstd.dll" DESTINATION bin COMPONENT Applications)
+        if(EXISTS "${MINGW_BIN_DIR}/libzstd.dll")
+            install(FILES "${MINGW_BIN_DIR}/libzstd.dll" DESTINATION bin COMPONENT Applications)
         endif()
     endif()
 
     # LibXml2 DLLs (if LibXml2 is found)
     if(LibXml2_FOUND)
-        if(EXISTS "C:/msys64/mingw64/bin/libxml2-2.dll")
-            install(FILES "C:/msys64/mingw64/bin/libxml2-2.dll" DESTINATION bin COMPONENT Applications)
+        if(EXISTS "${MINGW_BIN_DIR}/libxml2-2.dll")
+            install(FILES "${MINGW_BIN_DIR}/libxml2-2.dll" DESTINATION bin COMPONENT Applications)
         endif()
     endif()
 
     # FFI DLLs
-    if(EXISTS "C:/msys64/mingw64/bin/libffi-*.dll")
-        file(GLOB FFI_DLLS "C:/msys64/mingw64/bin/libffi-*.dll")
+    if(EXISTS "${MINGW_BIN_DIR}/libffi-*.dll")
+        file(GLOB FFI_DLLS "${MINGW_BIN_DIR}/libffi-*.dll")
         install(FILES ${FFI_DLLS} DESTINATION bin COMPONENT Applications)
     endif()
+
+    # Extra common runtime DLLs
+    foreach(extra_dll IN ITEMS zlib1.dll libiconv-2.dll liblzma-5.dll libcharset-1.dll)
+        if(EXISTS "${MINGW_BIN_DIR}/${extra_dll}")
+            install(FILES "${MINGW_BIN_DIR}/${extra_dll}" DESTINATION bin COMPONENT Applications)
+        endif()
+    endforeach()
+
+    # LLVM runtime DLLs
+    if(EXISTS "${MINGW_BIN_DIR}/libLLVM-*.dll")
+        file(GLOB LLVM_DLLS "${MINGW_BIN_DIR}/libLLVM-*.dll")
+        install(FILES ${LLVM_DLLS} DESTINATION bin COMPONENT Applications)
+    endif()
+
 endif()
 
 # Additional documentation and examples

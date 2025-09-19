@@ -12,6 +12,8 @@
 #include <condition_variable>
 #include <unordered_map>
 #include <chrono>
+#include <tuple>
+#include <type_traits>
 
 namespace runtime {
 
@@ -74,13 +76,16 @@ public:
         auto promise = std::make_shared<Promise<return_type>>();
         auto future = std::make_shared<Future<return_type>>(promise->getFuture());
         
-        auto task = [promise, f = std::forward<F>(f), ...args = std::forward<Args>(args)]() mutable {
+        auto boundFunc = std::make_shared<std::decay_t<F>>(std::forward<F>(f));
+        auto boundArgs = std::make_shared<std::tuple<std::decay_t<Args>...>>(std::forward<Args>(args)...);
+        
+        auto task = [promise, boundFunc, boundArgs]() mutable {
             try {
                 if constexpr (std::is_void_v<return_type>) {
-                    std::invoke(f, args...);
+                    std::apply(*boundFunc, *boundArgs);
                     promise->resolve();
                 } else {
-                    auto result = std::invoke(f, args...);
+                    auto result = std::apply(*boundFunc, *boundArgs);
                     promise->resolve(result);
                 }
             } catch (const std::exception& e) {
@@ -107,13 +112,16 @@ public:
         auto promise = std::make_shared<Promise<return_type>>();
         auto future = std::make_shared<Future<return_type>>(promise->getFuture());
         
-        auto task = [promise, f = std::forward<F>(f), ...args = std::forward<Args>(args)]() mutable {
+        auto boundFunc = std::make_shared<std::decay_t<F>>(std::forward<F>(f));
+        auto boundArgs = std::make_shared<std::tuple<std::decay_t<Args>...>>(std::forward<Args>(args)...);
+        
+        auto task = [promise, boundFunc, boundArgs]() mutable {
             try {
                 if constexpr (std::is_void_v<return_type>) {
-                    std::invoke(f, args...);
+                    std::apply(*boundFunc, *boundArgs);
                     promise->resolve();
                 } else {
-                    auto result = std::invoke(f, args...);
+                    auto result = std::apply(*boundFunc, *boundArgs);
                     promise->resolve(result);
                 }
             } catch (const std::exception& e) {
@@ -121,11 +129,11 @@ public:
             }
         };
         
-        std::thread([this, task = std::move(task), delay]() {
+        std::thread([this, task = std::move(task), delay]() mutable {
             std::this_thread::sleep_for(delay);
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
-                tasks.push(task);
+                tasks.push(std::move(task));
             }
             condition.notify_one();
         }).detach();

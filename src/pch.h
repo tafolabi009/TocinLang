@@ -1,9 +1,11 @@
 #pragma once
 
+// Ensure <string> is included early to satisfy templates on std::string
+#include <string>
+
 // Standard library headers
 #include <iostream>
 #include <memory>
-#include <string>
 #include <vector>
 #include <map>
 #include <unordered_map>

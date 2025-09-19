@@ -6,18 +6,10 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
-<<<<<<< Current (Your changes)
-=======
 #include <unordered_set>
->>>>>>> Incoming (Background Agent changes)
 #include <functional>
 #include <type_traits>
 #include <variant>
-<<<<<<< Current (Your changes)
-#include <mutex>
-#include <algorithm>
-=======
-#include <unordered_set>
 #include <algorithm>
 #include <mutex>
 
@@ -25,7 +17,6 @@
 #include "../ast/types.h"
 #include "../lexer/token.h"
 #include "../error/error_handler.h"
->>>>>>> Incoming (Background Agent changes)
 
 namespace type {
 
@@ -605,7 +596,7 @@ public:
     ast::TypePtr createTraitObjectType(const std::string& traitName);
 
 private:
-    void reportTraitError(const std::string& message, ast::ASTNodePtr node = nullptr);
+    void reportTraitError(const std::string& message, ast::Node* node = nullptr);
     std::unordered_map<std::string, ast::TypePtr> getTypeMethods(const std::string& typeKey) const;
     bool checkMethodSignatureCompatibility(ast::TypePtr method1, ast::TypePtr method2) const;
     std::vector<std::string> getImplementedTraits(ast::TypePtr type) const;

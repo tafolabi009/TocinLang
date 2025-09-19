@@ -42,10 +42,47 @@ $docDir = Join-Path $stagingDir "doc"
 }
 
 # Copy files
-Copy-Item (Join-Path $buildDir "tocin-compiler/src/$Configuration/tocin.exe") $binDir
+Copy-Item (Join-Path $buildDir "tocin-compiler/src/$Configuration/tocin.exe") $binDir -ErrorAction SilentlyContinue
+# Also handle MSYS2/MinGW build layout if present
+if (-not (Test-Path (Join-Path $binDir "tocin.exe"))) {
+    if (Test-Path (Join-Path $buildDir "tocin.exe")) {
+        Copy-Item (Join-Path $buildDir "tocin.exe") $binDir
+    }
+}
 Copy-Item (Join-Path $rootDir "LICENSE") $docDir
 Copy-Item (Join-Path $rootDir "README.md") $docDir
 Copy-Item (Join-Path $rootDir "docs/*") $docDir -Recurse
+
+# Bundle dependent DLLs into bin using ntldd if available
+$exePath = Join-Path $binDir "tocin.exe"
+if (Test-Path $exePath) {
+    Write-Host "Bundling runtime DLLs for $exePath"
+    $ntldd = (Get-Command ntldd -ErrorAction SilentlyContinue)
+    if ($ntldd) {
+        try {
+            & $ntldd.Source -R $exePath 2>$null | ForEach-Object {
+                if ($_ -match "\s=>\s([^\s]+)\s\(0x") {
+                    $dll = $Matches[1]
+                    if (Test-Path $dll) {
+                        $dest = Join-Path $binDir (Split-Path $dll -Leaf)
+                        if (-not (Test-Path $dest)) { Copy-Item $dll $binDir }
+                    }
+                } elseif ($_ -match "^([^\s/].*\\.dll)\s+\(0x") {
+                    # Lines where ntldd prints absolute DLL path directly
+                    $dll = $Matches[1]
+                    if (Test-Path $dll) {
+                        $dest = Join-Path $binDir (Split-Path $dll -Leaf)
+                        if (-not (Test-Path $dest)) { Copy-Item $dll $binDir }
+                    }
+                }
+            }
+        } catch {
+            Write-Warning "ntldd failed to resolve some dependencies: $_"
+        }
+    } else {
+        Write-Warning "ntldd not found. Skipping automatic DLL copy. Ensure required DLLs are on PATH or copy them into bin."
+    }
+}
 
 # Copy platform-specific files
 if ($Platform -eq "windows") {

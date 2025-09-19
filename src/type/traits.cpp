@@ -33,3 +33,13 @@ std::shared_ptr<TypeConstraint> createTypeConstraint(const std::string& trait_na
 
 } // namespace type
 
+namespace type_checker {
+
+TraitChecker::TraitChecker(error::ErrorHandler& errorHandler)
+    : errorHandler_(errorHandler) {
+}
+
+TraitChecker::~TraitChecker() = default;
+
+} // namespace type_checker
+

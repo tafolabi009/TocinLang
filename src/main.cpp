@@ -45,9 +45,15 @@
 // New features
 #include "compiler/macro_system.h"
 #include "runtime/async_system.h"
+#ifdef WITH_DEBUGGER
 #include "debugger/debugger.h"
+#endif
+#ifdef WITH_WASM
 #include "targets/wasm_target.h"
+#endif
+#ifdef WITH_PACKAGE_MANAGER
 #include "package/package_manager.h"
+#endif
 
 // FFI Support
 #include "ffi/ffi_interface.h"
@@ -77,10 +83,16 @@ public:
     EnhancedCompiler(error::ErrorHandler &errorHandler)
         : errorHandler(errorHandler), featureManager(errorHandler),
           macroSystem(std::make_unique<compiler::MacroSystem>()),
-          asyncSystem(std::make_unique<runtime::AsyncSystem>()),
-          debugger(std::make_unique<debugger::LLVMDebugger>()),
-          wasmTarget(std::make_unique<targets::WASMTarget>()),
-          packageManager(std::make_unique<package::PackageManager>(".", errorHandler))
+          asyncSystem(std::make_unique<runtime::AsyncSystem>())
+#ifdef WITH_DEBUGGER
+          ,debugger(std::make_unique<debugger::LLVMDebugger>())
+#endif
+#ifdef WITH_WASM
+          ,wasmTarget(std::make_unique<targets::WASMTarget>())
+#endif
+#ifdef WITH_PACKAGE_MANAGER
+          ,packageManager(std::make_unique<package::PackageManager>(".", errorHandler))
+#endif
     {
         // Initialize feature manager
         featureManager.initialize();
@@ -88,8 +100,9 @@ public:
         // Initialize async system
         runtime::AsyncSystem::initialize();
         
-        // Initialize debugger
-        debugger->initialize();
+#ifdef WITH_DEBUGGER
+        if (debugger) debugger->initialize();
+#endif
         
         // Initialize FFI systems
         initializeFFI();
@@ -236,6 +249,7 @@ public:
     bool compileToWASM(ast::StmtPtr program, const std::string& filename,
                        const CompilationOptions& options)
     {
+#ifdef WITH_WASM
         targets::WASMTargetConfig config;
         config.optimize = options.optimize;
         config.enableSIMD = true;
@@ -278,50 +292,74 @@ public:
         }
 
         return !errorHandler.hasFatalErrors();
+#else
+        (void)program; (void)filename; (void)options;
+        return false;
+#endif
     }
 
     // Package manager methods
     bool installPackage(const std::string& name, const std::string& version = "") {
+#ifdef WITH_PACKAGE_MANAGER
         return packageManager->install(name, version);
+#else
+        return false;
+#endif
     }
 
     bool uninstallPackage(const std::string& name) {
+#ifdef WITH_PACKAGE_MANAGER
         return packageManager->uninstall(name);
+#else
+        return false;
+#endif
     }
 
+#ifdef WITH_PACKAGE_MANAGER
     std::vector<package::PackageInfo> searchPackages(const std::string& query) {
         return packageManager->search(query);
     }
+#endif
 
     // Debugger methods
     void startDebugger() {
+#ifdef WITH_DEBUGGER
         if (debugger) {
             debugger->start();
         }
+#endif
     }
 
     void setBreakpoint(const std::string& filename, int line, int column = 0) {
+#ifdef WITH_DEBUGGER
         if (debugger) {
             debugger->setBreakpoint(filename, line, column);
         }
+#endif
     }
 
     void stepInto() {
+#ifdef WITH_DEBUGGER
         if (debugger) {
             debugger->stepInto();
         }
+#endif
     }
 
     void stepOver() {
+#ifdef WITH_DEBUGGER
         if (debugger) {
             debugger->stepOver();
         }
+#endif
     }
 
     void continueExecution() {
+#ifdef WITH_DEBUGGER
         if (debugger) {
             debugger->continueExecution();
         }
+#endif
     }
 
     // Async methods
@@ -340,9 +378,15 @@ private:
     type_checker::FeatureManager featureManager;
     std::unique_ptr<compiler::MacroSystem> macroSystem;
     std::unique_ptr<runtime::AsyncSystem> asyncSystem;
+#ifdef WITH_DEBUGGER
     std::unique_ptr<debugger::Debugger> debugger;
+#endif
+#ifdef WITH_WASM
     std::unique_ptr<targets::WASMTarget> wasmTarget;
+#endif
+#ifdef WITH_PACKAGE_MANAGER
     std::unique_ptr<package::PackageManager> packageManager;
+#endif
 
     void initializeFFI()
     {

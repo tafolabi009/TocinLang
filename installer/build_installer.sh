@@ -35,10 +35,45 @@ rm -rf "$STAGING_DIR"
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$DOC_DIR"
 
 # Copy files
-cp "$BUILD_DIR/tocin-compiler/src/tocin" "$BIN_DIR/"
+if [[ -x "$BUILD_DIR/tocin-compiler/src/tocin" ]]; then
+  cp "$BUILD_DIR/tocin-compiler/src/tocin" "$BIN_DIR/"
+elif [[ -x "$BUILD_DIR/tocin" ]]; then
+  cp "$BUILD_DIR/tocin" "$BIN_DIR/"
+else
+  echo "Error: built tocin binary not found." >&2
+  exit 1
+fi
 cp "$ROOT_DIR/LICENSE" "$DOC_DIR/"
 cp "$ROOT_DIR/README.md" "$DOC_DIR/"
 cp -r "$ROOT_DIR/docs/"* "$DOC_DIR/"
+
+# Bundle shared library dependencies using ldd
+EXE_PATH="$BIN_DIR/tocin"
+if [[ -x "$EXE_PATH" ]] && command -v ldd >/dev/null 2>&1; then
+  echo "Bundling shared library dependencies..."
+  while IFS= read -r line; do
+    # lines look like: libxyz.so.1 => /lib/x86_64-linux-gnu/libxyz.so.1 (0x...)
+    so_path="$(echo "$line" | awk '/=>/ {print $3} !/=>/ {print $1}' | grep -E '^/')"
+    if [[ -n "$so_path" && -f "$so_path" ]]; then
+      cp -u "$so_path" "$LIB_DIR/" || true
+    fi
+  done < <(ldd "$EXE_PATH")
+
+  # Try to set rpath so the binary prefers $ORIGIN/../lib at runtime
+  if command -v patchelf >/dev/null 2>&1; then
+    echo "Setting rpath to \$ORIGIN/../lib"
+    patchelf --set-rpath '$ORIGIN/../lib' "$EXE_PATH" || true
+  else
+    # Create a launcher that sets LD_LIBRARY_PATH
+    cat > "$BIN_DIR/tocin.sh" << 'EOF'
+#!/bin/sh
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+export LD_LIBRARY_PATH="$SCRIPT_DIR/../lib:${LD_LIBRARY_PATH}"
+exec "$SCRIPT_DIR/tocin" "$@"
+EOF
+    chmod +x "$BIN_DIR/tocin.sh"
+  fi
+fi
 
 # Platform-specific build
 case "$PLATFORM" in
@@ -65,10 +100,10 @@ Description: Tocin Programming Language Compiler
 EOF
             
             # Create postinst script
-            cat > "$DEBIAN_DIR/postinst" << EOF
+            cat > "$DEBIAN_DIR/postinst" << 'EOF'
 #!/bin/sh
 set -e
-ldconfig
+ldconfig || true
 EOF
             chmod 755 "$DEBIAN_DIR/postinst"
             
@@ -109,7 +144,7 @@ cp -r $BIN_DIR/* %{buildroot}/usr/bin/
 cp -r $DOC_DIR/* %{buildroot}/usr/share/doc/tocin-compiler/
 
 %files
-/usr/bin/tocin
+/usr/bin/tocin*
 /usr/share/doc/tocin-compiler/*
 
 %changelog

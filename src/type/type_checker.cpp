@@ -583,8 +583,20 @@ namespace type_checker
     // Helper methods for type checking
     // isMovableType removed
 
-    // getChannelElementType removed
+    ast::TypePtr TypeChecker::getChannelElementType(ast::TypePtr channelType) {
+        if (!channelType) return nullptr;
+        if (auto generic = std::dynamic_pointer_cast<ast::GenericType>(channelType)) {
+            if (generic->name == "Channel" && !generic->typeArguments.empty()) {
+                return generic->typeArguments[0];
+            }
+        }
+        return nullptr;
+    }
 
-    // typesCompatible removed
+    bool TypeChecker::typesCompatible(ast::TypePtr type1, ast::TypePtr type2) {
+        if (!type1 || !type2) return false;
+        if (type1->equals(type2)) return true;
+        return isAssignable(type1, type2) || isAssignable(type2, type1);
+    }
 
 } // namespace type_checker 

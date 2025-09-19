@@ -1,6 +1,7 @@
 #ifndef TOCIN_CONCURRENCY_H
 #define TOCIN_CONCURRENCY_H
 
+#include <string>
 #include <future>
 #include <thread>
 #include <queue>
