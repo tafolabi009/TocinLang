@@ -70,7 +70,7 @@ namespace parser
             synchronize();
             errorHandler.reportError(error::ErrorCode::S004_INVALID_STATEMENT,
                                      "Parser exception in declaration: " + std::string(e.what()),
-                                     std::string(peek().filename), peek().line, peek().column,
+                                     peek(),
                                      error::ErrorSeverity::ERROR);
             return nullptr;
         }
@@ -302,9 +302,8 @@ namespace parser
                     equals, get->object, get->name, value);
             }
 
-            error(equals, "Invalid assignment target");
             errorHandler.reportError(error::ErrorCode::S005_INVALID_ASSIGNMENT_TARGET,
-                                     "Invalid assignment target", std::string(equals.filename), equals.line, equals.column,
+                                     "Invalid assignment target", equals,
                                      error::ErrorSeverity::ERROR);
         }
 
@@ -674,7 +673,7 @@ namespace parser
     void Parser::error(const lexer::Token &token, const std::string &message)
     {
         errorHandler.reportError(error::ErrorCode::S001_UNEXPECTED_TOKEN,
-                                 message, std::string(token.filename), token.line, token.column,
+                                 message, token,
                                  error::ErrorSeverity::ERROR);
     }
 
