@@ -1,0 +1,4 @@
+def test_assignment() -> int {
+    5 = 10;
+    return 0;
+}
