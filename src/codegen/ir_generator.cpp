@@ -31,11 +31,11 @@ IRGenerator::IRGenerator(llvm::LLVMContext &context, std::unique_ptr<llvm::Modul
     // Declare standard library functions
     declareStdLibFunctions();
 
-    // Create a basic main function to make the module valid
-    createMainFunction();
+    // Don't create a dummy main - let the user provide their own
+    // createMainFunction();
 
-    // Declare a print function for debugging
-    declarePrintFunction();
+    // Don't call declarePrintFunction - already done in declareStdLibFunctions()
+    // declarePrintFunction();
 }
 
 IRGenerator::~IRGenerator()
@@ -96,6 +96,12 @@ void IRGenerator::declareStdLibFunctions()
     llvm::Function *printfFunc = llvm::Function::Create(
         printfType, llvm::Function::ExternalLinkage, "printf", *module);
     stdLibFunctions["printf"] = printfFunc;
+    
+    // Add print and println as aliases that call printf
+    // print - just prints the message
+    stdLibFunctions["print"] = printfFunc;
+    // println - prints the message with a newline
+    stdLibFunctions["println"] = printfFunc;
 
     // Memory management functions
     llvm::FunctionType *mallocType = llvm::FunctionType::get(
@@ -542,7 +548,125 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     }
 
     // Handle regular functions
-    // ... existing function implementation ...
+    std::string funcName = stmt->name;
+    
+    // Build parameter types
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &param : stmt->parameters)
+    {
+        llvm::Type *paramType = getLLVMType(param.type);
+        if (!paramType)
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Invalid parameter type in function '" + funcName + "'",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            return;
+        }
+        paramTypes.push_back(paramType);
+    }
+
+    // Get return type
+    llvm::Type *returnType = getLLVMType(stmt->returnType);
+    if (!returnType)
+    {
+        errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                 "Invalid return type in function '" + funcName + "'",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        return;
+    }
+
+    // Create function type
+    llvm::FunctionType *funcType = llvm::FunctionType::get(
+        returnType, paramTypes, false);
+
+    // Create the function
+    llvm::Function *function = llvm::Function::Create(
+        funcType,
+        llvm::Function::ExternalLinkage,
+        funcName,
+        *module);
+
+    // Set parameter names and store them in symbol table
+    unsigned idx = 0;
+    for (auto &arg : function->args())
+    {
+        if (idx < stmt->parameters.size())
+        {
+            arg.setName(stmt->parameters[idx].name);
+        }
+        idx++;
+    }
+
+    // Create entry basic block
+    llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
+    builder.SetInsertPoint(entryBlock);
+
+    // Save the current function context
+    llvm::Function *previousFunction = currentFunction;
+    currentFunction = function;
+
+    // Create allocas for parameters and store values
+    idx = 0;
+    for (auto &arg : function->args())
+    {
+        if (idx < stmt->parameters.size())
+        {
+            llvm::AllocaInst *alloca = builder.CreateAlloca(
+                arg.getType(), nullptr, stmt->parameters[idx].name);
+            builder.CreateStore(&arg, alloca);
+            namedValues[stmt->parameters[idx].name] = alloca;
+        }
+        idx++;
+    }
+
+    // Generate function body
+    if (stmt->body)
+    {
+        stmt->body->accept(*this);
+    }
+
+    // If the function doesn't have an explicit return and returns void, add one
+    if (returnType->isVoidTy() && !builder.GetInsertBlock()->getTerminator())
+    {
+        builder.CreateRetVoid();
+    }
+    // If the function returns a value but no return was generated, add a default return
+    else if (!returnType->isVoidTy() && !builder.GetInsertBlock()->getTerminator())
+    {
+        if (returnType->isIntegerTy())
+        {
+            builder.CreateRet(llvm::ConstantInt::get(returnType, 0));
+        }
+        else if (returnType->isFloatingPointTy())
+        {
+            builder.CreateRet(llvm::ConstantFP::get(returnType, 0.0));
+        }
+        else if (returnType->isPointerTy())
+        {
+            builder.CreateRet(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(returnType)));
+        }
+        else
+        {
+            // For other types, just create a return with undef
+            builder.CreateRet(llvm::UndefValue::get(returnType));
+        }
+    }
+
+    // Verify the function
+    std::string errorStr;
+    llvm::raw_string_ostream errorStream(errorStr);
+    if (llvm::verifyFunction(*function, &errorStream))
+    {
+        errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                 "Invalid LLVM IR generated for function '" + funcName + "': " + errorStr,
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+    }
+
+    // Restore previous function context
+    currentFunction = previousFunction;
+    
+    // Clear named values for next function
+    namedValues.clear();
 }
 
 void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
@@ -686,39 +810,6 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 
     // Create the call instruction
     lastValue = builder.CreateCall(funcType, callee, args);
-
-    // Ensure the current block is terminated if needed
-    llvm::BasicBlock *currentBlock = builder.GetInsertBlock();
-    if (!currentBlock->getTerminator())
-    {
-        if (currentBlock->getParent()->getReturnType()->isVoidTy())
-        {
-            builder.CreateRetVoid();
-        }
-        else
-        {
-            // For non-void functions, return a default value
-            llvm::Type *returnType = currentBlock->getParent()->getReturnType();
-            if (returnType->isIntegerTy())
-            {
-                builder.CreateRet(llvm::ConstantInt::get(returnType, 0));
-            }
-            else if (returnType->isFloatingPointTy())
-            {
-                builder.CreateRet(llvm::ConstantFP::get(returnType, 0.0));
-            }
-            else if (returnType->isPointerTy())
-            {
-                builder.CreateRet(llvm::ConstantPointerNull::get(
-                    llvm::cast<llvm::PointerType>(returnType)));
-            }
-            else
-            {
-                // For other types, create an undef value
-                builder.CreateRet(llvm::UndefValue::get(returnType));
-            }
-        }
-    }
 }
 
 void IRGenerator::visitIfStmt(ast::IfStmt *stmt)
@@ -2383,11 +2474,11 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
         return nullptr;
     }
 
-    // Create a simple main function to start with
-    createMainFunction();
+    // Don't create a dummy main - let the user provide their own
+    // createMainFunction();
 
-    // Create the standard library functions
-    declarePrintFunction();
+    // Don't call declarePrintFunction - already done in declareStdLibFunctions()
+    // declarePrintFunction();
 
     // Create a global scope
     enterScope();
