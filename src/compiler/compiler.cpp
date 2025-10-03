@@ -212,7 +212,10 @@ namespace compiler
         if (level >= 3)
         {
             // Advanced optimizations
-            // Add more aggressive optimizations here
+            passManager->add(llvm::createDeadCodeEliminationPass());
+            passManager->add(llvm::createLoopUnrollPass());
+            passManager->add(llvm::createSROAPass());
+            passManager->add(llvm::createEarlyCSEPass());
         }
 
         // Initialize and run the pass manager
