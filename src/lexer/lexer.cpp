@@ -262,7 +262,7 @@ namespace lexer
 
     void Lexer::scanString()
     {
-        char quote = advance(); // consume the opening quote
+        char quote = source[current - 1]; // Get the opening quote (already consumed)
         bool escaped = false;
         std::string value;
         int startLine = line;
@@ -554,6 +554,11 @@ namespace lexer
 
         // For all other tokens, advance and process
         advance();  // Now advance for non-identifier tokens
+        
+        // After advancing, check again if we're at EOF
+        // This handles the case where the last character was consumed
+        if (c == '\0' || isAtEnd())
+            return;
 
         switch (c)
         {
