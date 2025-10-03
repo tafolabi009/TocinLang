@@ -209,6 +209,45 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
     {
         std::string typeName = simpleType->toString();
 
+        // Check for basic type names
+        if (typeName == "int" || typeName == "i64")
+        {
+            return llvm::Type::getInt64Ty(context);
+        }
+        else if (typeName == "i32")
+        {
+            return llvm::Type::getInt32Ty(context);
+        }
+        else if (typeName == "i16")
+        {
+            return llvm::Type::getInt16Ty(context);
+        }
+        else if (typeName == "i8")
+        {
+            return llvm::Type::getInt8Ty(context);
+        }
+        else if (typeName == "float" || typeName == "f64")
+        {
+            return llvm::Type::getDoubleTy(context);
+        }
+        else if (typeName == "f32" || typeName == "float32")
+        {
+            return llvm::Type::getFloatTy(context);
+        }
+        else if (typeName == "bool")
+        {
+            return llvm::Type::getInt1Ty(context);
+        }
+        else if (typeName == "string" || typeName == "str")
+        {
+            // Use opaque pointer for string (char*)
+            return llvm::PointerType::get(context, 0);
+        }
+        else if (typeName == "void" || typeName == "None")
+        {
+            return llvm::Type::getVoidTy(context);
+        }
+
         // Check if it's a class/struct type
         auto it = classTypes.find(typeName);
         if (it != classTypes.end())
