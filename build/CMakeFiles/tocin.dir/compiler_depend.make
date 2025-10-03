@@ -443,6 +443,7 @@ CMakeFiles/tocin.dir/src/ast/option_result_expr.cpp.o: /home/runner/work/tocin-c
   /home/runner/work/tocin-compiler/tocin-compiler/src/ast/expr.h \
   /home/runner/work/tocin-compiler/tocin-compiler/src/ast/option_result_expr.h \
   /home/runner/work/tocin-compiler/tocin-compiler/src/ast/types.h \
+  /home/runner/work/tocin-compiler/tocin-compiler/src/ast/visitor.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/errno-base.h \
   /usr/include/asm-generic/errno.h \
@@ -2210,6 +2211,7 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/alloca.h \
   /usr/include/asm-generic/errno-base.h \
   /usr/include/asm-generic/errno.h \
+  /usr/include/c++/13/algorithm \
   /usr/include/c++/13/any \
   /usr/include/c++/13/array \
   /usr/include/c++/13/backward/auto_ptr.h \
@@ -2263,6 +2265,8 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/c++/13/bits/postypes.h \
   /usr/include/c++/13/bits/predefined_ops.h \
   /usr/include/c++/13/bits/ptr_traits.h \
+  /usr/include/c++/13/bits/random.h \
+  /usr/include/c++/13/bits/random.tcc \
   /usr/include/c++/13/bits/range_access.h \
   /usr/include/c++/13/bits/refwrap.h \
   /usr/include/c++/13/bits/requires_hosted.h \
@@ -2270,6 +2274,7 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/c++/13/bits/shared_ptr_atomic.h \
   /usr/include/c++/13/bits/shared_ptr_base.h \
   /usr/include/c++/13/bits/specfun.h \
+  /usr/include/c++/13/bits/sstream.tcc \
   /usr/include/c++/13/bits/std_abs.h \
   /usr/include/c++/13/bits/std_function.h \
   /usr/include/c++/13/bits/std_mutex.h \
@@ -2282,6 +2287,7 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/c++/13/bits/stl_iterator.h \
   /usr/include/c++/13/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/13/bits/stl_iterator_base_types.h \
+  /usr/include/c++/13/bits/stl_numeric.h \
   /usr/include/c++/13/bits/stl_pair.h \
   /usr/include/c++/13/bits/stl_raw_storage_iter.h \
   /usr/include/c++/13/bits/stl_tempbuf.h \
@@ -2331,11 +2337,16 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/c++/13/memory \
   /usr/include/c++/13/mutex \
   /usr/include/c++/13/new \
+  /usr/include/c++/13/numeric \
   /usr/include/c++/13/ostream \
   /usr/include/c++/13/pstl/execution_defs.h \
+  /usr/include/c++/13/pstl/glue_algorithm_defs.h \
   /usr/include/c++/13/pstl/glue_memory_defs.h \
+  /usr/include/c++/13/pstl/glue_numeric_defs.h \
   /usr/include/c++/13/pstl/pstl_config.h \
+  /usr/include/c++/13/random \
   /usr/include/c++/13/ratio \
+  /usr/include/c++/13/sstream \
   /usr/include/c++/13/stdexcept \
   /usr/include/c++/13/streambuf \
   /usr/include/c++/13/string \
@@ -2457,6 +2468,7 @@ CMakeFiles/tocin.dir/src/compiler/stdlib.cpp.o: /home/runner/work/tocin-compiler
   /usr/include/x86_64-linux-gnu/c++/13/bits/error_constants.h \
   /usr/include/x86_64-linux-gnu/c++/13/bits/gthr-default.h \
   /usr/include/x86_64-linux-gnu/c++/13/bits/gthr.h \
+  /usr/include/x86_64-linux-gnu/c++/13/bits/opt_random.h \
   /usr/include/x86_64-linux-gnu/c++/13/bits/os_defines.h \
   /usr/include/x86_64-linux-gnu/gnu/stubs-64.h \
   /usr/include/x86_64-linux-gnu/gnu/stubs.h \
@@ -2799,6 +2811,7 @@ CMakeFiles/tocin.dir/src/ffi/ffi_cpp.cpp.o: /home/runner/work/tocin-compiler/toc
   /usr/include/c++/13/pstl/glue_memory_defs.h \
   /usr/include/c++/13/pstl/pstl_config.h \
   /usr/include/c++/13/ratio \
+  /usr/include/c++/13/stdexcept \
   /usr/include/c++/13/string \
   /usr/include/c++/13/string_view \
   /usr/include/c++/13/tuple \
@@ -2808,6 +2821,7 @@ CMakeFiles/tocin.dir/src/ffi/ffi_cpp.cpp.o: /home/runner/work/tocin-compiler/toc
   /usr/include/c++/13/variant \
   /usr/include/c++/13/vector \
   /usr/include/ctype.h \
+  /usr/include/dlfcn.h \
   /usr/include/endian.h \
   /usr/include/errno.h \
   /usr/include/features-time64.h \
@@ -2826,6 +2840,8 @@ CMakeFiles/tocin.dir/src/ffi/ffi_cpp.cpp.o: /home/runner/work/tocin-compiler/toc
   /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h \
   /usr/include/x86_64-linux-gnu/bits/byteswap.h \
   /usr/include/x86_64-linux-gnu/bits/cpu-set.h \
+  /usr/include/x86_64-linux-gnu/bits/dl_find_object.h \
+  /usr/include/x86_64-linux-gnu/bits/dlfcn.h \
   /usr/include/x86_64-linux-gnu/bits/endian.h \
   /usr/include/x86_64-linux-gnu/bits/endianness.h \
   /usr/include/x86_64-linux-gnu/bits/errno.h \
@@ -6687,6 +6703,10 @@ CMakeFiles/tocin.dir/src/ast/ast.cpp.o:
 
 /usr/include/x86_64-linux-gnu/asm/posix_types.h:
 
+/usr/include/unistd.h:
+
+/usr/include/python3.12/weakrefobject.h:
+
 /usr/include/asm-generic/int-ll64.h:
 
 /usr/lib/llvm-18/include/llvm-c/DataTypes.h:
@@ -6768,6 +6788,8 @@ CMakeFiles/tocin.dir/src/ast/ast.cpp.o:
 /usr/lib/llvm-18/include/llvm/ADT/TinyPtrVector.h:
 
 /usr/include/c++/13/unordered_map:
+
+/usr/include/dlfcn.h:
 
 /usr/include/x86_64-linux-gnu/bits/setjmp.h:
 
@@ -7227,8 +7249,6 @@ CMakeFiles/tocin.dir/src/type/feature_integration.cpp.o:
 
 /usr/include/c++/13/bits/erase_if.h:
 
-/usr/include/python3.12/weakrefobject.h:
-
 /usr/include/c++/13/bits/basic_ios.tcc:
 
 /usr/include/python3.12/modsupport.h:
@@ -7342,8 +7362,6 @@ CMakeFiles/tocin.dir/src/ffi/ffi_python.cpp.o:
 /usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
 
 /usr/include/c++/13/ext/aligned_buffer.h:
-
-/usr/include/unistd.h:
 
 /usr/include/python3.12/cpython/modsupport.h:
 
@@ -7995,6 +8013,16 @@ CMakeFiles/tocin.dir/src/type/null_safety.cpp.o:
 
 /home/runner/work/tocin-compiler/tocin-compiler/src/ffi/ffi_cpp.cpp:
 
+/usr/include/x86_64-linux-gnu/bits/dl_find_object.h:
+
+CMakeFiles/tocin.dir/src/type/traits.cpp.o:
+
+/usr/include/c++/13/string_view:
+
+/usr/include/python3.12/cpython/pydebug.h:
+
+/usr/include/x86_64-linux-gnu/bits/dlfcn.h:
+
 /usr/lib/llvm-18/include/llvm/IR/Comdat.h:
 
 /home/runner/work/tocin-compiler/tocin-compiler/src/main.cpp:
@@ -8092,12 +8120,6 @@ CMakeFiles/tocin.dir/src/codegen/ir_generator.cpp.o:
 /usr/include/python3.12/cpython/odictobject.h:
 
 /usr/include/python3.12/cpython/picklebufobject.h:
-
-CMakeFiles/tocin.dir/src/type/traits.cpp.o:
-
-/usr/include/c++/13/string_view:
-
-/usr/include/python3.12/cpython/pydebug.h:
 
 /lib/x86_64-linux-gnu/libbsd.so.0:
 

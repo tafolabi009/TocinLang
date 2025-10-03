@@ -182,4 +182,7 @@ CMakeFiles/tocin.dir/src/ffi/ffi_cpp.cpp.o: \
  /usr/include/x86_64-linux-gnu/c++/13/bits/error_constants.h \
  /usr/include/c++/13/bits/std_mutex.h \
  /usr/include/c++/13/bits/unique_lock.h \
- /home/runner/work/tocin-compiler/tocin-compiler/src/ffi/../error/../lexer/token.h
+ /home/runner/work/tocin-compiler/tocin-compiler/src/ffi/../error/../lexer/token.h \
+ /usr/include/dlfcn.h /usr/include/x86_64-linux-gnu/bits/dlfcn.h \
+ /usr/include/x86_64-linux-gnu/bits/dl_find_object.h \
+ /usr/include/c++/13/stdexcept
