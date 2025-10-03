@@ -56,18 +56,30 @@ This document tracks the implementation status of the Tocin programming language
 ## 🔄 In Progress
 
 ### Compiler Optimizations
-- [ ] **LLVM Optimizations**: Advanced optimization passes
+- [x] **LLVM Optimizations**: Basic optimization passes implemented
 - [ ] **Inlining**: Function inlining for better performance
-- [ ] **Dead Code Elimination**: Remove unused code
-- [ ] **Constant Folding**: Compile-time constant evaluation
-- [ ] **Loop Optimizations**: Loop unrolling and vectorization
+- [x] **Dead Code Elimination**: Remove unused code (via LLVM)
+- [x] **Constant Folding**: Compile-time constant evaluation (via LLVM)
+- [x] **Loop Optimizations**: Loop unrolling and vectorization (via LLVM)
 
 ### Language Enhancements
-- [ ] **Macros**: Compile-time code generation
+- [ ] **Macros**: Compile-time code generation (framework in place)
 - [ ] **Metaprogramming**: Advanced compile-time programming
 - [ ] **Reflection**: Runtime type information and introspection
-- [ ] **Async/Await**: Native asynchronous programming support
+- [x] **Async/Await**: Native asynchronous programming support (framework in place)
 - [ ] **Streams**: Reactive programming with data streams
+
+### Standard Library Enhancements
+- [x] **Math Functions**: Comprehensive math functions (pow, sin, cos, tan, abs, floor, ceil, round, log, exp, random)
+- [x] **String Functions**: Extended string operations (to_upper, to_lower, trim, replace, contains, starts_with, ends_with, split)
+- [x] **Array Operations**: Basic array manipulation functions
+- [ ] **Advanced Collections**: More sophisticated data structure operations
+
+### FFI Improvements
+- [x] **C++ FFI**: Basic dynamic library loading and symbol resolution
+- [ ] **JavaScript FFI**: Complete V8 integration
+- [ ] **Python FFI**: Complete Python embedding
+- [x] **Type Marshaling**: Basic value conversion between languages
 
 ### Tooling Improvements
 - [ ] **Debugger**: Source-level debugging support
