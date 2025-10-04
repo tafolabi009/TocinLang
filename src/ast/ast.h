@@ -246,7 +246,7 @@ namespace ast
         Parameter(const std::string &name, TypePtr type)
             : name(name), type(std::move(type)), isMoved(false)
         {
-            if (!type)
+            if (!this->type)
             {
                 throw std::runtime_error("Parameter type cannot be null");
             }
@@ -256,7 +256,7 @@ namespace ast
         Parameter(const lexer::Token &token, const std::string &name, TypePtr type)
             : name(name), type(std::move(type)), isMoved(false)
         {
-            if (!type)
+            if (!this->type)
             {
                 throw std::runtime_error("Parameter type cannot be null");
             }
