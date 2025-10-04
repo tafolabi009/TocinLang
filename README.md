@@ -2,6 +2,17 @@
 
 Tocin is a modern, statically-typed programming language designed for clarity, performance, concurrency, and world-class interoperability. This repository contains the Tocin compiler and standard library.
 
+## Recent Updates ✨
+
+**New in this release:**
+- ✅ **JIT Compilation**: LLVM-based just-in-time compilation for high-performance code execution
+- ✅ **Goroutines**: Concurrent execution with goroutine-style threading
+- ✅ **JavaScript FFI**: Complete Foreign Function Interface for JavaScript with promises and async/await
+- ✅ **Enhanced Interpreter**: Advanced interpreter with memory management and optimization
+- ✅ **Binary Generation**: Cross-platform executable generation (.exe on Windows, ELF on Linux)
+
+See [INTERPRETER_COMPLETION.md](INTERPRETER_COMPLETION.md) for detailed information about recent completions.
+
 ## Features
 
 - Strong static typing with type inference
@@ -108,6 +119,26 @@ select {
 ## Testing
 
 ### Running All Tests
+```bash
+# Run the comprehensive test suite
+python3 test_interpreter_completion.py
+
+# Run individual test files
+Get-ChildItem tests/*.to | ForEach-Object { ./build/tocin $_.FullName }
+```
+
+### Test Coverage
+- ✅ Binary existence and executable permissions
+- ✅ Help output and feature advertisement
+- ✅ Compilation flags recognition
+- ✅ Simple program compilation
+- ✅ JIT compilation infrastructure
+- ✅ Goroutine execution
+- ✅ JavaScript FFI operations
+
+See [test_interpreter_completion.py](test_interpreter_completion.py) for the complete test suite.
+
+### Running All Tests (Original)
 ```bash
 # (After building) Run all tests in the tests/ directory
 # Example (PowerShell):
