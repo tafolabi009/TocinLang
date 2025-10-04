@@ -95,7 +95,8 @@ public:
 
 private:
     bool initialized_;
-    std::unique_ptr<JavaScriptFFI> jsFFI_;
+    struct JSInternalState;
+    std::unique_ptr<JSInternalState> state_;
     
     // Conversion helpers
     FFIValue ffiValueToJS(const FFIValue& value);
