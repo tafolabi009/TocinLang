@@ -534,7 +534,7 @@ namespace interpreter {
             
             // Create function type
             std::vector<llvm::Type*> paramTypes;
-            for (const auto& param : stmt->params) {
+            for (const auto& param : stmt->parameters) {
                 paramTypes.push_back(builder->getInt64Ty());
             }
             
@@ -550,17 +550,25 @@ namespace interpreter {
             builder->SetInsertPoint(entry);
             
             // Generate IR for function body
-            // TODO: Implement IR generation for function body
+            // Simple implementation: create a default return value
+            // For a full implementation, we would need to traverse the function body AST
+            llvm::Value* returnValue = llvm::ConstantInt::get(builder->getInt64Ty(), 0);
+            builder->CreateRet(returnValue);
             
             // Verify and optimize
             llvm::verifyFunction(*func);
             
-            // Create execution engine
-            std::string error;
-            engine = std::unique_ptr<llvm::ExecutionEngine>(
-                llvm::EngineBuilder(std::move(module))
-                    .setErrorStr(&error)
-                    .create());
+            // Create execution engine if not already created
+            if (!engine) {
+                std::string error;
+                engine = std::unique_ptr<llvm::ExecutionEngine>(
+                    llvm::EngineBuilder(std::unique_ptr<llvm::Module>(module.release()))
+                        .setErrorStr(&error)
+                        .create());
+                if (!engine) {
+                    throw std::runtime_error("Failed to create execution engine: " + error);
+                }
+            }
         }
 
         void* getCompiledFunction(const std::string& name) {
@@ -1216,7 +1224,17 @@ namespace interpreter {
         }
 
         void visitGoStmt(ast::GoStmt* stmt) override {
-            // TODO: Implement goroutine launch in interpreter
+            // Launch expression in a separate thread (goroutine-style)
+            std::thread([this, stmt]() {
+                try {
+                    // Execute the expression in the goroutine
+                    if (stmt->expression) {
+                        stmt->expression->accept(*this);
+                    }
+                } catch (const std::exception& e) {
+                    errorHandler.reportError("Goroutine error: " + std::string(e.what()));
+                }
+            }).detach();
         }
     };
 
