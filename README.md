@@ -5,22 +5,38 @@ Tocin is a modern, statically-typed programming language designed for clarity, p
 ## Recent Updates ✨
 
 **New in this release:**
+- ✅ **V8 JavaScript Integration**: Full V8 engine integration for seamless JavaScript interoperability
+- ✅ **Advanced Optimizations**: PGO, IPO, Polyhedral loop optimizations, and LTO
+- ✅ **Lightweight Scheduler**: Fiber-based goroutine scheduler supporting millions of concurrent goroutines
 - ✅ **JIT Compilation**: LLVM-based just-in-time compilation for high-performance code execution
 - ✅ **Goroutines**: Concurrent execution with goroutine-style threading
 - ✅ **JavaScript FFI**: Complete Foreign Function Interface for JavaScript with promises and async/await
 - ✅ **Enhanced Interpreter**: Advanced interpreter with memory management and optimization
 - ✅ **Binary Generation**: Cross-platform executable generation (.exe on Windows, ELF on Linux)
 
-See [INTERPRETER_COMPLETION.md](INTERPRETER_COMPLETION.md) for detailed information about recent completions.
+See [ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md) for detailed information about new features.
 
 ## Features
 
+### Core Language Features
 - Strong static typing with type inference
 - Traits (interfaces with default methods)
 - LINQ-style collection operations
 - Null safety (safe call, Elvis operator, not-null assertion)
 - Pattern matching
 - Coroutines, async/await, and concurrency primitives (channels, select)
+
+### Advanced Runtime Features
+- **V8 JavaScript Engine Integration**: Execute JavaScript code, call functions between Tocin and JS
+- **Lightweight Goroutine Scheduler**: Fiber-based scheduler with 4KB stacks supporting millions of goroutines
+- **Advanced Optimizations**: 
+  - Profile-Guided Optimization (PGO)
+  - Interprocedural Optimization (IPO)
+  - Polyhedral loop transformations
+  - Whole-Program Optimization (LTO)
+- **Work-Stealing Queue**: Automatic load balancing across worker threads
+
+### Standard Features
 - Comprehensive standard library (math, string, web, ML, etc.)
 - Interoperability with C, Python, and JavaScript (FFI)
 - Optimized LLVM-based code generation
@@ -36,7 +52,8 @@ See [INTERPRETER_COMPLETION.md](INTERPRETER_COMPLETION.md) for detailed informat
 - C++17 compatible compiler (GCC 7+, Clang 5+, MSVC 2017+)
 - LLVM 11.0 or newer
 - Python 3.6+ (for Python FFI)
-- Node.js 12+ (for JavaScript FFI)
+- Node.js 12+ (for JavaScript FFI, optional)
+- V8 JavaScript Engine (for V8 integration, optional)
 
 ### Building from Source
 
@@ -48,11 +65,17 @@ cd tocin-compiler
 # Create build directory
 mkdir build && cd build
 
-# Configure with CMake
-cmake ..
+# Configure with CMake (with all features)
+cmake -DWITH_V8=ON -DWITH_ADVANCED_OPT=ON -DWITH_LIGHTWEIGHT_SCHEDULER=ON ..
+
+# Or configure without V8 if not available
+cmake -DWITH_V8=OFF ..
 
 # Build
 cmake --build .
+
+# Run tests
+ctest
 ```
 
 #### Platform Notes
@@ -167,11 +190,24 @@ Contributions are welcome! Please:
 - Use clear commit messages and PR descriptions.
 
 ## Project Structure
-- `src/lexer/`, `src/parser/`, `src/ast/`, `src/type/`, `src/codegen/`, `src/compiler/`, `src/error/`, `src/ffi/`, `src/runtime/`: Core compiler and runtime
+- `src/lexer/`, `src/parser/`, `src/ast/`, `src/type/`: Frontend (lexing, parsing, type checking)
+- `src/codegen/`, `src/compiler/`: Code generation and optimization
+- `src/v8_integration/`: V8 JavaScript engine integration
+- `src/runtime/`: Runtime system including lightweight scheduler
+- `src/error/`, `src/ffi/`: Error handling and FFI
 - `stdlib/`: Standard library modules
-- `tests/`: Automated and manual tests
+- `tests/`: Comprehensive test suite (30+ tests for advanced features)
+- `benchmarks/`: Performance benchmarks
 - `examples/`: Real-world usage and demos
 - `docs/`: Language and API documentation
+
+## Documentation
+
+- [Advanced Features Guide](docs/ADVANCED_FEATURES.md) - V8, optimizations, and scheduler
+- [Integration Guide](docs/INTEGRATION_GUIDE.md) - How to use advanced features
+- [V8 Integration Roadmap](docs/V8_INTEGRATION_ROADMAP.md) - V8 implementation details
+- [Architecture Overview](docs/ARCHITECTURE.md) - System design
+- [Getting Started](docs/02_Getting_Started.md) - Quick start guide
 
 ## License
 
