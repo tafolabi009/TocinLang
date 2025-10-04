@@ -4,7 +4,14 @@ Tocin is a modern, statically-typed programming language designed for clarity, p
 
 ## Recent Updates ✨
 
-**New in this release:**
+**Latest Enhancements (January 2025):**
+- ✅ **ES Module System**: Full ECMAScript module support with import/export
+- ✅ **Async/Await Bridge**: Seamless Promise-based async operations between Tocin and JavaScript
+- ✅ **Priority Scheduling**: 5-level priority system (Critical to Background) for task scheduling
+- ✅ **NUMA-Aware Scheduling**: Automatic topology detection and optimized worker placement
+- ✅ **Enhanced Windows Installer**: Complete DLL bundling, PATH configuration, and shortcuts
+
+**Previous Updates:**
 - ✅ **V8 JavaScript Integration**: Full V8 engine integration for seamless JavaScript interoperability
 - ✅ **Advanced Optimizations**: PGO, IPO, Polyhedral loop optimizations, and LTO
 - ✅ **Lightweight Scheduler**: Fiber-based goroutine scheduler supporting millions of concurrent goroutines
@@ -14,7 +21,7 @@ Tocin is a modern, statically-typed programming language designed for clarity, p
 - ✅ **Enhanced Interpreter**: Advanced interpreter with memory management and optimization
 - ✅ **Binary Generation**: Cross-platform executable generation (.exe on Windows, ELF on Linux)
 
-See [ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md) for detailed information about new features.
+See [NEW_FEATURES.md](docs/NEW_FEATURES.md) for the latest features and [ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md) for previous features.
 
 ## Features
 
@@ -27,6 +34,10 @@ See [ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md) for detailed information a
 - Coroutines, async/await, and concurrency primitives (channels, select)
 
 ### Advanced Runtime Features
+- **ES Module System**: Load and execute modern JavaScript ES6 modules
+- **Async/Await Bridge**: Promise-based async operations with timeout support
+- **Priority Scheduling**: 5 priority levels (Critical, High, Normal, Low, Background)
+- **NUMA-Aware Scheduling**: Optimized task placement for multi-socket systems with automatic topology detection
 - **V8 JavaScript Engine Integration**: Execute JavaScript code, call functions between Tocin and JS
 - **Lightweight Goroutine Scheduler**: Fiber-based scheduler with 4KB stacks supporting millions of goroutines
 - **Advanced Optimizations**: 
@@ -34,7 +45,7 @@ See [ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md) for detailed information a
   - Interprocedural Optimization (IPO)
   - Polyhedral loop transformations
   - Whole-Program Optimization (LTO)
-- **Work-Stealing Queue**: Automatic load balancing across worker threads
+- **Work-Stealing Queue**: Automatic load balancing with priority-aware stealing
 
 ### Standard Features
 - Comprehensive standard library (math, string, web, ML, etc.)
@@ -203,6 +214,13 @@ Contributions are welcome! Please:
 
 ## Documentation
 
+### Latest Features (January 2025)
+- [NEW_FEATURES.md](docs/NEW_FEATURES.md) - **Complete guide to new features** (ES modules, async/await, priority scheduling, NUMA)
+- [QUICKSTART_NEW_FEATURES.md](QUICKSTART_NEW_FEATURES.md) - Quick start guide for new features
+- [INSTALLER_ENHANCEMENTS.md](docs/INSTALLER_ENHANCEMENTS.md) - Windows installer details and troubleshooting
+- [ENHANCEMENT_COMPLETION_REPORT.md](ENHANCEMENT_COMPLETION_REPORT.md) - Full implementation report
+
+### Previous Documentation
 - [Advanced Features Guide](docs/ADVANCED_FEATURES.md) - V8, optimizations, and scheduler
 - [Integration Guide](docs/INTEGRATION_GUIDE.md) - How to use advanced features
 - [V8 Integration Roadmap](docs/V8_INTEGRATION_ROADMAP.md) - V8 implementation details
