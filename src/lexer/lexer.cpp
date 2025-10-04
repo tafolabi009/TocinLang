@@ -41,7 +41,7 @@ namespace lexer
 
     Lexer::Lexer(const std::string &source, const std::string &filename, int indentSize)
         : source(source), filename(filename), start(0), current(0), line(1), column(1),
-          indentLevel(0), atLineStart(true), indentSize(indentSize), errorCount(0), maxErrors(100) {}
+          indentLevel(0), atLineStart(true), indentSize(indentSize), braceDepth(0), errorCount(0), maxErrors(100) {}
 
     std::vector<Token> Lexer::tokenize()
     {
@@ -52,6 +52,7 @@ namespace lexer
         column = 1;
         indentLevel = 0;
         atLineStart = true;
+        braceDepth = 0;
         errorCount = 0;
 
         while (!isAtEnd() && errorCount < maxErrors)
@@ -133,9 +134,50 @@ namespace lexer
                 // Don't break here - continue to handle indentation on next line
                 continue;
             }
+            else if (c == '/' && peekNext() == '/')
+            {
+                // C-style single-line comment
+                advance(); // consume first '/'
+                advance(); // consume second '/'
+                while (!isAtEnd() && peek() != '\n')
+                    advance();
+                // If we hit a newline, advance past it and set atLineStart
+                if (!isAtEnd() && peek() == '\n')
+                {
+                    ++line;
+                    column = 1;
+                    atLineStart = true;
+                    advance();
+                    // Continue the loop to handle any subsequent whitespace/comments
+                    continue;
+                }
+            }
+            else if (c == '/' && peekNext() == '*')
+            {
+                // C-style multi-line comment
+                advance(); // consume '/'
+                advance(); // consume '*'
+                while (!isAtEnd() && !(peek() == '*' && peekNext() == '/'))
+                {
+                    if (peek() == '\n')
+                    {
+                        ++line;
+                        column = 1;
+                        atLineStart = true;
+                    }
+                    advance();
+                }
+                if (!isAtEnd())
+                {
+                    advance(); // consume '*'
+                    advance(); // consume '/'
+                }
+                // Continue the loop to handle any subsequent whitespace/comments
+                continue;
+            }
             else if (c == '#')
             {
-                // Handle both single-line and multi-line comments
+                // Handle both single-line and multi-line comments (Python style)
                 advance(); // consume '#'
                 if (match('#')) // ## for multi-line comments
                 {
@@ -208,9 +250,48 @@ namespace lexer
             return;
         }
         
-        if (peek() == '#')
+        // Handle comments at the start of a line
+        if (peek() == '/' && peekNext() == '/')
         {
-            // Handle comments at the start of a line
+            // C-style single-line comment
+            advance(); // consume first '/'
+            advance(); // consume second '/'
+            while (!isAtEnd() && peek() != '\n')
+                advance();
+            if (!isAtEnd() && peek() == '\n')
+            {
+                ++line;
+                column = 1;
+                atLineStart = true;
+                advance();
+            }
+            return;
+        }
+        else if (peek() == '/' && peekNext() == '*')
+        {
+            // C-style multi-line comment
+            advance(); // consume '/'
+            advance(); // consume '*'
+            while (!isAtEnd() && !(peek() == '*' && peekNext() == '/'))
+            {
+                if (peek() == '\n')
+                {
+                    ++line;
+                    column = 1;
+                    atLineStart = true;
+                }
+                advance();
+            }
+            if (!isAtEnd())
+            {
+                advance(); // consume '*'
+                advance(); // consume '/'
+            }
+            return;
+        }
+        else if (peek() == '#')
+        {
+            // Python-style comment
             advance(); // consume '#'
             if (match('#')) // ## for multi-line comments
             {
@@ -526,7 +607,8 @@ namespace lexer
 
     void Lexer::scanToken()
 {
-    if (atLineStart) {
+    // Only handle indentation when we're at the start of a line and not inside braces
+    if (atLineStart && braceDepth == 0) {
         handleIndentation();
         atLineStart = false;
         // Skip any remaining whitespace after indentation
@@ -569,9 +651,11 @@ namespace lexer
             tokens.emplace_back(TokenType::RIGHT_PAREN, ")", filename, line, column - 1);
             break;
         case '{':
+            braceDepth++;  // Entering a brace block
             tokens.emplace_back(TokenType::LEFT_BRACE, "{", filename, line, column - 1);
             break;
         case '}':
+            braceDepth--;  // Exiting a brace block
             tokens.emplace_back(TokenType::RIGHT_BRACE, "}", filename, line, column - 1);
             break;
         case '[':
@@ -662,7 +746,35 @@ namespace lexer
             }
             break;
         case '/':
-            if (match('='))
+            if (match('/'))
+            {
+                // Single-line comment - should have been handled in skipWhitespace
+                // but handle it here just in case
+                while (!isAtEnd() && peek() != '\n')
+                    advance();
+                break;
+            }
+            else if (match('*'))
+            {
+                // Multi-line comment - should have been handled in skipWhitespace
+                // but handle it here just in case
+                while (!isAtEnd() && !(peek() == '*' && peekNext() == '/'))
+                {
+                    if (peek() == '\n')
+                    {
+                        ++line;
+                        column = 1;
+                    }
+                    advance();
+                }
+                if (!isAtEnd())
+                {
+                    advance(); // consume '*'
+                    advance(); // consume '/'
+                }
+                break;
+            }
+            else if (match('='))
             {
                 tokens.emplace_back(TokenType::SLASH_EQUAL, "/=", filename, line, column - 2);
             }
