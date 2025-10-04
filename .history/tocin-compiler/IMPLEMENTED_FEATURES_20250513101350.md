@@ -1,2 +1,0 @@
-# Tocin Language Implemented Features
- 
