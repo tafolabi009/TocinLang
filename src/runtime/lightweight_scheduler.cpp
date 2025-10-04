@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>

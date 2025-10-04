@@ -9,9 +9,10 @@
 namespace tocin {
 namespace v8_integration {
 
-V8Runtime::V8Runtime() : initialized_(false), promiseIdCounter_(0) {
+V8Runtime::V8Runtime() : initialized_(false) {
 #ifdef WITH_V8
     isolate_ = nullptr;
+    promiseIdCounter_.store(0);
 #endif
 }
 
@@ -82,7 +83,7 @@ ffi::FFIValue V8Runtime::executeCode(const std::string& code) {
 #ifdef WITH_V8
     if (!initialized_) {
         setError("V8 runtime not initialized");
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     v8::Isolate::Scope isolate_scope(isolate_);
@@ -100,7 +101,7 @@ ffi::FFIValue V8Runtime::executeCode(const std::string& code) {
     if (!v8::Script::Compile(context, source).ToLocal(&script)) {
         v8::String::Utf8Value error(isolate_, try_catch.Exception());
         setError(std::string("Compilation error: ") + *error);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     // Execute the script
@@ -108,14 +109,14 @@ ffi::FFIValue V8Runtime::executeCode(const std::string& code) {
     if (!script->Run(context).ToLocal(&result)) {
         v8::String::Utf8Value error(isolate_, try_catch.Exception());
         setError(std::string("Execution error: ") + *error);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     clearError();
     return fromV8Value(result);
 #else
     setError("V8 support not enabled");
-    return ffi::FFIValue::error(lastError_);
+    return ffi::FFIValue();
 #endif
 }
 
@@ -128,7 +129,7 @@ ffi::FFIValue V8Runtime::callFunction(const std::string& functionName,
 #ifdef WITH_V8
     if (!initialized_) {
         setError("V8 runtime not initialized");
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     v8::Isolate::Scope isolate_scope(isolate_);
@@ -145,12 +146,12 @@ ffi::FFIValue V8Runtime::callFunction(const std::string& functionName,
     v8::Local<v8::Value> funcValue;
     if (!context->Global()->Get(context, funcName).ToLocal(&funcValue)) {
         setError("Failed to get function: " + functionName);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     if (!funcValue->IsFunction()) {
         setError("Not a function: " + functionName);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     v8::Local<v8::Function> func = v8::Local<v8::Function>::Cast(funcValue);
@@ -168,14 +169,14 @@ ffi::FFIValue V8Runtime::callFunction(const std::string& functionName,
             .ToLocal(&result)) {
         v8::String::Utf8Value error(isolate_, try_catch.Exception());
         setError(std::string("Function call error: ") + *error);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     clearError();
     return fromV8Value(result);
 #else
     setError("V8 support not enabled");
-    return ffi::FFIValue::error(lastError_);
+    return ffi::FFIValue();
 #endif
 }
 
@@ -281,7 +282,7 @@ ffi::FFIValue V8Runtime::importModule(const std::string& moduleSpecifier) {
 #ifdef WITH_V8
     if (!initialized_) {
         setError("V8 runtime not initialized");
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
 
     v8::Isolate::Scope isolate_scope(isolate_);
@@ -293,7 +294,7 @@ ffi::FFIValue V8Runtime::importModule(const std::string& moduleSpecifier) {
     auto it = moduleCache_.find(moduleSpecifier);
     if (it == moduleCache_.end()) {
         setError("Module not loaded: " + moduleSpecifier);
-        return ffi::FFIValue::error(lastError_);
+        return ffi::FFIValue();
     }
     
     v8::Local<v8::Module> module = it->second.Get(isolate_);
@@ -303,7 +304,7 @@ ffi::FFIValue V8Runtime::importModule(const std::string& moduleSpecifier) {
     return fromV8Value(moduleNamespace);
 #else
     setError("V8 support not enabled");
-    return ffi::FFIValue::error(lastError_);
+    return ffi::FFIValue();
 #endif
 }
 
@@ -596,14 +597,6 @@ ffi::FFIValue V8Runtime::fromV8Value(v8::Local<v8::Value> value) {
     return ffi::FFIValue(std::string(*utf8));
 }
 
-void V8Runtime::setError(const std::string& error) {
-    lastError_ = error;
-}
-
-void V8Runtime::clearError() {
-    lastError_.clear();
-}
-
 v8::Local<v8::Context> V8Runtime::getContext() {
     return context_.Get(isolate_);
 }
@@ -623,6 +616,15 @@ v8::MaybeLocal<v8::Module> V8Runtime::ResolveModuleCallback(
     return v8::MaybeLocal<v8::Module>();
 }
 #endif
+
+// Error handling methods are always available
+void V8Runtime::setError(const std::string& error) {
+    lastError_ = error;
+}
+
+void V8Runtime::clearError() {
+    lastError_.clear();
+}
 
 } // namespace v8_integration
 } // namespace tocin

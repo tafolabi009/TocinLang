@@ -357,10 +357,12 @@ uint64_t LightweightScheduler::go(Func&& func, Args&&... args) {
 template<typename Func, typename... Args>
 uint64_t LightweightScheduler::goWithPriority(Fiber::Priority priority, Func&& func, Args&&... args) {
     // Create fiber with bound function and priority
+    // Use std::bind to avoid C++20 pack init-capture
+    auto boundFunc = std::bind(std::forward<Func>(func), std::forward<Args>(args)...);
+    
     auto fiber = std::make_shared<Fiber>(
-        [func = std::forward<Func>(func), 
-         ...args = std::forward<Args>(args)]() mutable {
-            func(args...);
+        [boundFunc = std::move(boundFunc)]() mutable {
+            boundFunc();
         },
         fiberStackSize_,
         priority

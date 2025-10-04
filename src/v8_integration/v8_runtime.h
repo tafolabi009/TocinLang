@@ -88,8 +88,6 @@ private:
     std::mutex promiseMutex_;
     
     // Helper methods
-    void setError(const std::string& error);
-    void clearError();
     v8::Local<v8::Context> getContext();
     std::string generatePromiseId();
     
@@ -100,6 +98,10 @@ private:
         v8::Local<v8::FixedArray> import_assertions,
         v8::Local<v8::Module> referrer);
 #endif
+
+    // These are always available
+    void setError(const std::string& error);
+    void clearError();
 
     std::string lastError_;
     bool initialized_;
