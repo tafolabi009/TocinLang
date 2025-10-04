@@ -41,6 +41,26 @@ public:
     bool loadModule(const std::string& modulePath);
     bool registerFunction(const std::string& name, 
                          std::function<ffi::FFIValue(const std::vector<ffi::FFIValue>&)> func);
+    
+    // ES Module support
+    bool loadESModule(const std::string& modulePath, const std::string& moduleSpecifier = "");
+    ffi::FFIValue importModule(const std::string& moduleSpecifier);
+    bool exportValue(const std::string& name, const ffi::FFIValue& value);
+    
+    // Async/await bridge
+    struct AsyncResult {
+        bool isPending;
+        bool isResolved;
+        bool isRejected;
+        ffi::FFIValue value;
+        std::string error;
+    };
+    
+    AsyncResult createPromise(std::function<void(std::function<void(ffi::FFIValue)>, 
+                                                  std::function<void(std::string)>)> executor);
+    AsyncResult awaitPromise(const std::string& promiseName, int timeoutMs = -1);
+    void resolvePromise(const std::string& promiseId, const ffi::FFIValue& value);
+    void rejectPromise(const std::string& promiseId, const std::string& reason);
 
     // Value conversion
 #ifdef WITH_V8
@@ -58,10 +78,27 @@ private:
     v8::Isolate* isolate_;
     v8::Persistent<v8::Context> context_;
     
+    // Module cache
+    std::map<std::string, v8::Persistent<v8::Module>> moduleCache_;
+    std::map<std::string, std::string> modulePathMap_;
+    
+    // Promise tracking
+    std::map<std::string, v8::Persistent<v8::Promise::Resolver>> promiseResolvers_;
+    std::atomic<uint64_t> promiseIdCounter_;
+    std::mutex promiseMutex_;
+    
     // Helper methods
     void setError(const std::string& error);
     void clearError();
     v8::Local<v8::Context> getContext();
+    std::string generatePromiseId();
+    
+    // Module resolution callback
+    static v8::MaybeLocal<v8::Module> ResolveModuleCallback(
+        v8::Local<v8::Context> context,
+        v8::Local<v8::String> specifier,
+        v8::Local<v8::FixedArray> import_assertions,
+        v8::Local<v8::Module> referrer);
 #endif
 
     std::string lastError_;
