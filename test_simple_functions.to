@@ -1,8 +1,0 @@
-def add(x: int, y: int) -> int {
-    return x + y;
-}
-
-def main() -> int {
-    let sum = add(10, 20);
-    return sum;
-}
