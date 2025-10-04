@@ -1,3 +1,0 @@
-def test(x: int) -> int {
-    return 42;
-}

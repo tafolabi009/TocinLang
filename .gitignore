@@ -384,3 +384,33 @@ Testing/
 # Coverage and test results
 coverage/
 test-results/
+
+# Build artifacts and directories
+build/
+_CPack_Packages/
+.history/
+*.exe
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+
+# IDE and editor directories
+.cursor/
+.idea/
+.vscode/
+.vs/
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+
+# Test files in root (duplicates of tests/ directory)
+/test_*.to
+/test_*.cpp
+!/tests/
