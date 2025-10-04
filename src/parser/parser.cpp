@@ -106,7 +106,8 @@ namespace parser
         auto parameters = parseParameters();
         consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
         ast::TypePtr returnType = nullptr;
-        if (match(lexer::TokenType::ARROW))
+        // Support both -> and : for return type annotation
+        if (match(lexer::TokenType::ARROW) || match(lexer::TokenType::COLON))
         {
             returnType = parseType();
         }

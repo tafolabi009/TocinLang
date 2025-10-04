@@ -54,6 +54,7 @@ namespace lexer {
         int indentLevel;
         bool atLineStart;
         int indentSize;
+        int braceDepth;  // Track brace depth to disable indentation inside braces
         error::ErrorHandler errorHandler;
         int errorCount;
         int maxErrors;
