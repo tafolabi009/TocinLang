@@ -588,6 +588,13 @@ namespace parser
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected parameter name");
                 consume(lexer::TokenType::COLON, "Expected ':' after parameter name");
                 auto type = parseType();
+                if (!type)
+                {
+                    error(peek(), "Failed to parse parameter type");
+                    // Create a dummy type to avoid crash
+                    type = std::make_shared<ast::SimpleType>(
+                        lexer::Token(lexer::TokenType::IDENTIFIER, "int", "", 0, 0));
+                }
                 parameters.emplace_back(name.value, type);
             } while (match(lexer::TokenType::COMMA));
         }
