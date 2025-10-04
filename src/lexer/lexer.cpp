@@ -609,11 +609,23 @@ namespace lexer
 {
     // Only handle indentation when we're at the start of a line and not inside braces
     if (atLineStart && braceDepth == 0) {
-        handleIndentation();
-        atLineStart = false;
-        // Skip any remaining whitespace after indentation
-        while (peek() == ' ' || peek() == '\r' || peek() == '\t') {
-            advance();
+        // Skip any blank lines (lines with only whitespace)
+        while (atLineStart && braceDepth == 0) {
+            handleIndentation();
+            atLineStart = false;
+            // Skip any remaining whitespace after indentation
+            while (peek() == ' ' || peek() == '\r' || peek() == '\t') {
+                advance();
+            }
+            // If we hit a newline, it's a blank line - skip it and try again
+            if (peek() == '\n') {
+                advance();
+                ++line;
+                column = 1;
+                atLineStart = true;
+            } else {
+                break;  // Not a blank line, continue processing
+            }
         }
     } else {
         skipWhitespace();
