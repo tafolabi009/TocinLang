@@ -2,11 +2,16 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <ucontext.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/stat.h>
 #endif
 
 namespace tocin {
@@ -18,10 +23,11 @@ namespace runtime {
 
 uint64_t Fiber::nextId_ = 1;
 
-Fiber::Fiber(FiberFunc func, size_t stackSize)
+Fiber::Fiber(FiberFunc func, size_t stackSize, Priority priority)
     : id_(nextId_++)
     , func_(std::move(func))
     , state_(State::Ready)
+    , priority_(priority)
     , stack_(nullptr)
     , stackSize_(stackSize)
     , context_(nullptr) {
@@ -76,11 +82,16 @@ void Fiber::complete() {
 // Worker Implementation
 // ============================================================================
 
-Worker::Worker(size_t id)
+Worker::Worker(size_t id, int numaNode, int cpuAffinity)
     : id_(id)
+    , numaNode_(numaNode)
+    , cpuAffinity_(cpuAffinity)
     , running_(false)
     , stopping_(false) {
-    stats_ = {0, 0, 0, 0};
+    stats_.fibersExecuted = 0;
+    stats_.fibersStolen = 0;
+    stats_.idleTimeMs = 0;
+    stats_.busyTimeMs = 0;
 }
 
 Worker::~Worker() {
@@ -120,7 +131,38 @@ std::shared_ptr<Fiber> Worker::stealFiber() {
     return fiber;
 }
 
+void Worker::setCPUAffinity(int cpu) {
+    cpuAffinity_ = cpu;
+    if (thread_ && thread_->joinable()) {
+        applyAffinity();
+    }
+}
+
+void Worker::setNUMANode(int node) {
+    numaNode_ = node;
+}
+
+void Worker::applyAffinity() {
+#ifdef _WIN32
+    if (cpuAffinity_ >= 0) {
+        HANDLE thread = thread_->native_handle();
+        DWORD_PTR mask = 1ULL << cpuAffinity_;
+        SetThreadAffinityMask(thread, mask);
+    }
+#elif defined(__linux__)
+    if (cpuAffinity_ >= 0) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(cpuAffinity_, &cpuset);
+        pthread_setaffinity_np(thread_->native_handle(), sizeof(cpu_set_t), &cpuset);
+    }
+#endif
+}
+
 void Worker::run() {
+    // Apply CPU affinity if set
+    applyAffinity();
+    
     auto lastActivity = std::chrono::high_resolution_clock::now();
     bool wasIdle = false;
     
@@ -189,7 +231,9 @@ LightweightScheduler::LightweightScheduler(size_t numWorkers)
     , activeFibers_(0)
     , completedFibers_(0)
     , running_(false)
-    , fiberStackSize_(4096) {
+    , fiberStackSize_(4096)
+    , numaAware_(false)
+    , numNUMANodes_(0) {
     initialize(numWorkers);
 }
 
@@ -202,9 +246,23 @@ void LightweightScheduler::initialize(size_t numWorkers) {
         numWorkers = 1;
     }
     
+    // Detect NUMA topology
+    detectNUMATopology();
+    
     workers_.reserve(numWorkers);
-    for (size_t i = 0; i < numWorkers; ++i) {
-        workers_.push_back(std::make_unique<Worker>(i));
+    
+    // If NUMA aware, distribute workers across NUMA nodes
+    if (numaAware_ && numNUMANodes_ > 0) {
+        size_t workersPerNode = (numWorkers + numNUMANodes_ - 1) / numNUMANodes_;
+        for (size_t i = 0; i < numWorkers; ++i) {
+            int numaNode = i / workersPerNode;
+            int cpuAffinity = numaNode * workersPerNode + (i % workersPerNode);
+            workers_.push_back(std::make_unique<Worker>(i, numaNode, cpuAffinity));
+        }
+    } else {
+        for (size_t i = 0; i < numWorkers; ++i) {
+            workers_.push_back(std::make_unique<Worker>(i, -1, -1));
+        }
     }
 }
 
@@ -270,6 +328,7 @@ LightweightScheduler::SchedulerStats LightweightScheduler::getStats() const {
     stats.totalWorkers = workers_.size();
     stats.activeFibers = activeFibers_.load();
     stats.completedFibers = completedFibers_.load();
+    stats.numNUMANodes = numNUMANodes_;
     
     uint64_t totalTime = 0;
     for (const auto& worker : workers_) {
@@ -283,6 +342,93 @@ LightweightScheduler::SchedulerStats LightweightScheduler::getStats() const {
         : 0.0;
     
     return stats;
+}
+
+void LightweightScheduler::enableNUMAAwareness(bool enable) {
+    if (running_.load()) {
+        return; // Cannot change while running
+    }
+    numaAware_ = enable;
+    
+    // Re-initialize workers with NUMA awareness
+    workers_.clear();
+    initialize(std::thread::hardware_concurrency());
+}
+
+void LightweightScheduler::setWorkerAffinity(size_t workerId, int cpu, int numaNode) {
+    if (workerId < workers_.size()) {
+        workers_[workerId]->setCPUAffinity(cpu);
+        workers_[workerId]->setNUMANode(numaNode);
+    }
+}
+
+void LightweightScheduler::detectNUMATopology() {
+#ifdef __linux__
+    // On Linux, check /sys/devices/system/node for NUMA nodes
+    numNUMANodes_ = 0;
+    for (int i = 0; i < 256; ++i) {
+        std::string path = "/sys/devices/system/node/node" + std::to_string(i);
+        struct stat buffer;
+        if (stat(path.c_str(), &buffer) == 0) {
+            numNUMANodes_ = i + 1;
+        } else {
+            break;
+        }
+    }
+    
+    if (numNUMANodes_ == 0) {
+        numNUMANodes_ = 1; // Default to single node
+    }
+#elif defined(_WIN32)
+    // On Windows, use GetLogicalProcessorInformationEx
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(RelationNumaNode, nullptr, &length);
+    if (length > 0) {
+        std::vector<BYTE> buffer(length);
+        if (GetLogicalProcessorInformationEx(RelationNumaNode, 
+            reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), 
+            &length)) {
+            
+            DWORD offset = 0;
+            while (offset < length) {
+                auto info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(
+                    buffer.data() + offset);
+                if (info->Relationship == RelationNumaNode) {
+                    numNUMANodes_ = std::max(numNUMANodes_, 
+                        static_cast<size_t>(info->NumaNode.NodeNumber + 1));
+                }
+                offset += info->Size;
+            }
+        }
+    }
+    
+    if (numNUMANodes_ == 0) {
+        numNUMANodes_ = 1; // Default to single node
+    }
+#else
+    numNUMANodes_ = 1; // Default for other systems
+#endif
+}
+
+size_t LightweightScheduler::selectWorkerForFiber(Fiber::Priority priority) {
+    if (!numaAware_ || numNUMANodes_ <= 1) {
+        // Simple round-robin
+        return nextWorker_.fetch_add(1) % workers_.size();
+    }
+    
+    // NUMA-aware: prefer workers on the current NUMA node
+    // For high-priority tasks, use workers on node 0
+    if (priority <= Fiber::Priority::High) {
+        // Find workers on NUMA node 0
+        for (size_t i = 0; i < workers_.size(); ++i) {
+            if (workers_[i]->getNUMANode() == 0) {
+                return i;
+            }
+        }
+    }
+    
+    // For normal/low priority, distribute across all nodes
+    return nextWorker_.fetch_add(1) % workers_.size();
 }
 
 void LightweightScheduler::balanceLoad() {
