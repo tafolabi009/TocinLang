@@ -1,4 +1,0 @@
-// Simple test program
-fn main() {
-    print("Hello, Tocin!");
-}

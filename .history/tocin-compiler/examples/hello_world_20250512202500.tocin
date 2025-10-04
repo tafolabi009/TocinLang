@@ -1,6 +1,0 @@
-// Hello World example in Tocin
-
-def main() -> int {
-    println("Hello, World!");
-    return 0;
-} 
