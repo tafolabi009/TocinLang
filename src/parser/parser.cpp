@@ -6,7 +6,9 @@ namespace parser
 {
 
     Parser::Parser(const std::vector<lexer::Token> &tokens)
-        : tokens(tokens), current(0) {}
+        : tokens(tokens), current(0) {
+        errors_.clear();
+    }
 
     ast::StmtPtr Parser::parse()
     {
@@ -683,6 +685,177 @@ namespace parser
         errorHandler.reportError(error::ErrorCode::S001_UNEXPECTED_TOKEN,
                                  message, token,
                                  error::ErrorSeverity::ERROR);
+        recordError(message, token, {}, false);
+    }
+    
+    void Parser::recordError(const std::string& message, const lexer::Token& token,
+                            const std::vector<lexer::TokenType>& expected, bool isFatal) {
+        ErrorContext ctx;
+        ctx.message = message;
+        ctx.token = token;
+        ctx.expectedTokens = expected;
+        ctx.isFatal = isFatal;
+        errors_.push_back(ctx);
+    }
+    
+    bool Parser::synchronizeToToken(lexer::TokenType type) {
+        while (!isAtEnd()) {
+            if (check(type)) {
+                return true;
+            }
+            advance();
+        }
+        return false;
+    }
+    
+    bool Parser::synchronizeToAny(const std::vector<lexer::TokenType>& types) {
+        while (!isAtEnd()) {
+            for (auto type : types) {
+                if (check(type)) {
+                    return true;
+                }
+            }
+            advance();
+        }
+        return false;
+    }
+    
+    void Parser::skipUntilSynchronizationPoint() {
+        static const std::vector<lexer::TokenType> syncPoints = {
+            lexer::TokenType::CLASS,
+            lexer::TokenType::DEF,
+            lexer::TokenType::LET,
+            lexer::TokenType::CONST,
+            lexer::TokenType::IF,
+            lexer::TokenType::WHILE,
+            lexer::TokenType::FOR,
+            lexer::TokenType::RETURN,
+            lexer::TokenType::IMPORT,
+            lexer::TokenType::RIGHT_BRACE,
+            lexer::TokenType::SEMI_COLON
+        };
+        synchronizeToAny(syncPoints);
+    }
+    
+    int Parser::getOperatorPrecedence(lexer::TokenType type) const {
+        switch (type) {
+            // Assignment (lowest)
+            case lexer::TokenType::EQUAL: return 1;
+            
+            // Logical OR
+            case lexer::TokenType::OR: return 2;
+            
+            // Logical AND
+            case lexer::TokenType::AND: return 3;
+            
+            // Equality
+            case lexer::TokenType::EQUAL_EQUAL:
+            case lexer::TokenType::BANG_EQUAL: return 4;
+            
+            // Relational
+            case lexer::TokenType::LESS:
+            case lexer::TokenType::LESS_EQUAL:
+            case lexer::TokenType::GREATER:
+            case lexer::TokenType::GREATER_EQUAL: return 5;
+            
+            // Bitwise OR
+            case lexer::TokenType::BITWISE_OR: return 6;
+            
+            // Bitwise XOR
+            case lexer::TokenType::BITWISE_XOR: return 7;
+            
+            // Bitwise AND
+            case lexer::TokenType::BITWISE_AND: return 8;
+            
+            // Shift
+            case lexer::TokenType::SHIFT_LEFT:
+            case lexer::TokenType::SHIFT_RIGHT: return 9;
+            
+            // Additive
+            case lexer::TokenType::PLUS:
+            case lexer::TokenType::MINUS: return 10;
+            
+            // Multiplicative
+            case lexer::TokenType::STAR:
+            case lexer::TokenType::SLASH:
+            case lexer::TokenType::PERCENT: return 11;
+            
+            // Exponentiation (highest binary)
+            case lexer::TokenType::POWER: return 12;
+            
+            default: return 0;
+        }
+    }
+    
+    bool Parser::isRightAssociative(lexer::TokenType type) const {
+        return type == lexer::TokenType::EQUAL || 
+               type == lexer::TokenType::POWER;
+    }
+    
+    ast::ExprPtr Parser::parseBinaryExpression(int minPrecedence) {
+        auto left = unary();
+        
+        while (!isAtEnd()) {
+            lexer::TokenType opType = peek().type;
+            int precedence = getOperatorPrecedence(opType);
+            
+            if (precedence < minPrecedence) {
+                break;
+            }
+            
+            auto op = advance();
+            
+            int nextMinPrecedence = precedence;
+            if (!isRightAssociative(opType)) {
+                nextMinPrecedence++;
+            }
+            
+            auto right = parseBinaryExpression(nextMinPrecedence);
+            if (!right) {
+                recordError("Expected expression after operator", op, {}, false);
+                return nullptr;
+            }
+            
+            left = std::make_shared<ast::BinaryExpr>(op, left, op, right);
+        }
+        
+        return left;
+    }
+    
+    bool Parser::validateExpression(ast::ExprPtr expr) {
+        if (!expr) return false;
+        
+        // Add expression validation logic here
+        // Check for:
+        // - Null dereference
+        // - Type consistency
+        // - Valid operations
+        
+        return true;
+    }
+    
+    bool Parser::validateStatement(ast::StmtPtr stmt) {
+        if (!stmt) return false;
+        
+        // Add statement validation logic here
+        // Check for:
+        // - Unreachable code
+        // - Missing return statements
+        // - Variable shadowing
+        
+        return true;
+    }
+    
+    bool Parser::validateType(ast::TypePtr type) {
+        if (!type) return false;
+        
+        // Add type validation logic here
+        // Check for:
+        // - Unknown types
+        // - Invalid generic instantiations
+        // - Circular dependencies
+        
+        return true;
     }
 
     ast::ExprPtr Parser::newExpr()

@@ -53,6 +53,13 @@ public:
     Priority getPriority() const { return priority_; }
     void setPriority(Priority priority) { priority_ = priority; }
 
+    // Friend declarations for wrapper functions
+#ifndef _WIN32
+    friend void fiberWrapper(Fiber* fiber);
+#else
+    friend VOID CALLBACK fiberWrapperWindows(PVOID param);
+#endif
+
 private:
     uint64_t id_;
     FiberFunc func_;

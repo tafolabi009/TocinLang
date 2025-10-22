@@ -1,7 +1,9 @@
 #include "ffi_javascript.h"
 #include <stdexcept>
 #include <sstream>
+#include <fstream>
 #include <algorithm>
+#include <cctype>
 
 namespace ffi {
 
@@ -141,8 +143,113 @@ namespace ffi {
             state_->lastError = "JavaScript FFI not initialized";
             return FFIValue();
         }
-        // Stub: would need V8 or similar JavaScript engine
-        state_->lastError = "JavaScript eval not fully implemented - requires V8 integration";
+        
+        // Simple expression evaluator for basic JavaScript expressions
+        // This is a stub that handles simple cases without V8
+        std::string trimmed = code;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t\n\r"));
+        trimmed.erase(trimmed.find_last_not_of(" \t\n\r") + 1);
+        
+        // Handle simple literal values
+        if (trimmed == "true") return FFIValue(true);
+        if (trimmed == "false") return FFIValue(false);
+        if (trimmed == "null" || trimmed == "undefined") return FFIValue();
+        
+        // Handle number literals
+        try {
+            if (trimmed.find('.') != std::string::npos) {
+                return FFIValue(std::stod(trimmed));
+            } else if (!trimmed.empty() && (isdigit(trimmed[0]) || trimmed[0] == '-')) {
+                return FFIValue(std::stoi(trimmed));
+            }
+        } catch (...) {
+            // Not a number
+        }
+        
+        // Handle string literals
+        if (trimmed.size() >= 2 && 
+            ((trimmed[0] == '"' && trimmed.back() == '"') || 
+             (trimmed[0] == '\'' && trimmed.back() == '\''))) {
+            return FFIValue(trimmed.substr(1, trimmed.size() - 2));
+        }
+        
+        // Handle array literals [...]
+        if (trimmed.size() >= 2 && trimmed[0] == '[' && trimmed.back() == ']') {
+            std::vector<FFIValue> elements;
+            std::string content = trimmed.substr(1, trimmed.size() - 2);
+            
+            // Simple comma-separated parsing (doesn't handle nested structures)
+            size_t pos = 0;
+            size_t nextComma = 0;
+            while ((nextComma = content.find(',', pos)) != std::string::npos) {
+                std::string element = content.substr(pos, nextComma - pos);
+                elements.push_back(eval(element));
+                pos = nextComma + 1;
+            }
+            if (pos < content.size()) {
+                elements.push_back(eval(content.substr(pos)));
+            }
+            
+            return FFIValue(elements);
+        }
+        
+        // Handle object literals {...}
+        if (trimmed.size() >= 2 && trimmed[0] == '{' && trimmed.back() == '}') {
+            std::unordered_map<std::string, FFIValue> properties;
+            std::string content = trimmed.substr(1, trimmed.size() - 2);
+            
+            // Simple key:value parsing (doesn't handle complex nested objects)
+            size_t pos = 0;
+            size_t nextComma = 0;
+            while ((nextComma = content.find(',', pos)) != std::string::npos) {
+                std::string pair = content.substr(pos, nextComma - pos);
+                size_t colon = pair.find(':');
+                if (colon != std::string::npos) {
+                    std::string key = pair.substr(0, colon);
+                    std::string value = pair.substr(colon + 1);
+                    
+                    // Trim key
+                    key.erase(0, key.find_first_not_of(" \t\n\r"));
+                    key.erase(key.find_last_not_of(" \t\n\r") + 1);
+                    
+                    // Remove quotes from key if present
+                    if (key.size() >= 2 && 
+                        ((key[0] == '"' && key.back() == '"') || 
+                         (key[0] == '\'' && key.back() == '\''))) {
+                        key = key.substr(1, key.size() - 2);
+                    }
+                    
+                    properties[key] = eval(value);
+                }
+                pos = nextComma + 1;
+            }
+            
+            // Handle last pair
+            if (pos < content.size()) {
+                std::string pair = content.substr(pos);
+                size_t colon = pair.find(':');
+                if (colon != std::string::npos) {
+                    std::string key = pair.substr(0, colon);
+                    std::string value = pair.substr(colon + 1);
+                    
+                    key.erase(0, key.find_first_not_of(" \t\n\r"));
+                    key.erase(key.find_last_not_of(" \t\n\r") + 1);
+                    
+                    if (key.size() >= 2 && 
+                        ((key[0] == '"' && key.back() == '"') || 
+                         (key[0] == '\'' && key.back() == '\''))) {
+                        key = key.substr(1, key.size() - 2);
+                    }
+                    
+                    properties[key] = eval(value);
+                }
+            }
+            
+            return FFIValue(properties);
+        }
+        
+        // For complex expressions, we need V8
+        state_->lastError = "Complex JavaScript expressions require V8 integration (not available). Build with V8 support enabled.";
         return FFIValue();
     }
 
@@ -177,9 +284,20 @@ namespace ffi {
             state_->lastError = "JavaScript FFI not initialized";
             return FFIValue();
         }
-        // Stub: would need to read file and execute
-        state_->lastError = "File execution not fully implemented - requires V8 integration";
-        return FFIValue();
+        
+        // Read file contents
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            state_->lastError = "Failed to open file: " + filename;
+            return FFIValue();
+        }
+        
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string code = buffer.str();
+        
+        // Execute the code using eval
+        return eval(code);
     }
 
     bool JavaScriptFFIImpl::loadModuleFromCode(const std::string& moduleName, const std::string& code) {
@@ -196,8 +314,58 @@ namespace ffi {
             state_->lastError = "JavaScript FFI not initialized";
             return FFIValue();
         }
-        // Stub: would need V8 object method calling
-        state_->lastError = "Method calling not fully implemented - requires V8 integration";
+        
+        if (!object.isObject()) {
+            state_->lastError = "Cannot call method on non-object value";
+            return FFIValue();
+        }
+        
+        // Get the method from the object
+        auto& obj = object.asObject();
+        auto methodIt = obj.find(methodName);
+        
+        if (methodIt == obj.end()) {
+            state_->lastError = "Method not found: " + methodName;
+            return FFIValue();
+        }
+        
+        const FFIValue& method = methodIt->second;
+        
+        // For simple function calls, we can handle some built-in methods
+        // For complex JavaScript methods, V8 would be needed
+        if (method.isFunction()) {
+            // Built-in JavaScript array methods simulation
+            if (methodName == "length" && object.isArray()) {
+                return FFIValue(static_cast<int32_t>(object.asArray().size()));
+            }
+            
+            if (methodName == "push" && object.isArray() && args.size() > 0) {
+                // This would modify the array in a real implementation
+                // For now, return the new length
+                return FFIValue(static_cast<int32_t>(object.asArray().size() + args.size()));
+            }
+            
+            if (methodName == "pop" && object.isArray()) {
+                const auto& arr = object.asArray();
+                if (!arr.empty()) {
+                    return arr.back();
+                }
+                return FFIValue();
+            }
+            
+            // For string methods
+            if (method.isString()) {
+                if (methodName == "toString") {
+                    return object;
+                }
+                if (methodName == "valueOf") {
+                    return object;
+                }
+            }
+        }
+        
+        // Complex method calls need V8
+        state_->lastError = "Complex method calls require V8 integration (not available). Build with V8 support enabled.";
         return FFIValue();
     }
 

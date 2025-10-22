@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <stdexcept>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,6 +17,13 @@
 
 namespace tocin {
 namespace runtime {
+
+// Forward declarations for fiber wrappers
+#ifndef _WIN32
+void fiberWrapper(Fiber* fiber);
+#else
+VOID CALLBACK fiberWrapperWindows(PVOID param);
+#endif
 
 // ============================================================================
 // Fiber Implementation
@@ -41,7 +49,31 @@ Fiber::Fiber(FiberFunc func, size_t stackSize, Priority priority)
 #ifndef _WIN32
     // Initialize context (POSIX)
     context_ = malloc(sizeof(ucontext_t));
-    // TODO: Setup context with makecontext()
+    ucontext_t* ctx = static_cast<ucontext_t*>(context_);
+    
+    // Get current context
+    if (getcontext(ctx) == -1) {
+        free(stack_);
+        free(context_);
+        throw std::runtime_error("Failed to get context");
+    }
+    
+    // Set up stack
+    ctx->uc_stack.ss_sp = stack_;
+    ctx->uc_stack.ss_size = stackSize_;
+    ctx->uc_stack.ss_flags = 0;
+    ctx->uc_link = nullptr;  // When fiber completes, return to main
+    
+    // Create context with our fiber function
+    // We need a wrapper function that takes no arguments
+    makecontext(ctx, reinterpret_cast<void(*)()>(fiberWrapper), 1, this);
+#else
+    // Windows fiber implementation
+    context_ = CreateFiber(stackSize_, fiberWrapperWindows, this);
+    if (!context_) {
+        free(stack_);
+        throw std::runtime_error("Failed to create Windows fiber");
+    }
 #endif
 }
 
@@ -77,6 +109,24 @@ void Fiber::yield() {
 void Fiber::complete() {
     state_ = State::Completed;
 }
+
+// Static wrapper functions for fiber execution
+#ifndef _WIN32
+void fiberWrapper(Fiber* fiber) {
+    if (fiber && fiber->func_) {
+        fiber->func_();
+        fiber->complete();
+    }
+}
+#else
+VOID CALLBACK fiberWrapperWindows(PVOID param) {
+    Fiber* fiber = static_cast<Fiber*>(param);
+    if (fiber && fiber->func_) {
+        fiber->func_();
+        fiber->complete();
+    }
+}
+#endif
 
 // ============================================================================
 // Worker Implementation
