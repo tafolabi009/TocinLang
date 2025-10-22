@@ -1,48 +1,51 @@
 #include "test_framework.h"
 #include "../src/parser/parser.h"
 
+using namespace lexer;
+using namespace parser;
+
 TEST_SUITE(Parser)
 
 TEST(Parser, ParseVariableDeclaration) {
-    Lexer lexer("var x: int = 42;");
+    lexer::Lexer lexer("var x: int = 42;", "test.to");
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    parser::Parser parser(tokens);
     
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);
 }
 
 TEST(Parser, ParseFunctionDeclaration) {
-    Lexer lexer("fn add(a: int, b: int): int { return a + b; }");
+    lexer::Lexer lexer("fn add(a: int, b: int): int { return a + b; }", "test.to");
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    parser::Parser parser(tokens);
     
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);
 }
 
 TEST(Parser, ParseIfStatement) {
-    Lexer lexer("if (x > 0) { print(x); }");
+    lexer::Lexer lexer("if (x > 0) { print(x); }", "test.to");
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    parser::Parser parser(tokens);
     
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);
 }
 
 TEST(Parser, ParseWhileLoop) {
-    Lexer lexer("while (i < 10) { i = i + 1; }");
+    lexer::Lexer lexer("while (i < 10) { i = i + 1; }", "test.to");
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    parser::Parser parser(tokens);
     
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);
 }
 
 TEST(Parser, ParseBinaryExpression) {
-    Lexer lexer("x + y * z");
+    lexer::Lexer lexer("x + y * z", "test.to");
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    parser::Parser parser(tokens);
     
     auto ast = parser.parse();
     ASSERT_TRUE(ast != nullptr);
