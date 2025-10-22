@@ -72,6 +72,7 @@ private:
     
     // Conversion helpers
     FFIValue ffiValueToPython(const FFIValue& value);
+    FFIValue pythonToFFIValue(void* pyObj);  // PyObject* as void* to avoid Python.h include
     FFIValue pythonValueToFFI(const FFIValue& value);
 };
 

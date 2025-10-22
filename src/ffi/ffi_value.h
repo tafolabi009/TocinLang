@@ -146,6 +146,19 @@ public:
     bool hasPointerOwnership() const { return pointerOwned_; }
     void setPointerTypeName(const std::string& typeName) { pointerTypeName_ = typeName; }
     const std::string& getPointerTypeName() const { return pointerTypeName_; }
+    
+    // Metadata support for FFI operations
+    void setMetadata(const std::string& key, const std::string& value) { 
+        metadata_[key] = value; 
+    }
+    std::string getMetadata(const std::string& key) const {
+        auto it = metadata_.find(key);
+        return it != metadata_.end() ? it->second : "";
+    }
+    bool hasMetadata(const std::string& key) const {
+        return metadata_.find(key) != metadata_.end();
+    }
+    void clearMetadata() { metadata_.clear(); }
 
     // Function call support (for function values)
     using FunctionCallback = std::function<FFIValue(const std::vector<FFIValue>&)>;
@@ -185,6 +198,7 @@ private:
     bool pointerOwned_;
     FunctionCallback functionCallback_;
     std::string errorMessage_;
+    std::unordered_map<std::string, std::string> metadata_;
 
     // Helper methods
     void cleanup();

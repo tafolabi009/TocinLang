@@ -6,6 +6,9 @@
 #include "../error/error_handler.h"
 #include <memory>
 #include <vector>
+#include <algorithm>
+#include <string>
+#include <utility>
 
 namespace parser
 {
@@ -27,6 +30,31 @@ namespace parser
          * @return The root statement of the AST.
          */
         ast::StmtPtr parse();
+
+        /**
+         * @brief Improved error recovery context
+         */
+        struct ErrorContext {
+            std::string message;
+            lexer::Token token;
+            std::vector<lexer::TokenType> expectedTokens;
+            bool isFatal;
+            
+            ErrorContext() : isFatal(false) {}
+        };
+        
+        /**
+         * @brief Get all parsing errors encountered
+         */
+        const std::vector<ErrorContext>& getErrors() const { return errors_; }
+        
+        /**
+         * @brief Check if parser has encountered fatal errors
+         */
+        bool hasFatalErrors() const {
+            return std::any_of(errors_.begin(), errors_.end(),
+                             [](const ErrorContext& e) { return e.isFatal; });
+        }
 
     private:
         ast::StmtPtr declaration();
@@ -75,6 +103,25 @@ namespace parser
         std::vector<lexer::Token> tokens;
         size_t current;
         error::ErrorHandler errorHandler;
+        std::vector<ErrorContext> errors_;
+        
+        // Enhanced error recovery
+        void recordError(const std::string& message, const lexer::Token& token,
+                        const std::vector<lexer::TokenType>& expected = {},
+                        bool isFatal = false);
+        bool synchronizeToToken(lexer::TokenType type);
+        bool synchronizeToAny(const std::vector<lexer::TokenType>& types);
+        void skipUntilSynchronizationPoint();
+        
+        // Operator precedence parsing
+        ast::ExprPtr parseBinaryExpression(int minPrecedence);
+        int getOperatorPrecedence(lexer::TokenType type) const;
+        bool isRightAssociative(lexer::TokenType type) const;
+        
+        // Enhanced validation
+        bool validateExpression(ast::ExprPtr expr);
+        bool validateStatement(ast::StmtPtr stmt);
+        bool validateType(ast::TypePtr type);
     };
 
 } // namespace parser

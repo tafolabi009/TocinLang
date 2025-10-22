@@ -1,5 +1,5 @@
 {
-  "cmake.sourceDirectory": "D:/Downloads/tocin-compiler",
+  "cmake.sourceDirectory": "/workspaces/tocin-compiler",
   "files.associations": {
     "algorithm": "cpp",
     "functional": "cpp",

@@ -30,6 +30,9 @@ option(WITH_ASYNC "Enable async/await support" ON)
 option(WITH_DEBUGGER "Enable debugger support" OFF)
 option(WITH_WASM "Enable WebAssembly target" OFF)
 option(WITH_PACKAGE_MANAGER "Enable package manager" OFF)
+option(ENABLE_TESTING "Enable unit testing" ON)
+option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(ENABLE_LTO "Enable link-time optimization" OFF)
 
 # -------------------------
 # ZLIB Integration
@@ -319,10 +322,20 @@ set(FEATURE_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debugger.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/targets/wasm_target.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/package/package_manager.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.h"
 )
 
-# Add the feature headers to the existing headers list
+set(FEATURE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.cpp"
+)
+
+# Add the feature headers and sources to the existing lists
 list(APPEND HEADERS ${FEATURE_HEADERS})
+list(APPEND SOURCES ${FEATURE_SOURCES})
 
 # Create executable
 add_executable(tocin ${SOURCES}
@@ -443,6 +456,65 @@ add_custom_target(ir_generator_direct
 
 # Add this to the main target dependencies
 add_dependencies(tocin ir_generator_direct)
+
+# -------------------------
+# Compiler Flags & Optimizations
+# -------------------------
+if(ENABLE_SANITIZERS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(tocin PRIVATE 
+            -fsanitize=address 
+            -fsanitize=undefined 
+            -fno-omit-frame-pointer
+        )
+        target_link_options(tocin PRIVATE 
+            -fsanitize=address 
+            -fsanitize=undefined
+        )
+        message(STATUS "Sanitizers enabled (ASan, UBSan)")
+    endif()
+endif()
+
+if(ENABLE_LTO)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set_property(TARGET tocin PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "Link-time optimization enabled")
+    endif()
+endif()
+
+# -------------------------
+# Testing Support
+# -------------------------
+if(ENABLE_TESTING)
+    enable_testing()
+    
+    # Add test executable
+    add_executable(tocin_tests
+        tests/test_framework.cpp
+        tests/test_lexer.cpp
+        tests/test_parser.cpp
+        tests/test_type_checker.cpp
+        tests/test_codegen.cpp
+        tests/test_optimizer.cpp
+    )
+    
+    target_include_directories(tocin_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+        ${LLVM_INCLUDE_DIRS}
+    )
+    
+    target_link_libraries(tocin_tests PRIVATE ${LINK_LIBS})
+    
+    # Register tests with CTest
+    add_test(NAME LexerTests COMMAND tocin_tests --filter=Lexer)
+    add_test(NAME ParserTests COMMAND tocin_tests --filter=Parser)
+    add_test(NAME TypeCheckerTests COMMAND tocin_tests --filter=TypeChecker)
+    add_test(NAME CodeGenTests COMMAND tocin_tests --filter=CodeGen)
+    add_test(NAME OptimizerTests COMMAND tocin_tests --filter=Optimizer)
+    
+    message(STATUS "Testing enabled - use 'ctest' to run tests")
+endif()
 
 # -------------------------
 # Feature-specific definitions
