@@ -255,7 +255,8 @@ private:
 public:
     // JavaScript execution
     FFIValue executeJS(const std::string& code);
-    FFIValue callJSFunction(const std::string& name, 
+my 
+   FFIValue callJSFunction(const std::string& name, 
                            const std::vector<FFIValue>& args);
     
     // Bidirectional type conversion
