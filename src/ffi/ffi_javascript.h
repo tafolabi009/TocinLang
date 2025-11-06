@@ -101,6 +101,9 @@ private:
     // Conversion helpers
     FFIValue ffiValueToJS(const FFIValue& value);
     FFIValue jsValueToFFI(const FFIValue& value);
+    
+    // Expression evaluation helper
+    FFIValue evaluateExpression(const std::string& expr);
 };
 
 /**
