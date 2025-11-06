@@ -298,6 +298,9 @@ file(GLOB_RECURSE SOURCES
 # Exclude test files that have their own main function
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp")
 
+# Exclude improvements/example files that aren't meant to be compiled
+list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ffi/ffi_cpp_improvements.cpp")
+
 # Find all header files
 file(GLOB_RECURSE HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
