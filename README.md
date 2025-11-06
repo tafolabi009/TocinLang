@@ -1,5 +1,9 @@
 # Tocin - Modern Systems Programming with Next-Gen Concurrency
 
+[![CI Status](https://github.com/tafolabi009/tocin-compiler/workflows/CI/badge.svg)](https://github.com/tafolabi009/tocin-compiler/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)](https://github.com/tafolabi009/tocin-compiler)
+
 > A statically-typed systems language with goroutine-style concurrency, NUMA-aware scheduling, V8 JavaScript integration, and LLVM-powered JIT compilation—designed for performance-critical applications that demand seamless multi-language interoperability.
 
 ## Why This Exists
