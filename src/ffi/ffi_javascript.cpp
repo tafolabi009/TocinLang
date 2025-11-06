@@ -158,31 +158,20 @@ namespace ffi {
         if ((trimmed.front() == '"' && trimmed.back() == '"') ||
             (trimmed.front() == '\'' && trimmed.back() == '\'')) {
             std::string strVal = trimmed.substr(1, trimmed.length() - 2);
-            FFIValue result;
-            result.type = FFIType::STRING;
-            result.stringValue = strVal;
-            return result;
+            return FFIValue(strVal);
         }
         
         // Handle boolean literals
         if (trimmed == "true") {
-            FFIValue result;
-            result.type = FFIType::BOOLEAN;
-            result.boolValue = true;
-            return result;
+            return FFIValue(true);
         }
         if (trimmed == "false") {
-            FFIValue result;
-            result.type = FFIType::BOOLEAN;
-            result.boolValue = false;
-            return result;
+            return FFIValue(false);
         }
         
         // Handle null/undefined
         if (trimmed == "null" || trimmed == "undefined") {
-            FFIValue result;
-            result.type = FFIType::VOID;
-            return result;
+            return FFIValue();
         }
         
         // Handle numeric literals
@@ -199,15 +188,11 @@ namespace ffi {
         }
         
         if (isNumber && !trimmed.empty()) {
-            FFIValue result;
             if (hasDecimal) {
-                result.type = FFIType::FLOAT;
-                result.floatValue = std::stod(trimmed);
+                return FFIValue(std::stod(trimmed));
             } else {
-                result.type = FFIType::INT;
-                result.intValue = std::stoll(trimmed);
+                return FFIValue(static_cast<int64_t>(std::stoll(trimmed)));
             }
-            return result;
         }
         
         // Handle variable access
@@ -222,13 +207,6 @@ namespace ffi {
             trimmed.find('/') != std::string::npos) {
             return evaluateExpression(trimmed);
         }
-        
-        // If nothing matches, return undefined
-        state_->lastError = "Cannot evaluate expression: " + trimmed;
-        FFIValue result;
-        result.type = FFIType::VOID;
-        return result;
-    }
         
         // Handle simple literal values
         if (trimmed == "true") return FFIValue(true);
@@ -599,15 +577,15 @@ namespace ffi {
 
     std::string JavaScriptFFIImpl::getJavaScriptTypeName(const FFIValue& value) const {
         switch (value.getType()) {
-            case FFIValue::UNDEFINED: return "undefined";
-            case FFIValue::NULL_VALUE: return "null";
-            case FFIValue::BOOLEAN: return "boolean";
-            case FFIValue::INTEGER:
-            case FFIValue::FLOAT: return "number";
-            case FFIValue::STRING: return "string";
-            case FFIValue::ARRAY: return "array";
-            case FFIValue::OBJECT: return "object";
-            case FFIValue::FUNCTION: return "function";
+            case FFIValue::Type::UNDEFINED: return "undefined";
+            case FFIValue::Type::NULL_VALUE: return "null";
+            case FFIValue::Type::BOOLEAN: return "boolean";
+            case FFIValue::Type::INTEGER:
+            case FFIValue::Type::FLOAT: return "number";
+            case FFIValue::Type::STRING: return "string";
+            case FFIValue::Type::ARRAY: return "array";
+            case FFIValue::Type::OBJECT: return "object";
+            case FFIValue::Type::FUNCTION: return "function";
             default: return "unknown";
         }
     }
