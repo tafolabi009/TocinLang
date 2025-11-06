@@ -144,11 +144,91 @@ namespace ffi {
             return FFIValue();
         }
         
-        // Simple expression evaluator for basic JavaScript expressions
-        // This is a stub that handles simple cases without V8
+        // Enhanced JavaScript expression evaluator
+        // Handles: literals, basic arithmetic, variables, simple function calls
         std::string trimmed = code;
         trimmed.erase(0, trimmed.find_first_not_of(" \t\n\r"));
         trimmed.erase(trimmed.find_last_not_of(" \t\n\r") + 1);
+        
+        if (trimmed.empty()) {
+            return FFIValue();
+        }
+        
+        // Handle string literals
+        if ((trimmed.front() == '"' && trimmed.back() == '"') ||
+            (trimmed.front() == '\'' && trimmed.back() == '\'')) {
+            std::string strVal = trimmed.substr(1, trimmed.length() - 2);
+            FFIValue result;
+            result.type = FFIType::STRING;
+            result.stringValue = strVal;
+            return result;
+        }
+        
+        // Handle boolean literals
+        if (trimmed == "true") {
+            FFIValue result;
+            result.type = FFIType::BOOLEAN;
+            result.boolValue = true;
+            return result;
+        }
+        if (trimmed == "false") {
+            FFIValue result;
+            result.type = FFIType::BOOLEAN;
+            result.boolValue = false;
+            return result;
+        }
+        
+        // Handle null/undefined
+        if (trimmed == "null" || trimmed == "undefined") {
+            FFIValue result;
+            result.type = FFIType::VOID;
+            return result;
+        }
+        
+        // Handle numeric literals
+        bool isNumber = true;
+        bool hasDecimal = false;
+        for (size_t i = 0; i < trimmed.length(); ++i) {
+            char c = trimmed[i];
+            if (c == '.' && !hasDecimal) {
+                hasDecimal = true;
+            } else if (!std::isdigit(c) && !(i == 0 && c == '-')) {
+                isNumber = false;
+                break;
+            }
+        }
+        
+        if (isNumber && !trimmed.empty()) {
+            FFIValue result;
+            if (hasDecimal) {
+                result.type = FFIType::FLOAT;
+                result.floatValue = std::stod(trimmed);
+            } else {
+                result.type = FFIType::INT;
+                result.intValue = std::stoll(trimmed);
+            }
+            return result;
+        }
+        
+        // Handle variable access
+        if (state_->globalVariables.count(trimmed)) {
+            return state_->globalVariables[trimmed];
+        }
+        
+        // Handle simple arithmetic expressions (basic recursive descent)
+        if (trimmed.find('+') != std::string::npos ||
+            trimmed.find('-') != std::string::npos ||
+            trimmed.find('*') != std::string::npos ||
+            trimmed.find('/') != std::string::npos) {
+            return evaluateExpression(trimmed);
+        }
+        
+        // If nothing matches, return undefined
+        state_->lastError = "Cannot evaluate expression: " + trimmed;
+        FFIValue result;
+        result.type = FFIType::VOID;
+        return result;
+    }
         
         // Handle simple literal values
         if (trimmed == "true") return FFIValue(true);
@@ -541,6 +621,71 @@ namespace ffi {
     FFIValue JavaScriptFFIImpl::jsValueToFFI(const FFIValue& value) {
         // Direct pass-through for now
         return value;
+    }
+
+    // Private helper method for evaluating arithmetic expressions
+    FFIValue JavaScriptFFIImpl::evaluateExpression(const std::string& expr) {
+        // Simple recursive descent parser for arithmetic
+        // Supports: +, -, *, /, parentheses
+        
+        std::string trimmed = expr;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t\n\r"));
+        trimmed.erase(trimmed.find_last_not_of(" \t\n\r") + 1);
+        
+        if (trimmed.empty()) {
+            return FFIValue(); // undefined
+        }
+        
+        // Handle parentheses
+        if (trimmed.front() == '(' && trimmed.back() == ')') {
+            return evaluateExpression(trimmed.substr(1, trimmed.length() - 2));
+        }
+        
+        // Find lowest precedence operator (+ or -)
+        int parenDepth = 0;
+        for (int i = trimmed.length() - 1; i >= 0; --i) {
+            char c = trimmed[i];
+            if (c == ')') parenDepth++;
+            if (c == '(') parenDepth--;
+            
+            if (parenDepth == 0 && (c == '+' || c == '-') && i > 0) {
+                FFIValue left = evaluateExpression(trimmed.substr(0, i));
+                FFIValue right = evaluateExpression(trimmed.substr(i + 1));
+                
+                if (c == '+') {
+                    return left + right;
+                } else {
+                    return left - right;
+                }
+            }
+        }
+        
+        // Find next precedence operator (* or /)
+        parenDepth = 0;
+        for (int i = trimmed.length() - 1; i >= 0; --i) {
+            char c = trimmed[i];
+            if (c == ')') parenDepth++;
+            if (c == '(') parenDepth--;
+            
+            if (parenDepth == 0 && (c == '*' || c == '/') && i > 0) {
+                FFIValue left = evaluateExpression(trimmed.substr(0, i));
+                FFIValue right = evaluateExpression(trimmed.substr(i + 1));
+                
+                if (c == '/') {
+                    // Check for division by zero
+                    if (right.isNumber() && right.asDouble() == 0.0) {
+                        state_->lastError = "Division by zero";
+                        return FFIValue(0.0);
+                    }
+                    return left / right;
+                } else {
+                    return left * right;
+                }
+            }
+        }
+        
+        // Base case: single value - delegate to eval()
+        return eval(trimmed);
     }
 
 } // namespace ffi

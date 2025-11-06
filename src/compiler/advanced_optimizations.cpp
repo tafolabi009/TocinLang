@@ -6,9 +6,11 @@
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Transforms/Scalar/SROA.h>
-#include <llvm/Transforms/IPO/ConstantHoisting.h>
+#include <llvm/Transforms/Scalar/ConstantHoisting.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/IR/MDBuilder.h>
+#include <llvm/Linker/Linker.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 #include <fstream>
 #include <unordered_set>
 #include <algorithm>
@@ -360,7 +362,7 @@ void PolyhedralOptimizer::applyLoopFusion(llvm::Module* module) {
         auto& LI = FAM.getResult<llvm::LoopAnalysis>(F);
         
         // Find adjacent loops with compatible bounds
-        std::vector<llvm::Loop*> loops = LI.getLoopsInPreorder();
+        auto loops = LI.getLoopsInPreorder();
         
         for (size_t i = 0; i + 1 < loops.size(); ++i) {
             llvm::Loop* L1 = loops[i];
@@ -507,8 +509,12 @@ void PolyhedralOptimizer::detectParallelLoops(llvm::Module* module) {
             if (canParallelize) {
                 // Mark loop as parallel
                 llvm::MDBuilder MDB(module->getContext());
-                llvm::MDNode* parallelMD = MDB.createString("llvm.loop.parallel");
-                L->getLoopID()->replaceOperandWith(1, parallelMD);
+                llvm::Metadata* parallelMD = MDB.createString("llvm.loop.parallel");
+                // Create an MDNode from the string
+                llvm::MDNode* loopMD = llvm::MDNode::get(module->getContext(), parallelMD);
+                if (L->getLoopID()) {
+                    L->getLoopID()->replaceOperandWith(1, loopMD);
+                }
                 stats_.parallelLoops++;
             }
         }
@@ -620,17 +626,19 @@ void WholeProgramOptimizer::performLTO() {
     
     if (!mergedModule) return;
     
-    // Apply whole-program optimizations
-    llvm::legacy::PassManager PM;
+    // Apply whole-program optimizations using the new pass manager
+    // Note: LLVM 18 uses the new pass manager; legacy passes are deprecated
+    llvm::ModuleAnalysisManager MAM;
+    llvm::ModulePassManager MPM;
+    llvm::PassBuilder PB;
     
-    // Add optimization passes
-    PM.add(llvm::createGlobalDCEPass());            // Dead code elimination
-    PM.add(llvm::createIPSCCPPass());               // Interprocedural sparse conditional constant propagation
-    PM.add(llvm::createFunctionInliningPass());     // Function inlining
-    PM.add(llvm::createArgumentPromotionPass());    // Argument promotion
-    PM.add(llvm::createDeadArgEliminationPass());   // Dead argument elimination
+    PB.registerModuleAnalyses(MAM);
     
-    PM.run(*mergedModule);
+    // Add optimization passes (using new pass manager equivalents)
+    // TODO: Port to complete new pass manager infrastructure
+    // For now, run basic optimization pipeline
+    MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+    MPM.run(*mergedModule, MAM);
     
     stats_.modulesProcessed = modules_.size();
     
