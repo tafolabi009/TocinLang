@@ -251,9 +251,9 @@ bool NullSafetyChecker::analyzeNullFlow(ast::StmtPtr stmt) {
     // Check if statement assigns or uses nullable values
     
     // Handle variable declarations with null assignment
-    if (auto varDecl = std::dynamic_pointer_cast<ast::VariableDecl>(stmt)) {
+    if (auto varDecl = std::dynamic_pointer_cast<ast::VariableStmt>(stmt)) {
         if (varDecl->initializer && isNullLiteral(varDecl->initializer)) {
-            nullableVariables_.insert(varDecl->name);
+            nullableVariables_[varDecl->name] = true;
             definitelyNull_.insert(varDecl->name);
         } else if (varDecl->initializer) {
             // Has non-null initializer
@@ -677,7 +677,7 @@ bool NullSafetyFlowAnalyzer::analyzeFlow(ast::StmtPtr stmt) {
         // Analyze control flow for null safety
         
         // Handle variable declarations
-        if (auto varDecl = std::dynamic_pointer_cast<ast::VariableDecl>(stmt)) {
+        if (auto varDecl = std::dynamic_pointer_cast<ast::VariableStmt>(stmt)) {
             addVariable(varDecl->name);
             if (varDecl->initializer) {
                 if (NullSafetyUtils::isNullLiteral(varDecl->initializer)) {
@@ -692,7 +692,8 @@ bool NullSafetyFlowAnalyzer::analyzeFlow(ast::StmtPtr stmt) {
         
         // Handle if statements with null checks
         if (auto ifStmt = std::dynamic_pointer_cast<ast::IfStmt>(stmt)) {
-            if (ifStmt->condition) {\n                analyzeConditionalFlow(ifStmt->condition, ifStmt->thenBranch, ifStmt->elseBranch);
+            if (ifStmt->condition) {
+                analyzeConditionalFlow(ifStmt->condition, ifStmt->thenBranch, ifStmt->elseBranch);
             }
             return true;
         }
@@ -732,11 +733,11 @@ bool NullSafetyFlowAnalyzer::analyzeConditionalFlow(ast::ExprPtr condition, ast:
                 
                 // Check if one side is null literal
                 if (NullSafetyUtils::isNullLiteral(binaryExpr->left)) {
-                    varName = NullSafetyUtils::getVariableName(binaryExpr->right);
+                    varName = getVariableName(binaryExpr->right);
                     isNullCheck = true;
                     isNullEqual = (binaryExpr->op.type == lexer::TokenType::EQUAL);
                 } else if (NullSafetyUtils::isNullLiteral(binaryExpr->right)) {
-                    varName = NullSafetyUtils::getVariableName(binaryExpr->left);
+                    varName = getVariableName(binaryExpr->left);
                     isNullCheck = true;
                     isNullEqual = (binaryExpr->op.type == lexer::TokenType::EQUAL);
                 }
@@ -846,6 +847,22 @@ void NullSafetyFlowAnalyzer::markAsNullable(const std::string& name) {
     if (it != flowStates_.end()) {
         it->second.isNullable = true;
     }
+}
+
+std::string NullSafetyFlowAnalyzer::getVariableName(ast::ExprPtr expr) {
+    if (!expr) return "";
+    
+    // Extract variable name from expression
+    if (auto varExpr = std::dynamic_pointer_cast<ast::VariableExpr>(expr)) {
+        return varExpr->name;
+    }
+    
+    // Check for property access (obj.prop)
+    if (auto getExpr = std::dynamic_pointer_cast<ast::GetExpr>(expr)) {
+        return getVariableName(getExpr->object);
+    }
+    
+    return "";
 }
 
 void NullSafetyFlowAnalyzer::clear() {

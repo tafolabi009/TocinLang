@@ -181,6 +181,10 @@ std::shared_ptr<Fiber> Worker::stealFiber() {
     return fiber;
 }
 
+size_t Worker::getQueueSize() const {
+    return queue_.size();
+}
+
 void Worker::setCPUAffinity(int cpu) {
     cpuAffinity_ = cpu;
     if (thread_ && thread_->joinable()) {

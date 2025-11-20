@@ -420,8 +420,9 @@ Result<ast::TypePtr, CompilerError> EnhancedTypeChecker::inferType(ast::ExprPtr 
         for (const auto& param : lambda->params) {
             paramTypes.push_back(param.type);
         }
+        lexer::Token tok(lexer::TokenType::FN, "fn", "", 0, 0);
         return Result<ast::TypePtr, CompilerError>::Ok(
-            std::make_shared<ast::FunctionType>(paramTypes, lambda->returnType));
+            std::make_shared<ast::FunctionType>(tok, paramTypes, lambda->returnType));
     }
     
     // Array/List expressions
@@ -437,8 +438,9 @@ Result<ast::TypePtr, CompilerError> EnhancedTypeChecker::inferType(ast::ExprPtr 
             return elemType;
         }
         
+        lexer::Token tok(lexer::TokenType::LEFT_BRACKET, "[", "", 0, 0);
         return Result<ast::TypePtr, CompilerError>::Ok(
-            std::make_shared<ast::ArrayType>(elemType.unwrap()));
+            std::make_shared<ast::ArrayType>(tok, elemType.unwrap()));
     }
     
     // Default: return void type
@@ -501,8 +503,9 @@ Result<ast::TypePtr, CompilerError> EnhancedTypeChecker::unifyTypes(
                 return unifiedReturn;
             }
             
+            lexer::Token tok(lexer::TokenType::FN, "fn", "", 0, 0);
             return Result<ast::TypePtr, CompilerError>::Ok(
-                std::make_shared<ast::FunctionType>(unifiedParams, unifiedReturn.unwrap()));
+                std::make_shared<ast::FunctionType>(tok, unifiedParams, unifiedReturn.unwrap()));
         }
     }
     
@@ -513,8 +516,9 @@ Result<ast::TypePtr, CompilerError> EnhancedTypeChecker::unifyTypes(
             if (unifiedElem.isErr()) {
                 return unifiedElem;
             }
+            lexer::Token tok(lexer::TokenType::LEFT_BRACKET, "[", "", 0, 0);
             return Result<ast::TypePtr, CompilerError>::Ok(
-                std::make_shared<ast::ArrayType>(unifiedElem.unwrap()));
+                std::make_shared<ast::ArrayType>(tok, unifiedElem.unwrap()));
         }
     }
     
@@ -536,8 +540,8 @@ Result<ast::TypePtr, CompilerError> EnhancedTypeChecker::unifyTypes(
                 unifiedArgs.push_back(unified.unwrap());
             }
             
-            auto result = std::make_shared<ast::GenericType>(gen1->name);
-            result->typeArguments = unifiedArgs;
+            lexer::Token tok(lexer::TokenType::IDENTIFIER, gen1->name, "", 0, 0);
+            auto result = std::make_shared<ast::GenericType>(tok, gen1->name, unifiedArgs);
             return Result<ast::TypePtr, CompilerError>::Ok(result);
         }
     }
@@ -901,7 +905,8 @@ ast::TypePtr EnhancedTypeChecker::substituteTypeParameters(
     if (auto ptr = std::dynamic_pointer_cast<ast::PointerType>(type)) {
         auto substituted = substituteTypeParameters(ptr->pointeeType, substitutions);
         if (substituted != ptr->pointeeType) {
-            auto newPtr = std::make_shared<ast::PointerType>(substituted);
+            lexer::Token tok(lexer::TokenType::STAR, "*", "", 0, 0);
+            auto newPtr = std::make_shared<ast::PointerType>(tok, substituted);
             newPtr->isUnique = ptr->isUnique;
             return newPtr;
         }
@@ -912,8 +917,8 @@ ast::TypePtr EnhancedTypeChecker::substituteTypeParameters(
     if (auto ref = std::dynamic_pointer_cast<ast::ReferenceType>(type)) {
         auto substituted = substituteTypeParameters(ref->referencedType, substitutions);
         if (substituted != ref->referencedType) {
-            auto newRef = std::make_shared<ast::ReferenceType>(substituted);
-            newRef->isMutable = ref->isMutable;
+            lexer::Token tok(lexer::TokenType::BITWISE_AND, "&", "", 0, 0);
+            auto newRef = std::make_shared<ast::ReferenceType>(tok, substituted, ref->isMutable);
             return newRef;
         }
         return type;
@@ -923,8 +928,8 @@ ast::TypePtr EnhancedTypeChecker::substituteTypeParameters(
     if (auto arr = std::dynamic_pointer_cast<ast::ArrayType>(type)) {
         auto substituted = substituteTypeParameters(arr->elementType, substitutions);
         if (substituted != arr->elementType) {
-            auto newArr = std::make_shared<ast::ArrayType>(substituted);
-            newArr->size = arr->size;
+            lexer::Token tok(lexer::TokenType::LEFT_BRACKET, "[", "", 0, 0);
+            auto newArr = std::make_shared<ast::ArrayType>(tok, substituted, arr->size);
             return newArr;
         }
         return type;
@@ -945,7 +950,8 @@ ast::TypePtr EnhancedTypeChecker::substituteTypeParameters(
         if (newReturn != fn->returnType) changed = true;
         
         if (changed) {
-            return std::make_shared<ast::FunctionType>(newParams, newReturn);
+            lexer::Token tok(lexer::TokenType::FN, "fn", "", 0, 0);
+            return std::make_shared<ast::FunctionType>(tok, newParams, newReturn);
         }
         return type;
     }
@@ -962,8 +968,8 @@ ast::TypePtr EnhancedTypeChecker::substituteTypeParameters(
         }
         
         if (changed) {
-            auto newGen = std::make_shared<ast::GenericType>(gen->name);
-            newGen->typeArguments = newArgs;
+            lexer::Token tok(lexer::TokenType::IDENTIFIER, gen->name, "", 0, 0);
+            auto newGen = std::make_shared<ast::GenericType>(tok, gen->name, newArgs);
             return newGen;
         }
         return type;
@@ -1288,11 +1294,13 @@ ast::TypePtr TypeRegistry::makeArrayType(ast::TypePtr elementType) {
 }
 
 ast::TypePtr TypeRegistry::makePointerType(ast::TypePtr pointeeType) {
-    return std::make_shared<ast::PointerType>(pointeeType);
+    lexer::Token tok(lexer::TokenType::STAR, "*", "", 0, 0);
+    return std::make_shared<ast::PointerType>(tok, pointeeType);
 }
 
 ast::TypePtr TypeRegistry::makeReferenceType(ast::TypePtr referentType) {
-    return std::make_shared<ast::ReferenceType>(referentType);
+    lexer::Token tok(lexer::TokenType::BITWISE_AND, "&", "", 0, 0);
+    return std::make_shared<ast::ReferenceType>(tok, referentType, true);
 }
 
 ast::TypePtr TypeRegistry::makeOptionType(ast::TypePtr innerType) {

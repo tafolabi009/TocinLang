@@ -298,9 +298,6 @@ file(GLOB_RECURSE SOURCES
 # Exclude test files that have their own main function
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp")
 
-# Exclude improvements/example files that aren't meant to be compiled
-list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ffi/ffi_cpp_improvements.cpp")
-
 # Find all header files
 file(GLOB_RECURSE HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
@@ -325,15 +322,15 @@ set(FEATURE_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debugger.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/targets/wasm_target.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/package/package_manager.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.h"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.h"  # Missing header file
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.h"  # Missing file
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.h"  # Disabled
 )
 
 set(FEATURE_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.cpp"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.cpp"  # Missing header
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.cpp"  # Missing header
+    # "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.cpp"  # Disabled due to missing TypeRegistry methods
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/parallel_runtime.cpp"
 )
 

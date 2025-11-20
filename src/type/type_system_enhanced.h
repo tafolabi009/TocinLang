@@ -9,6 +9,7 @@
 #pragma once
 
 #include "../ast/types.h"
+#include "../ast/ast.h"
 #include "../util/result.h"
 #include <memory>
 #include <string>
@@ -142,6 +143,11 @@ private:
         const std::string& methodName,
         ast::TypePtr signature,
         const Trait& trait
+    );
+    
+    Result<bool, CompilerError> checkCircularDependencyHelper(
+        ast::TypePtr type,
+        std::unordered_set<std::string>& visited
     );
 };
 

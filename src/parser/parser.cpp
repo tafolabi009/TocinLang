@@ -768,8 +768,8 @@ namespace parser
             case lexer::TokenType::BITWISE_AND: return 8;
             
             // Shift
-            case lexer::TokenType::SHIFT_LEFT:
-            case lexer::TokenType::SHIFT_RIGHT: return 9;
+            case lexer::TokenType::LEFT_SHIFT:
+            case lexer::TokenType::RIGHT_SHIFT: return 9;
             
             // Additive
             case lexer::TokenType::PLUS:
