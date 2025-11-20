@@ -130,6 +130,7 @@ public:
     // Task management
     void addFiber(std::shared_ptr<Fiber> fiber);
     std::shared_ptr<Fiber> stealFiber();
+    size_t getQueueSize() const;
     
     // NUMA and affinity
     void setCPUAffinity(int cpu);

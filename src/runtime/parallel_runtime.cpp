@@ -68,7 +68,8 @@ extern "C" {
 void __tocin_parallel_for(int64_t start, int64_t end, void (*body)(int64_t)) {
     using namespace tocin::runtime;
     
-    if (!ParallelRuntime::initialized_.load()) {
+    // Access static members through public interface
+    if (!ParallelRuntime::get_num_threads()) {
         ParallelRuntime::initialize();
     }
     
@@ -125,9 +126,10 @@ void __tocin_parallel_for_step(int64_t start, int64_t end, int64_t step, void (*
     
     int64_t num_iterations = (end - start + step - (step > 0 ? 1 : -1)) / step;
     
-    __tocin_parallel_for(0, num_iterations, [start, step, body](int64_t i) {
+    // Execute sequentially for stepped loop (can be optimized later)
+    for (int64_t i = 0; i < num_iterations; ++i) {
         body(start + i * step);
-    });
+    }
 }
 
 /**

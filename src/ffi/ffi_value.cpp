@@ -463,4 +463,54 @@ void FFIValue::setVariantValue(const T& value) {
     value_ = value;
 }
 
-} // namespace ffi 
+
+// Arithmetic operators
+FFIValue FFIValue::operator+(const FFIValue& other) const {
+    if (type_ == INTEGER && other.type_ == INTEGER) {
+        return FFIValue(std::get<int64_t>(value_) + std::get<int64_t>(other.value_));
+    } else if (type_ == FLOAT || other.type_ == FLOAT) {
+        double left = (type_ == FLOAT) ? std::get<double>(value_) : static_cast<double>(std::get<int64_t>(value_));
+        double right = (other.type_ == FLOAT) ? std::get<double>(other.value_) : static_cast<double>(std::get<int64_t>(other.value_));
+        return FFIValue(left + right);
+    }
+    return FFIValue();
+}
+
+FFIValue FFIValue::operator-(const FFIValue& other) const {
+    if (type_ == INTEGER && other.type_ == INTEGER) {
+        return FFIValue(std::get<int64_t>(value_) - std::get<int64_t>(other.value_));
+    } else if (type_ == FLOAT || other.type_ == FLOAT) {
+        double left = (type_ == FLOAT) ? std::get<double>(value_) : static_cast<double>(std::get<int64_t>(value_));
+        double right = (other.type_ == FLOAT) ? std::get<double>(other.value_) : static_cast<double>(std::get<int64_t>(other.value_));
+        return FFIValue(left - right);
+    }
+    return FFIValue();
+}
+
+FFIValue FFIValue::operator*(const FFIValue& other) const {
+    if (type_ == INTEGER && other.type_ == INTEGER) {
+        return FFIValue(std::get<int64_t>(value_) * std::get<int64_t>(other.value_));
+    } else if (type_ == FLOAT || other.type_ == FLOAT) {
+        double left = (type_ == FLOAT) ? std::get<double>(value_) : static_cast<double>(std::get<int64_t>(value_));
+        double right = (other.type_ == FLOAT) ? std::get<double>(other.value_) : static_cast<double>(std::get<int64_t>(other.value_));
+        return FFIValue(left * right);
+    }
+    return FFIValue();
+}
+
+FFIValue FFIValue::operator/(const FFIValue& other) const {
+    if (type_ == INTEGER && other.type_ == INTEGER) {
+        auto divisor = std::get<int64_t>(other.value_);
+        if (divisor == 0) return FFIValue();
+        return FFIValue(std::get<int64_t>(value_) / divisor);
+    } else if (type_ == FLOAT || other.type_ == FLOAT) {
+        double left = (type_ == FLOAT) ? std::get<double>(value_) : static_cast<double>(std::get<int64_t>(value_));
+        double right = (other.type_ == FLOAT) ? std::get<double>(other.value_) : static_cast<double>(std::get<int64_t>(other.value_));
+        if (right == 0.0) return FFIValue();
+        return FFIValue(left / right);
+    }
+    return FFIValue();
+}
+
+
+} // namespace ffi
