@@ -334,6 +334,7 @@ set(FEATURE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/memory_safety.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/error_handling.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/type/type_system_enhanced.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/parallel_runtime.cpp"
 )
 
 # Add the feature headers and sources to the existing lists

@@ -188,32 +188,172 @@ class Loss {
     }
 }
 
-// Tensor class (basic implementation, would be expanded in a full library)
+// Tensor class (basic implementation with real math operations)
 class Tensor {
     property data: Array<float>;
     property shape: List<int>;
+    private size: int;
+    
+    def initialize(data: Array<float>, shape: List<int>) {
+        self.data = data;
+        self.shape = shape;
+        self.size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
+    }
     
     static def zeros(shape: List<int>) -> Tensor {
-        // Implementation details...
-        return new Tensor();
+        let size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
+        let data = Array<float>(size);
+        for (let i = 0; i < size; i++) {
+            data[i] = 0.0;
+        }
+        return new Tensor(data, shape);
     }
     
     static def randn(shape: List<int>) -> Tensor {
-        // Implementation details...
-        return new Tensor();
+        // Box-Muller transform for normal distribution
+        let size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
+        let data = Array<float>(size);
+        
+        for (let i = 0; i < size; i += 2) {
+            let u1 = math.random();
+            let u2 = math.random();
+            let z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.PI * u2);
+            let z1 = math.sqrt(-2.0 * math.log(u1)) * math.sin(2.0 * math.PI * u2);
+            
+            data[i] = z0;
+            if (i + 1 < size) {
+                data[i + 1] = z1;
+            }
+        }
+        
+        return new Tensor(data, shape);
     }
     
     def reshape(new_shape: List<int>) -> Tensor {
-        // Implementation details...
-        return self;
+        let new_size = new_shape.reduce(lambda (a, b) -> int { a * b }, 1);
+        
+        if (new_size != self.size) {
+            throw RuntimeError("Cannot reshape: sizes don't match");
+        }
+        
+        return new Tensor(self.data, new_shape);
     }
     
     def matmul(other: Tensor) -> Tensor {
-        // Implementation details...
-        return new Tensor();
+        // Matrix multiplication for 2D tensors
+        if (self.shape.length != 2 || other.shape.length != 2) {
+            throw RuntimeError("matmul requires 2D tensors");
+        }
+        
+        let m = self.shape[0];
+        let k = self.shape[1];
+        let n = other.shape[1];
+        
+        if (k != other.shape[0]) {
+            throw RuntimeError("Incompatible dimensions for matmul");
+        }
+        
+        let result_data = Array<float>(m * n);
+        
+        // Naive matrix multiplication (can be optimized with BLAS)
+        for (let i = 0; i < m; i++) {
+            for (let j = 0; j < n; j++) {
+                let sum = 0.0;
+                for (let ki = 0; ki < k; ki++) {
+                    sum += self.data[i * k + ki] * other.data[ki * n + j];
+                }
+                result_data[i * n + j] = sum;
+            }
+        }
+        
+        return new Tensor(result_data, [m, n]);
     }
     
-    // Additional tensor methods would be implemented here
+    def transpose() -> Tensor {
+        if (self.shape.length != 2) {
+            throw RuntimeError("transpose requires 2D tensor");
+        }
+        
+        let rows = self.shape[0];
+        let cols = self.shape[1];
+        let result_data = Array<float>(self.size);
+        
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < cols; j++) {
+                result_data[j * rows + i] = self.data[i * cols + j];
+            }
+        }
+        
+        return new Tensor(result_data, [cols, rows]);
+    }
+    
+    def add(other: Tensor) -> Tensor {
+        if (self.size != other.size) {
+            throw RuntimeError("Tensors must have same size for addition");
+        }
+        
+        let result_data = Array<float>(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result_data[i] = self.data[i] + other.data[i];
+        }
+        
+        return new Tensor(result_data, self.shape);
+    }
+    
+    def subtract(other: Tensor) -> Tensor {
+        if (self.size != other.size) {
+            throw RuntimeError("Tensors must have same size for subtraction");
+        }
+        
+        let result_data = Array<float>(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result_data[i] = self.data[i] - other.data[i];
+        }
+        
+        return new Tensor(result_data, self.shape);
+    }
+    
+    def multiply(scalar: float) -> Tensor {
+        let result_data = Array<float>(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result_data[i] = self.data[i] * scalar;
+        }
+        
+        return new Tensor(result_data, self.shape);
+    }
+    
+    def pow(exponent: float) -> Tensor {
+        let result_data = Array<float>(self.size);
+        for (let i = 0; i < self.size; i++) {
+            result_data[i] = math.pow(self.data[i], exponent);
+        }
+        
+        return new Tensor(result_data, self.shape);
+    }
+    
+    def sum(axis: int = -1) -> Tensor {
+        if (axis == -1) {
+            // Sum all elements
+            let total = 0.0;
+            for (let i = 0; i < self.size; i++) {
+                total += self.data[i];
+            }
+            return new Tensor([total], [1]);
+        }
+        
+        // Axis-specific sum would require more complex logic
+        throw NotImplementedError("Axis-specific sum not yet implemented");
+    }
+    
+    def mean() -> float {
+        let total = 0.0;
+        for (let i = 0; i < self.size; i++) {
+            total += self.data[i];
+        }
+        return total / self.size;
+    }
+    
+    // Additional tensor methods
 }
 
 // Data preprocessing utilities
@@ -237,22 +377,85 @@ class Preprocessing {
 // Model evaluation utilities
 class Evaluation {
     static def accuracy(predictions: Tensor, targets: Tensor) -> float {
-        // Implementation details...
-        return 0.0;
+        if (predictions.size != targets.size) {
+            throw RuntimeError("Predictions and targets must have same size");
+        }
+        
+        let correct = 0;
+        for (let i = 0; i < predictions.size; i++) {
+            // Assume classification: compare argmax or threshold
+            if (math.round(predictions.data[i]) == math.round(targets.data[i])) {
+                correct++;
+            }
+        }
+        
+        return correct / predictions.size;
     }
     
     static def precision(predictions: Tensor, targets: Tensor) -> float {
-        // Implementation details...
-        return 0.0;
+        if (predictions.size != targets.size) {
+            throw RuntimeError("Predictions and targets must have same size");
+        }
+        
+        let true_positives = 0;
+        let false_positives = 0;
+        
+        for (let i = 0; i < predictions.size; i++) {
+            let pred = math.round(predictions.data[i]);
+            let target = math.round(targets.data[i]);
+            
+            if (pred == 1) {
+                if (target == 1) {
+                    true_positives++;
+                } else {
+                    false_positives++;
+                }
+            }
+        }
+        
+        if (true_positives + false_positives == 0) {
+            return 0.0;
+        }
+        
+        return true_positives / (true_positives + false_positives);
     }
     
     static def recall(predictions: Tensor, targets: Tensor) -> float {
-        // Implementation details...
-        return 0.0;
+        if (predictions.size != targets.size) {
+            throw RuntimeError("Predictions and targets must have same size");
+        }
+        
+        let true_positives = 0;
+        let false_negatives = 0;
+        
+        for (let i = 0; i < predictions.size; i++) {
+            let pred = math.round(predictions.data[i]);
+            let target = math.round(targets.data[i]);
+            
+            if (target == 1) {
+                if (pred == 1) {
+                    true_positives++;
+                } else {
+                    false_negatives++;
+                }
+            }
+        }
+        
+        if (true_positives + false_negatives == 0) {
+            return 0.0;
+        }
+        
+        return true_positives / (true_positives + false_negatives);
     }
     
     static def f1_score(predictions: Tensor, targets: Tensor) -> float {
-        // Implementation details...
-        return 0.0;
+        let prec = Evaluation.precision(predictions, targets);
+        let rec = Evaluation.recall(predictions, targets);
+        
+        if (prec + rec == 0.0) {
+            return 0.0;
+        }
+        
+        return 2 * (prec * rec) / (prec + rec);
     }
 } 

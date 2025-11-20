@@ -462,12 +462,15 @@ V8Runtime::AsyncResult V8Runtime::awaitPromise(const std::string& promiseName, i
     v8::Promise::PromiseState state = promise->State();
     
     if (state == v8::Promise::kPending) {
-        // Wait for promise to settle (with timeout if specified)
+        // Wait for promise to settle using microtask processing
+        // Instead of blocking with sleep, we process pending microtasks efficiently
         auto start = std::chrono::steady_clock::now();
+        
         while (promise->State() == v8::Promise::kPending) {
-            // Process microtasks
+            // Process all pending microtasks
             isolate_->PerformMicrotaskCheckpoint();
             
+            // Check timeout
             if (timeoutMs > 0) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - start).count();
@@ -477,7 +480,11 @@ V8Runtime::AsyncResult V8Runtime::awaitPromise(const std::string& promiseName, i
                 }
             }
             
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // Yield to allow other work if still pending
+            // Use a much shorter sleep to be more responsive
+            if (promise->State() == v8::Promise::kPending) {
+                std::this_thread::yield();
+            }
         }
         
         state = promise->State();
@@ -592,7 +599,36 @@ ffi::FFIValue V8Runtime::fromV8Value(v8::Local<v8::Value> value) {
         return ffi::FFIValue();
     }
     
-    // For complex types, convert to string representation
+    // For objects and arrays, attempt JSON serialization for better representation
+    if (value->IsObject()) {
+        v8::Local<v8::Context> context = getContext();
+        v8::Local<v8::Object> obj = value.As<v8::Object>();
+        
+        // Try to convert to JSON for better structured representation
+        v8::Local<v8::String> jsonKey = 
+            v8::String::NewFromUtf8(isolate_, "JSON").ToLocalChecked();
+        v8::Local<v8::Value> jsonObj;
+        
+        if (context->Global()->Get(context, jsonKey).ToLocal(&jsonObj) && jsonObj->IsObject()) {
+            v8::Local<v8::Object> json = jsonObj.As<v8::Object>();
+            v8::Local<v8::String> stringifyKey = 
+                v8::String::NewFromUtf8(isolate_, "stringify").ToLocalChecked();
+            v8::Local<v8::Value> stringifyFn;
+            
+            if (json->Get(context, stringifyKey).ToLocal(&stringifyFn) && stringifyFn->IsFunction()) {
+                v8::Local<v8::Function> stringify = stringifyFn.As<v8::Function>();
+                v8::Local<v8::Value> args[] = {value};
+                v8::Local<v8::Value> result;
+                
+                if (stringify->Call(context, json, 1, args).ToLocal(&result) && result->IsString()) {
+                    v8::String::Utf8Value utf8(isolate_, result);
+                    return ffi::FFIValue(std::string(*utf8));
+                }
+            }
+        }
+    }
+    
+    // Fallback to string representation for complex types
     v8::String::Utf8Value utf8(isolate_, value);
     return ffi::FFIValue(std::string(*utf8));
 }
