@@ -155,6 +155,9 @@ public:
     void addVariable(const std::string& name);
     void removeVariable(const std::string& name);
     
+    // Helper methods
+    std::string getVariableName(ast::ExprPtr expr);
+    
     // State queries
     bool isVariableNullGuarded(const std::string& name) const;
     bool isVariableDefinitelyNull(const std::string& name) const;
