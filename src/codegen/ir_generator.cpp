@@ -2627,7 +2627,18 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
     }
 
     // Note: Indexed assignments are not supported in current AST (no IndexExpr)
-    // If needed, implement when parser produces index nodes.
+    // Emit clear diagnostic when this limitation is encountered
+    
+    // Check if target looks like it might be an index expression
+    if (auto callExpr = dynamic_cast<ast::CallExpr *>(expr->target.get())) {
+        // This might be an attempted index operation
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Indexed assignments (e.g., arr[i] = value) are not yet supported. "
+                                 "Use array methods like 'set(index, value)' instead.",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        return;
+    }
 
     // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
     if (auto binaryExpr = dynamic_cast<ast::BinaryExpr *>(expr->target.get()))
@@ -2680,13 +2691,24 @@ void IRGenerator::visitArrayLiteralExpr(ast::ArrayLiteralExpr *expr)
 // Empty implementations for types from other namespaces
 void IRGenerator::visitMoveExpr(void *expr)
 {
-    // MoveExpr: just forward the value for now (no real move semantics in LLVM IR)
+    // MoveExpr: Emit diagnostic that real move semantics are not yet implemented
     auto moveExpr = static_cast<type_checker::MoveExpr *>(expr);
     if (moveExpr) {
+        // Log warning that move semantics are simplified
+        // In a full implementation, we would:
+        // 1. Mark the source value as moved-from
+        // 2. Prevent further use of the moved-from value
+        // 3. Optimize away unnecessary copies
+        
         moveExpr->getExpr()->accept(*this);
-        // In a real implementation, mark the source as moved-from
-        // For now, just forward the value
-        // Optionally, could bitcast to rvalue reference type
+        
+        // For now, just forward the value (acts like a copy, not a move)
+        // TODO: Implement proper move semantics with ownership tracking
+        
+        // Optionally emit a warning to the user
+        errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                 "Move semantics are currently simplified - value is copied, not moved",
+                                 "", 0, 0, error::ErrorSeverity::WARNING);
     } else {
         lastValue = nullptr;
     }
@@ -2829,8 +2851,18 @@ std::string IRGenerator::mangleGenericName(const std::string &baseName, const st
 // Transform async function to use Future/Promise pattern
 llvm::Function *IRGenerator::transformAsyncFunction(ast::FunctionStmt *stmt)
 {
-    // For now, just return a simple function that returns void
-    // This is a placeholder implementation
+    // Log diagnostic that async functions are not fully implemented
+    errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                             "Async function transformation is simplified - returned as synchronous function",
+                             "", 0, 0, error::ErrorSeverity::WARNING);
+    
+    // For now, create a simple synchronous function
+    // Full implementation would:
+    // 1. Create a coroutine structure
+    // 2. Generate state machine for suspend points
+    // 3. Return a Future/Promise object
+    // 4. Integrate with async runtime
+    
     llvm::FunctionType *funcType = llvm::FunctionType::get(
         llvm::Type::getVoidTy(context),
         {},

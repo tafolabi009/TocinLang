@@ -462,22 +462,54 @@ void LightweightScheduler::detectNUMATopology() {
 
 size_t LightweightScheduler::selectWorkerForFiber(Fiber::Priority priority) {
     if (!numaAware_ || numNUMANodes_ <= 1) {
-        // Simple round-robin
-        return nextWorker_.fetch_add(1) % workers_.size();
+        // Simple round-robin with load awareness
+        // Find the least loaded worker
+        size_t leastLoaded = 0;
+        size_t minLoad = workers_[0]->getQueueSize();
+        
+        for (size_t i = 1; i < workers_.size(); ++i) {
+            size_t load = workers_[i]->getQueueSize();
+            if (load < minLoad) {
+                minLoad = load;
+                leastLoaded = i;
+            }
+        }
+        
+        return leastLoaded;
     }
     
-    // NUMA-aware: prefer workers on the current NUMA node
-    // For high-priority tasks, use workers on node 0
-    if (priority <= Fiber::Priority::High) {
-        // Find workers on NUMA node 0
-        for (size_t i = 0; i < workers_.size(); ++i) {
-            if (workers_[i]->getNUMANode() == 0) {
-                return i;
+    // NUMA-aware: prefer workers on appropriate NUMA node
+    int targetNode = 0;
+    
+    if (priority == Fiber::Priority::Critical || priority == Fiber::Priority::High) {
+        // High-priority tasks go to node 0 (typically the primary node)
+        targetNode = 0;
+    } else {
+        // Distribute other tasks across nodes based on current load
+        targetNode = nextWorker_.fetch_add(1) % numNUMANodes_;
+    }
+    
+    // Find the least loaded worker on the target NUMA node
+    size_t selectedWorker = 0;
+    size_t minLoad = SIZE_MAX;
+    bool foundOnNode = false;
+    
+    for (size_t i = 0; i < workers_.size(); ++i) {
+        if (workers_[i]->getNUMANode() == targetNode) {
+            size_t load = workers_[i]->getQueueSize();
+            if (load < minLoad) {
+                minLoad = load;
+                selectedWorker = i;
+                foundOnNode = true;
             }
         }
     }
     
-    // For normal/low priority, distribute across all nodes
+    if (foundOnNode) {
+        return selectedWorker;
+    }
+    
+    // Fallback if no worker found on target node
     return nextWorker_.fetch_add(1) % workers_.size();
 }
 
@@ -487,15 +519,53 @@ void LightweightScheduler::balanceLoad() {
         return;
     }
     
-    // Simple work stealing: if a worker is idle, steal from busiest
+    // Improved work stealing: steal multiple tasks and distribute better
+    // Find workers with large queues and idle workers
+    struct WorkerLoad {
+        size_t index;
+        size_t queueSize;
+    };
+    
+    std::vector<WorkerLoad> workerLoads;
+    workerLoads.reserve(workers_.size());
+    
     for (size_t i = 0; i < workers_.size(); ++i) {
-        for (size_t j = 0; j < workers_.size(); ++j) {
-            if (i != j) {
-                auto fiber = workers_[j]->stealFiber();
-                if (fiber) {
-                    workers_[i]->addFiber(fiber);
-                    break; // Only steal one per round
-                }
+        workerLoads.push_back({i, workers_[i]->getQueueSize()});
+    }
+    
+    // Sort by queue size
+    std::sort(workerLoads.begin(), workerLoads.end(), 
+              [](const WorkerLoad& a, const WorkerLoad& b) {
+                  return a.queueSize > b.queueSize;
+              });
+    
+    // Steal from busiest to least busy
+    size_t busiestIdx = workerLoads[0].index;
+    size_t idlestIdx = workerLoads[workerLoads.size() - 1].index;
+    
+    // Calculate how many tasks to steal (half the difference, minimum 1, maximum 4)
+    size_t queueDiff = workerLoads[0].queueSize - workerLoads[workerLoads.size() - 1].queueSize;
+    size_t tasksToSteal = std::max(size_t(1), std::min(size_t(4), queueDiff / 2));
+    
+    // Perform work stealing
+    for (size_t i = 0; i < tasksToSteal; ++i) {
+        auto fiber = workers_[busiestIdx]->stealFiber();
+        if (fiber) {
+            workers_[idlestIdx]->addFiber(fiber);
+        } else {
+            break; // No more tasks to steal
+        }
+    }
+    
+    // Also balance between other workers if there's significant imbalance
+    for (size_t i = 0; i < workerLoads.size() / 2 && i < 3; ++i) {
+        size_t busy = workerLoads[i].index;
+        size_t idle = workerLoads[workerLoads.size() - 1 - i].index;
+        
+        if (busy != idle && workerLoads[i].queueSize > workerLoads[workerLoads.size() - 1 - i].queueSize + 2) {
+            auto fiber = workers_[busy]->stealFiber();
+            if (fiber) {
+                workers_[idle]->addFiber(fiber);
             }
         }
     }

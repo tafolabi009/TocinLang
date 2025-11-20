@@ -169,8 +169,31 @@ bool NullSafetyChecker::checkSafeCall(ast::ExprPtr expr) {
         return true;
     }
     
-    // Check if unsafe call is made on nullable variable
-    // Without object/callee breakdown in CallExpr, skip detailed check.
+    // Check for unsafe call on nullable variable
+    if (auto callExpr = std::dynamic_pointer_cast<ast::CallExpr>(expr)) {
+        if (callExpr->callee) {
+            std::string varName = getVariableName(callExpr->callee);
+            if (!varName.empty() && nullableVariables_.count(varName) > 0) {
+                if (nullGuarded_.count(varName) == 0 && definitelyNonNull_.count(varName) == 0) {
+                    reportNullSafetyError("Calling method on potentially null object: " + varName);
+                    return false;
+                }
+            }
+        }
+    }
+    
+    // Check member access
+    if (auto getExpr = std::dynamic_pointer_cast<ast::GetExpr>(expr)) {
+        if (getExpr->object) {
+            std::string varName = getVariableName(getExpr->object);
+            if (!varName.empty() && nullableVariables_.count(varName) > 0) {
+                if (nullGuarded_.count(varName) == 0 && definitelyNonNull_.count(varName) == 0) {
+                    reportNullSafetyError("Accessing property on potentially null object: " + varName);
+                    return false;
+                }
+            }
+        }
+    }
     
     return true;
 }
@@ -191,7 +214,20 @@ bool NullSafetyChecker::checkNullAssertion(ast::ExprPtr expr) {
     
     // Check if null assertion is used appropriately
     if (isNullAssertion(expr)) {
-        // No-op placeholder
+        std::string varName = getVariableName(expr);
+        if (!varName.empty()) {
+            // Warn if asserting on definitely null value
+            if (definitelyNull_.count(varName) > 0) {
+                reportNullSafetyError("Null assertion on definitely null value: " + varName);
+                return false;
+            }
+            
+            // Mark as definitely non-null after assertion
+            if (nullableVariables_.count(varName) > 0) {
+                definitelyNonNull_.insert(varName);
+                definitelyNull_.erase(varName);
+            }
+        }
     }
     
     return true;
@@ -211,10 +247,34 @@ bool NullSafetyChecker::checkNullCheck(ast::ExprPtr expr) {
 bool NullSafetyChecker::analyzeNullFlow(ast::StmtPtr stmt) {
     if (!stmt) return true;
     
-    // This is a simplified implementation
-    // In a real implementation, you would analyze the control flow for null safety
+    // Analyze control flow for null safety
+    // Check if statement assigns or uses nullable values
     
-    return true; // Placeholder
+    // Handle variable declarations with null assignment
+    if (auto varDecl = std::dynamic_pointer_cast<ast::VariableDecl>(stmt)) {
+        if (varDecl->initializer && isNullLiteral(varDecl->initializer)) {
+            nullableVariables_.insert(varDecl->name);
+            definitelyNull_.insert(varDecl->name);
+        } else if (varDecl->initializer) {
+            // Has non-null initializer
+            definitelyNonNull_.insert(varDecl->name);
+        }
+        return true;
+    }
+    
+    // Handle if statements with null checks
+    if (auto ifStmt = std::dynamic_pointer_cast<ast::IfStmt>(stmt)) {
+        if (ifStmt->condition && isNullCheck(ifStmt->condition)) {
+            // Track variables guarded by null check
+            std::string varName = getVariableName(ifStmt->condition);
+            if (!varName.empty()) {
+                nullGuarded_.insert(varName);
+            }
+        }
+        return true;
+    }
+    
+    return true;
 }
 
 bool NullSafetyChecker::isNullGuarded(ast::ExprPtr expr) {
@@ -285,10 +345,33 @@ bool NullSafetyChecker::checkExpressionNullSafety(ast::ExprPtr expr) {
 bool NullSafetyChecker::checkStatementNullSafety(ast::StmtPtr stmt) {
     if (!stmt) return true;
     
-    // This is a simplified implementation
-    // In a real implementation, you would check different statement types
+    // Check different statement types for null safety violations
     
-    return true; // Placeholder
+    // Check expression statements
+    if (auto exprStmt = std::dynamic_pointer_cast<ast::ExpressionStmt>(stmt)) {
+        if (exprStmt->expression) {
+            return checkExpressionNullSafety(exprStmt->expression);
+        }
+    }
+    
+    // Check return statements
+    if (auto returnStmt = std::dynamic_pointer_cast<ast::ReturnStmt>(stmt)) {
+        if (returnStmt->value) {
+            std::string varName = getVariableName(returnStmt->value);
+            if (!varName.empty() && nullableVariables_.count(varName) > 0) {
+                if (definitelyNull_.count(varName) > 0) {
+                    reportNullSafetyError("Returning definitely null value: " + varName, stmt.get());
+                    return false;
+                }
+                if (nullGuarded_.count(varName) == 0) {
+                    reportNullSafetyError("Returning potentially null value without check: " + varName, stmt.get());
+                    return false;
+                }
+            }
+        }
+    }
+    
+    return true;
 }
 
 std::string NullSafetyChecker::getVariableName(ast::ExprPtr expr) {
@@ -591,10 +674,30 @@ bool NullSafetyFlowAnalyzer::analyzeFlow(ast::StmtPtr stmt) {
     if (!stmt) return true;
     
     try {
-        // This is a simplified implementation
-        // In a real implementation, you would analyze the control flow for null safety
+        // Analyze control flow for null safety
         
-        return true; // Placeholder
+        // Handle variable declarations
+        if (auto varDecl = std::dynamic_pointer_cast<ast::VariableDecl>(stmt)) {
+            addVariable(varDecl->name);
+            if (varDecl->initializer) {
+                if (NullSafetyUtils::isNullLiteral(varDecl->initializer)) {
+                    markAsDefinitelyNull(varDecl->name);
+                    markAsNullable(varDecl->name);
+                } else {
+                    markAsDefinitelyNonNull(varDecl->name);
+                }
+            }
+            return true;
+        }
+        
+        // Handle if statements with null checks
+        if (auto ifStmt = std::dynamic_pointer_cast<ast::IfStmt>(stmt)) {
+            if (ifStmt->condition) {\n                analyzeConditionalFlow(ifStmt->condition, ifStmt->thenBranch, ifStmt->elseBranch);
+            }
+            return true;
+        }
+        
+        return true;
     } catch (const std::exception& e) {
         return false;
     }
@@ -615,10 +718,52 @@ bool NullSafetyFlowAnalyzer::analyzeExpressionFlow(ast::ExprPtr expr) {
 
 bool NullSafetyFlowAnalyzer::analyzeConditionalFlow(ast::ExprPtr condition, ast::StmtPtr thenStmt, ast::StmtPtr elseStmt) {
     try {
-        // This is a simplified implementation
-        // In a real implementation, you would analyze conditional flow for null safety
+        // Analyze conditional null checks
+        if (!condition) return true;
         
-        return true; // Placeholder
+        // Check if condition is a null check (x == null or x != null)
+        if (auto binaryExpr = std::dynamic_pointer_cast<ast::BinaryExpr>(condition)) {
+            bool isNullCheck = false;
+            bool isNullEqual = false;
+            std::string varName;
+            
+            if (binaryExpr->op.type == lexer::TokenType::EQUAL || 
+                binaryExpr->op.type == lexer::TokenType::NOT_EQUAL) {
+                
+                // Check if one side is null literal
+                if (NullSafetyUtils::isNullLiteral(binaryExpr->left)) {
+                    varName = NullSafetyUtils::getVariableName(binaryExpr->right);
+                    isNullCheck = true;
+                    isNullEqual = (binaryExpr->op.type == lexer::TokenType::EQUAL);
+                } else if (NullSafetyUtils::isNullLiteral(binaryExpr->right)) {
+                    varName = NullSafetyUtils::getVariableName(binaryExpr->left);
+                    isNullCheck = true;
+                    isNullEqual = (binaryExpr->op.type == lexer::TokenType::EQUAL);
+                }
+            }
+            
+            if (isNullCheck && !varName.empty()) {
+                // In then branch: variable is null if ==, non-null if !=
+                if (isNullEqual) {
+                    // x == null, so in then branch x is null
+                    // (would need to track this in a scope-aware way)
+                } else {
+                    // x != null, so in then branch x is non-null
+                    markAsNullGuarded(varName);
+                    markAsDefinitelyNonNull(varName);
+                }
+            }
+        }
+        
+        // Analyze branches
+        if (thenStmt) {
+            analyzeFlow(thenStmt);
+        }
+        if (elseStmt) {
+            analyzeFlow(elseStmt);
+        }
+        
+        return true;
     } catch (const std::exception& e) {
         return false;
     }
