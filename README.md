@@ -65,7 +65,19 @@ clear what is implemented versus planned.
   `charAt`, `substring`, `strEq`/`strCmp`, `indexOfChar`, `intToStr`, `strToInt`,
   `charToStr`.
 - **File I/O** — `readFile`, `writeFile`, `appendFile`, `readLine`.
-- **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
+- **Math & conversions** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, plus
+  `intToFloat`/`floatToInt`/`floatToStr`/`strToFloat` and char predicates
+  (`isDigit`, `isAlpha`, `isSpace`, `toUpperChar`, …) for lexers/parsers.
+- **Garbage collection** — heap memory (arrays, strings, closures, collections,
+  boxes) is reclaimed automatically via the Boehm collector; no manual frees
+  needed, so long-running programs don't leak. `free`/`vecFree`/`mapFree` remain
+  for eager release.
+- **Systems / low-level** — raw memory (`alloc`, `memcpy`, `memset`, `ptrAdd`,
+  `loadByte`/`storeByte`/`loadInt`/`storeInt`) and inline assembly
+  (`asm("...")`, native builds) for VCS-style tools and OS/kernel work.
+- **`switch`** — C-style `switch`/`case`/`default` (alias of `match`).
+- **Native performance** — default `-O2` (the full LLVM pipeline); a compute
+  benchmark runs within ~9% of the equivalent C at `-O2`.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
 
 ## Documentation

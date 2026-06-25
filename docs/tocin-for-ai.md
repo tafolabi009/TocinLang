@@ -14,9 +14,9 @@ A single self-contained reference that makes an LLM an instant expert in **Tocin
 
 Tocin is a **statically typed, ahead-of-time compiled** language that lowers to **LLVM IR** and then to native code (or runs via an LLVM JIT with `--run`). The surface syntax is **C-like with braces and semicolons**, but flavored with Python/Rust/Kotlin keywords (`def`, `let`, `match`, `trait`, `impl`, `lambda`, `elif`, `?:`, `?.`, `!!`).
 
-Semantics are **value semantics for scalars** (`int`, `float`, `bool` live in registers/stack slots) and **heap handles (opaque pointers) for everything else** — class/struct instances, strings (`char*`), arrays, dynamic collections (`vector`/`map`), channels, and `Option`/`Result` boxes. There is **no garbage collector and no automatic free**: heap allocations (class instances, arrays, string concatenations, `vector`/`map`, `Option`/`Result`) **leak** unless you explicitly free the few things that have a free function. This is fine for short-lived programs and scripts; be aware for long-running ones.
+Semantics are **value semantics for scalars** (`int`, `float`, `bool` live in registers/stack slots) and **heap handles (opaque pointers) for everything else** — class/struct instances, strings (`char*`), arrays, dynamic collections (`vector`/`map`), channels, and `Option`/`Result` boxes. Heap memory is **garbage-collected** (Boehm GC, when the runtime is built with it — the default): unreachable allocations are reclaimed automatically, so long-running programs do not leak. `vecFree`/`mapFree`/`free` remain available for eager release of large buffers, but are optional.
 
-The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). Mixed int/float arithmetic **does** auto-promote the int operand to `float` (e.g. `3.0 + 2` → `5.0`; `let x: float = 5;` → `5.0`). Lambdas **do** capture enclosing locals **by value** (a snapshot), and the resulting closures can be returned/escape with independent state. `break` and `continue` **work** in every loop form. Some keywords still exist in the lexer but are **not implemented** in the parser/codegen — notably `switch`, `defer`, and most ownership keywords. Treat the verified feature set in this document as the real language.
+The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). Mixed int/float arithmetic **does** auto-promote the int operand to `float` (e.g. `3.0 + 2` → `5.0`; `let x: float = 5;` → `5.0`). Lambdas **do** capture enclosing locals **by value** (a snapshot), and the resulting closures can be returned/escape with independent state. `break` and `continue` **work** in every loop form. Some keywords still exist in the lexer but are **not implemented** in the parser/codegen — notably `defer` and most ownership keywords (`switch` IS implemented as an alias of `match`). Treat the verified feature set in this document as the real language.
 
 Key runtime facts:
 - `int` = 64-bit signed (`i64`). `float` = 64-bit (`double`). `bool` = `i1`.
@@ -148,7 +148,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 
 ### Lexer keywords that are NOT implemented (do NOT use — they will fail to compile)
 
-`switch`, `defer`, `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break` and `continue` **are** implemented — see §loops.)
+`defer`, `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break`, `continue`, and `switch` **are** implemented.)
 
 > **`break`/`continue` are the most common trap.** They parse as expression statements and produce `error [S001]: Expected expression`. Restructure loops with a boolean flag or a `while` condition instead. **Use `None`, never `null`.**
 
@@ -656,13 +656,13 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - **Use `vector`/`map` builtins** for dynamic, growable data; use `[..]` array literals + `len`/`[]` for fixed-size sequences (great for passing as `list<int>` params to stdlib).
 - **Pass collection handles** to helpers using an opaque annotation: `def f(v: vector)`, `def g(m: map)`. Pass fixed arrays as `def h(xs: list<int>)`.
 - **Concurrency:** prefer `go` + `channel<int>()` + `<-` over `async`/`await`.
-- **Free what you can in long-running code** (`vecFree`, `mapFree`); accept leaks for short programs.
+- **Memory is collected automatically** (GC); `vecFree`/`mapFree`/`free` are optional, for eager release of large buffers.
 
 ---
 
 ## 8. GOTCHAS / PITFALLS (read before writing — each is verified)
 
-1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (Still unimplemented: `switch`, `defer`, `panic`, `assert`, `yield`, ownership keywords — see §3. Use `match`/`case` instead of `switch`.)
+1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (`switch` works as an alias of `match`. Still unimplemented: `defer`, `panic`, `assert`, `yield`, ownership keywords — see §3.)
 2. **Use `None`, not `null`.** `null` is a reserved word the parser doesn't accept as a value (`Expected expression`). The empty value is `None` (the null pointer).
 3. **`len` is for array literals only.** `len("hello")` returns garbage (it reads the first 8 bytes of the string as an i64 "length"). For strings use **`strLen`**. `len` works on `[1,2,3]` and `list<int>` params; `vecLen` works on `vector` handles; `mapLen` on `map` handles.
 4. **Mixed int/float arithmetic auto-promotes the int to float.** `5 + 3.0` → `8.0`; `10 / 4.0` → `2.5`. Two ints stay int and `/` truncates (`5 / 2` → `2`). To force float division of two ints, make one a float (`x * 1.0 / y`).
@@ -672,7 +672,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 8. **Collection / Option / channel / thrown payloads are 64-bit slots.** They are designed for `int`. Pointers/strings stored *as elements* are bit-cast to/from `i64`; they round-trip as raw addresses but there is no element type tracking, so this is fragile (e.g. don't expect a string read back from a `vector` to format correctly without care). Prefer storing ints; for string-keyed lookups use the dedicated `mapPutStr`/`mapGetStr`.
 9. **`None` is a null pointer.** `?:`, `?.`, `!!`, and `case None:` all hinge on null. `x!!` on a null value calls `abort()` and kills the process. `?:`/`?.` only do anything meaningful when the left side is a pointer type (class/Option/string); on a non-pointer they are effectively identity.
 10. **Math builtins shadow same-named externs.** Declaring `extern def sqrt/abs/min/max/pow/...` will not give you the C function — the builtin handler intercepts the call. Pick different names if you truly need the libc version.
-11. **No garbage collection; memory leaks.** Class instances, arrays, string concatenations, `vector`/`map`, and `Option`/`Result` boxes are `malloc`'d and never auto-freed. Use `vecFree`/`mapFree` where it matters; for short programs, leaking is acceptable.
+11. **Memory is garbage-collected** (Boehm GC). Class instances, arrays, string concatenations, `vector`/`map`, and `Option`/`Result` boxes are reclaimed when unreachable — no manual free required. For very large `vector`/`map` buffers, `vecFree`/`mapFree`/`free` still give eager release. The GC is conservative (an `int` holding a heap address keeps that block alive), which is what makes the `alloc`-returns-`int` low-level model safe.
 12. **`finally` runs on early return** from `try` or `catch` (it unwinds through a finally stack), as well as on normal completion. Required cleanup in `finally` is honored even when a handler does `return e;`. (Re-throw propagation also runs finally before unwinding to the enclosing handler.)
 13. **Strings are NUL-terminated `char*`.** No length prefix. `strLen` walks to the NUL. Embedded NULs truncate. There are no `char` literals — use integer char codes (`charAt` returns one; `charToStr` builds a 1-char string).
 14. **`==` / `!=` on strings compares contents** (the compiler detects string-typed operands and routes to a value comparison). `name == "Alice"`, `intToStr(42) == "42"`, and `("a"+"b") == "ab"` all behave as expected. Non-string pointers (class instances, `None`) still compare by identity. `strEq(a,b)` remains available and returns `1`/`0`.
@@ -712,14 +712,14 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - `print`/`println` with `{}` formatting.
 
 **Tocin cannot (yet):**
-- `switch` / `defer` / `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (Use `match`/`case` for `switch`.)
+- `defer` / `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (`switch` works as an alias of `match`.)
 - Capture **by reference** (capture is by value/snapshot); lambda bodies that are blocks (a lambda body is one expression); labeled `break`/`continue`.
 - Capture from nested `def` (those are non-capturing — use a lambda).
 - The power operator `**` and `++`/`--`.
 - Turbofish / explicit generic type arguments (let them be inferred).
 - A real generic-element collection type (collection payloads are i64 slots; string elements are fragile — use `mapPutStr`/`mapGetStr`).
-- Garbage collection / automatic memory management (manual `*Free` only; leaks otherwise).
+- Capture **by reference** in closures (capture is by value). Escape analysis / stack allocation (allocations are GC-managed, not stack-promoted).
 - Namespaced imports, visibility modifiers (`pub`/`priv`/...), `as`/`is`/`instanceof`/`typeof` operators.
 - Robust `dict` literals (use `map` builtins).
 
-When in doubt: keep types monomorphic and explicit at boundaries, store ints in collections, capture by value (read-only) in lambdas or pass state as parameters, use `None` not `null`, use `strLen` not `len` for strings, use `match`/`case` not `switch`, and `--run` to confirm. Every construct documented here has been compiled and executed successfully.
+When in doubt: keep types monomorphic and explicit at boundaries, store ints in collections, capture by value (read-only) in lambdas or pass state as parameters, use `None` not `null`, use `strLen` not `len` for strings, and `--run` to confirm. Every construct documented here has been compiled and executed successfully.

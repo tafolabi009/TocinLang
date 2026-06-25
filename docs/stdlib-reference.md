@@ -222,6 +222,60 @@ def main() {
 
 ---
 
+## Character predicates & conversions
+
+Character builtins take a byte value (char code, `int`) and return `int`. They
+are pure inline code — ideal for lexers and parsers.
+
+| Function | Signature | Meaning |
+|---|---|---|
+| `isDigit` | `isDigit(c: int) -> int` | `1` if `c` is `'0'..'9'` (48–57). |
+| `isAlpha` | `isAlpha(c: int) -> int` | `1` if `c` is `A–Z` or `a–z`. |
+| `isAlnum` | `isAlnum(c: int) -> int` | `1` if alphanumeric. |
+| `isUpper` / `isLower` | `(c: int) -> int` | Case tests for ASCII letters. |
+| `isSpace` | `isSpace(c: int) -> int` | `1` for space/tab/newline/CR (32, 9, 10, 13). |
+| `toUpperChar` / `toLowerChar` | `(c: int) -> int` | ASCII case fold of a single char code. |
+
+Numeric conversions:
+
+| Function | Signature | Meaning |
+|---|---|---|
+| `intToFloat` | `intToFloat(n: int) -> float` | Widen int to double. |
+| `floatToInt` | `floatToInt(f: float) -> int` | Truncate toward zero. |
+| `absInt` | `absInt(n: int) -> int` | Integer absolute value. |
+| `floatToStr` | `floatToStr(f: float) -> string` | `%g` text of `f`. |
+| `strToFloat` | `strToFloat(s: string) -> float` | Parse leading float; `0.0` if none. |
+
+---
+
+## Low-level / systems builtins
+
+Raw memory for buffers, serialization, VCS blobs, and bare-metal work. Buffers
+are **`int` addresses** (uintptr-style); they are GC-managed (an `int` holding a
+heap address keeps the block alive). Offsets are in **bytes**.
+
+| Function | Signature | Meaning |
+|---|---|---|
+| `alloc` | `alloc(n: int) -> int` | Allocate an `n`-byte buffer; returns its address. |
+| `free` | `free(p: int)` | Optional eager release (memory is GC'd anyway). |
+| `memcpy` | `memcpy(dst: int, src: int, n: int) -> int` | Copy `n` bytes; returns `dst`. |
+| `memset` | `memset(dst: int, byte: int, n: int) -> int` | Fill `n` bytes; returns `dst`. |
+| `ptrAdd` | `ptrAdd(p: int, off: int) -> int` | Address `p + off`. |
+| `loadByte` / `storeByte` | `(p: int, off: int[, v]) -> int` | Read/write one byte (zero-extended). |
+| `loadInt` / `storeInt` | `(p: int, off: int[, v]) -> int` | Read/write a 64-bit int. |
+| `asm` | `asm(template: string)` | Emit side-effecting inline assembly (string **literal** only; e.g. `asm("nop")`, `asm("cli")`). **Native builds only** — not `--run`. |
+
+```tocin
+def main() -> int {
+    let buf = alloc(16);
+    storeInt(buf, 0, 0xCAFE);
+    storeByte(buf, 8, 3);
+    return loadByte(buf, 8);   // 3
+}
+```
+
+---
+
 ## Strings
 
 Strings are NUL-terminated `char*`. Index/length operations are **byte**-based
