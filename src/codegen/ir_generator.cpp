@@ -1373,19 +1373,23 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Type *i32b = llvm::Type::getInt32Ty(context);
             if (funcName == "alloc" && na == 1) {       // raw heap buffer (GC-managed)
                 auto n = slot(0); if (!n) return;
-                lastValue = builder.CreateCall(rt("__tocin_alloc", ptrb, {i64b}), {n}, "rawbuf"); return; }
+                // Return the address as an int so buffers pass cleanly through
+                // `int` parameters; the load/store builtins inttoptr it back.
+                llvm::Value *mem = builder.CreateCall(rt("__tocin_alloc", ptrb, {i64b}), {n}, "rawbuf");
+                lastValue = builder.CreatePtrToInt(mem, i64b, "rawaddr"); return; }
             if (funcName == "memcpy" && na == 3) {
                 auto d = pptr(0); auto s = pptr(1); auto n = slot(2); if (!d || !s || !n) return;
                 builder.CreateCall(rt("memcpy", ptrb, {ptrb, ptrb, i64b}), {d, s, n});
-                lastValue = d; return; }
+                lastValue = builder.CreatePtrToInt(d, i64b, "dstaddr"); return; }
             if (funcName == "memset" && na == 3) {
                 auto d = pptr(0); auto v = slot(1); auto n = slot(2); if (!d || !n) return;
                 llvm::Value *b = builder.CreateTrunc(v, i32b, "byte");
                 builder.CreateCall(rt("memset", ptrb, {ptrb, i32b, i64b}), {d, b, n});
-                lastValue = d; return; }
-            if (funcName == "ptrAdd" && na == 2) {      // pointer + byte offset
+                lastValue = builder.CreatePtrToInt(d, i64b, "dstaddr"); return; }
+            if (funcName == "ptrAdd" && na == 2) {      // address + byte offset
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
-                lastValue = builder.CreateGEP(i8b, p, off, "ptradd"); return; }
+                llvm::Value *g = builder.CreateGEP(i8b, p, off, "ptradd");
+                lastValue = builder.CreatePtrToInt(g, i64b, "ptraddr"); return; }
             if (funcName == "loadByte" && na == 2) {    // *(u8*)(p+off) zero-extended
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "lb.p");
