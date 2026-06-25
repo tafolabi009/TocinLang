@@ -24,6 +24,10 @@ clear what is implemented versus planned.
   `match` / `case` / `default`.
 - **Error handling** — `throw`, `try` / `catch (e)` / `finally`; exceptions unwind
   across function calls (setjmp/longjmp runtime) in both JIT and native builds.
+- **Null safety** — safe navigation `a?.b`, elvis/coalescing `a ?: b`, and
+  force-unwrap `a!!` over nullable references.
+- **Option / Result** — `Some`/`None`/`Ok`/`Err` with destructuring `match`
+  patterns (`case Some(x)`, `case Err(e)`).
 - **Enums** — `enum Color { Red, Green, Blue }` with auto-incrementing integer
   constants, usable bare or qualified (`Color.Red`).
 - **Classes / structs** — fields, methods with `self`, construction, field read and
@@ -35,10 +39,11 @@ clear what is implemented versus planned.
   site).
 - **Arrays** — array literals, indexing (read/write), `len`, iteration, and arrays
   as reference-typed function parameters.
-- **Concurrency** — `go f(args)` goroutines (real OS threads) and typed `channel<T>`
-  send/receive, in both JIT and native builds.
+- **Concurrency** — `go f(args)` goroutines (real OS threads), typed `channel<T>`
+  send/receive, and `select` over multiple channels, in both JIT and native builds.
 - **Modules** — `import a.b.c` / `import "path"` resolves and merges other `.to`
-  files; a small standard library ships in `stdlib/std/` (math, list).
+  files; a small standard library ships in `stdlib/std/` (math, list, LINQ-style
+  collection ops).
 - **Macros** — function-like `macro name(params) { body }` expanded at the token
   level before parsing; invoked as `name!(args)` with precedence-safe, composable
   expansion.
@@ -285,14 +290,16 @@ end-to-end**. They are listed honestly so expectations match reality:
 - **Explicit generic type arguments** — generic functions and classes infer their
   type arguments from the call/constructor today; turbofish-style annotations
   (`Box<int>(...)`) and generic types in parameter/field signatures are pending.
-- **LINQ-style collections** — `where` / `select` / `aggregate` over collections.
-- **Pattern matching destructuring** — `match` works on values today; binding
-  sub-patterns (e.g. `case Some(x)`) is pending.
-- **Null safety** — `?.`, `?:`, `!!` operators and nullable-type flow analysis.
-- **`Option` / `Result`** — types are defined; exhaustiveness checking and `?`
-  propagation pending.
-- **`async` / `await`** — goroutines and channels work; structured async is pending.
-- **`select`** over multiple channels.
+- **Higher-order LINQ** — `where`/`select`/`aggregate` ship today as stdlib
+  functions over int lists (`import std.linq`); arbitrary lambda predicates/maps
+  need first-class function values (pending).
+- **Nullable-type flow analysis** — the `?.`/`?:`/`!!` operators work today;
+  static tracking of which references are nullable is pending.
+- **`Option` / `Result` ergonomics** — `Some`/`None`/`Ok`/`Err` and `case`
+  destructuring work today; exhaustiveness checking, `?` propagation and typed
+  payloads (the bound value is an int slot) are pending.
+- **`async` / `await`** — goroutines, channels and `select` work; structured
+  async is pending.
 - **Typed exceptions** — `throw` / `catch` carry an integer code today; throwing and
   binding arbitrary typed payloads (e.g. error objects) is pending.
 - **Python / JavaScript FFI** — C FFI works via `extern`; deep CPython and V8
