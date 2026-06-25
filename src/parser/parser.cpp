@@ -325,6 +325,11 @@ namespace parser
                 return std::make_shared<ast::SetExpr>(
                     equals, get->object, get->name, value);
             }
+            else if (std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+            {
+                // arr[i] = value -> AssignExpr with the IndexExpr as target.
+                return std::make_shared<ast::AssignExpr>(equals, expr, value);
+            }
 
             errorHandler.reportError(error::ErrorCode::S005_INVALID_ASSIGNMENT_TARGET,
                                      "Invalid assignment target", equals,
@@ -458,6 +463,12 @@ namespace parser
             {
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
                 expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+            }
+            else if (match(lexer::TokenType::LEFT_BRACKET))
+            {
+                auto index = expression();
+                auto bracket = consume(lexer::TokenType::RIGHT_BRACKET, "Expected ']' after index");
+                expr = std::make_shared<ast::IndexExpr>(bracket, expr, index);
             }
             else if (match(lexer::TokenType::CHANNEL_SEND))
             {
