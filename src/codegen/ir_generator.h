@@ -172,6 +172,7 @@ namespace codegen
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
+        std::map<std::string, std::shared_ptr<ast::FunctionType>> funcReturnFnType; // function name -> its function-typed return signature
         std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
         std::map<std::string, ast::ClassStmt *> genericClasses;                  // name -> generic class template
         std::map<const ast::CallExpr *, std::string> genericCtorClass;           // generic constructor call -> mangled class name
@@ -191,6 +192,21 @@ namespace codegen
         llvm::FunctionType *llvmFnTypeOf(const std::shared_ptr<ast::FunctionType> &ft);
         // Recover the signature for an indirect call from the callee expression.
         llvm::FunctionType *recoverCalleeFnType(const ast::ExprPtr &callee);
+
+        // --- Closures -------------------------------------------------------
+        // A function value is a heap closure laid out as [ ptr fn ][ caps... ],
+        // where fn has the env-first ABI (ptr env, declaredParams...) -> ret.
+        // Heap-allocate a closure object and populate fn + captured values.
+        llvm::Value *makeClosure(llvm::Function *fn,
+                                 const std::vector<llvm::Value *> &caps);
+        // A trampoline giving a top-level function the env-first closure ABI,
+        // so plain function names can be used as first-class values uniformly.
+        llvm::Function *getOrCreateThunk(llvm::Function *target);
+        // If v is a bare top-level llvm::Function used as a value, box it into a
+        // closure; otherwise return v unchanged.
+        llvm::Value *wrapIfRawFunction(llvm::Value *v);
+        // Cache of generated thunks, keyed by the wrapped target function.
+        std::map<llvm::Function *, llvm::Function *> thunks;
 
         // Lightweight, non-emitting type inference used to determine a
         // function's return type when it is not explicitly annotated.
