@@ -1,0 +1,6 @@
+// expect: 42
+def main() -> int {
+    let m = mapNew();
+    mapPut(m, 1, 40); mapPut(m, 2, 2);
+    return mapGet(m, 1) + mapGet(m, 2);
+}

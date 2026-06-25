@@ -1125,6 +1125,143 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             return;
         }
 
+        // --- Runtime builtins: dynamic collections, strings, file I/O ------
+        // Each lazily declares its __tocin_* prototype and emits the call.
+        // Handles/strings are ptr; scalar values/results are i64.
+        {
+            llvm::Type *i64b = llvm::Type::getInt64Ty(context);
+            llvm::Type *ptrb = llvm::PointerType::get(context, 0);
+            llvm::Type *voidb = llvm::Type::getVoidTy(context);
+            auto rt = [&](const char *nm, llvm::Type *ret,
+                          std::vector<llvm::Type *> ps) -> llvm::Function * {
+                llvm::Function *f = module->getFunction(nm);
+                if (!f)
+                    f = llvm::Function::Create(llvm::FunctionType::get(ret, ps, false),
+                                               llvm::Function::ExternalLinkage, nm, *module);
+                return f;
+            };
+            // Evaluate argument i and coerce to a 64-bit slot.
+            auto slot = [&](size_t i) -> llvm::Value * {
+                expr->arguments[i]->accept(*this);
+                llvm::Value *v = lastValue;
+                if (!v) return nullptr;
+                if (v->getType()->isPointerTy()) return builder.CreatePtrToInt(v, i64b, "slot");
+                if (v->getType()->isDoubleTy()) return builder.CreateBitCast(v, i64b, "slot");
+                if (v->getType()->isFloatTy())
+                    return builder.CreateBitCast(builder.CreateFPExt(v, llvm::Type::getDoubleTy(context)), i64b, "slot");
+                if (v->getType()->isIntegerTy() && v->getType() != i64b)
+                    return builder.CreateIntCast(v, i64b, true, "slot");
+                return v;
+            };
+            // Evaluate argument i as a pointer (handle or string).
+            auto pptr = [&](size_t i) -> llvm::Value * {
+                expr->arguments[i]->accept(*this);
+                llvm::Value *v = lastValue;
+                if (!v) return nullptr;
+                if (v->getType()->isIntegerTy()) return builder.CreateIntToPtr(v, ptrb, "asptr");
+                return v;
+            };
+            auto na = expr->arguments.size();
+
+            // ---- vector ----
+            if (funcName == "vecNew" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_vec_new", ptrb, {}), {}, "vec"); return; }
+            if (funcName == "vecPush" && na == 2) {
+                auto h = pptr(0); auto x = slot(1); if (!h || !x) return;
+                builder.CreateCall(rt("__tocin_vec_push", voidb, {ptrb, i64b}), {h, x});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "vecGet" && na == 2) {
+                auto h = pptr(0); auto i = slot(1); if (!h || !i) return;
+                lastValue = builder.CreateCall(rt("__tocin_vec_get", i64b, {ptrb, i64b}), {h, i}, "vget"); return; }
+            if (funcName == "vecSet" && na == 3) {
+                auto h = pptr(0); auto i = slot(1); auto x = slot(2); if (!h || !i || !x) return;
+                builder.CreateCall(rt("__tocin_vec_set", voidb, {ptrb, i64b, i64b}), {h, i, x});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "vecLen" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                lastValue = builder.CreateCall(rt("__tocin_vec_len", i64b, {ptrb}), {h}, "vlen"); return; }
+            if (funcName == "vecPop" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                lastValue = builder.CreateCall(rt("__tocin_vec_pop", i64b, {ptrb}), {h}, "vpop"); return; }
+            if (funcName == "vecFree" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                builder.CreateCall(rt("__tocin_vec_free", voidb, {ptrb}), {h});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
+            // ---- hashmap ----
+            if (funcName == "mapNew" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_map_new", ptrb, {}), {}, "map"); return; }
+            if (funcName == "mapPut" && na == 3) {
+                auto h = pptr(0); auto k = slot(1); auto v = slot(2); if (!h || !k || !v) return;
+                builder.CreateCall(rt("__tocin_map_put", voidb, {ptrb, i64b, i64b}), {h, k, v});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "mapGet" && na == 2) {
+                auto h = pptr(0); auto k = slot(1); if (!h || !k) return;
+                lastValue = builder.CreateCall(rt("__tocin_map_get", i64b, {ptrb, i64b}), {h, k}, "mget"); return; }
+            if (funcName == "mapHas" && na == 2) {
+                auto h = pptr(0); auto k = slot(1); if (!h || !k) return;
+                lastValue = builder.CreateCall(rt("__tocin_map_has", i64b, {ptrb, i64b}), {h, k}, "mhas"); return; }
+            if (funcName == "mapPutStr" && na == 3) {
+                auto h = pptr(0); auto k = pptr(1); auto v = slot(2); if (!h || !k || !v) return;
+                builder.CreateCall(rt("__tocin_map_put_str", voidb, {ptrb, ptrb, i64b}), {h, k, v});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "mapGetStr" && na == 2) {
+                auto h = pptr(0); auto k = pptr(1); if (!h || !k) return;
+                lastValue = builder.CreateCall(rt("__tocin_map_get_str", i64b, {ptrb, ptrb}), {h, k}, "mgets"); return; }
+            if (funcName == "mapHasStr" && na == 2) {
+                auto h = pptr(0); auto k = pptr(1); if (!h || !k) return;
+                lastValue = builder.CreateCall(rt("__tocin_map_has_str", i64b, {ptrb, ptrb}), {h, k}, "mhass"); return; }
+            if (funcName == "mapLen" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                lastValue = builder.CreateCall(rt("__tocin_map_len", i64b, {ptrb}), {h}, "mlen"); return; }
+            if (funcName == "mapFree" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                builder.CreateCall(rt("__tocin_map_free", voidb, {ptrb}), {h});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
+            // ---- strings ----
+            if (funcName == "strLen" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_len", i64b, {ptrb}), {s}, "strlen"); return; }
+            if (funcName == "charAt" && na == 2) {
+                auto s = pptr(0); auto i = slot(1); if (!s || !i) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_char_at", i64b, {ptrb, i64b}), {s, i}, "charat"); return; }
+            if (funcName == "substring" && na == 3) {
+                auto s = pptr(0); auto a = slot(1); auto b = slot(2); if (!s || !a || !b) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_substring", ptrb, {ptrb, i64b, i64b}), {s, a, b}, "substr"); return; }
+            if (funcName == "strEq" && na == 2) {
+                auto a = pptr(0); auto b = pptr(1); if (!a || !b) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_eq", i64b, {ptrb, ptrb}), {a, b}, "streq"); return; }
+            if (funcName == "strCmp" && na == 2) {
+                auto a = pptr(0); auto b = pptr(1); if (!a || !b) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_cmp", i64b, {ptrb, ptrb}), {a, b}, "strcmp"); return; }
+            if (funcName == "indexOfChar" && na == 2) {
+                auto s = pptr(0); auto c = slot(1); if (!s || !c) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_index_of_char", i64b, {ptrb, i64b}), {s, c}, "idxof"); return; }
+            if (funcName == "intToStr" && na == 1) {
+                auto n = slot(0); if (!n) return;
+                lastValue = builder.CreateCall(rt("__tocin_int_to_str", ptrb, {i64b}), {n}, "itos"); return; }
+            if (funcName == "strToInt" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_to_int", i64b, {ptrb}), {s}, "stoi"); return; }
+            if (funcName == "charToStr" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                lastValue = builder.CreateCall(rt("__tocin_char_to_str", ptrb, {i64b}), {c}, "ctos"); return; }
+
+            // ---- file I/O ----
+            if (funcName == "readFile" && na == 1) {
+                auto p = pptr(0); if (!p) return;
+                lastValue = builder.CreateCall(rt("__tocin_read_file", ptrb, {ptrb}), {p}, "rdf"); return; }
+            if (funcName == "writeFile" && na == 2) {
+                auto p = pptr(0); auto c = pptr(1); if (!p || !c) return;
+                lastValue = builder.CreateCall(rt("__tocin_write_file", i64b, {ptrb, ptrb}), {p, c}, "wrf"); return; }
+            if (funcName == "appendFile" && na == 2) {
+                auto p = pptr(0); auto c = pptr(1); if (!p || !c) return;
+                lastValue = builder.CreateCall(rt("__tocin_append_file", i64b, {ptrb, ptrb}), {p, c}, "apf"); return; }
+            if (funcName == "readLine" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_read_line", ptrb, {}), {}, "rdl"); return; }
+        }
+
         // Math standard library: unary libm functions (double -> double).
         static const std::set<std::string> unaryMath = {
             "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",

@@ -1,0 +1,8 @@
+// expect-output: 0-1-2-3- len=8
+def main() {
+    let acc = "";
+    let i = 0;
+    while i < 4 { acc = acc + intToStr(i) + "-"; i = i + 1; }
+    println("{} len={}", acc, strLen(acc));
+    return 0;
+}

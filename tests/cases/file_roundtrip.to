@@ -1,0 +1,6 @@
+// expect-output: hello world
+def main() -> int {
+    writeFile("tocin_test_rw.txt", "hello world");
+    println(readFile("tocin_test_rw.txt"));
+    return 0;
+}

@@ -1,0 +1,2 @@
+// expect-output: world
+def main() { println(substring("hello world", 6, 5)); return 0; }

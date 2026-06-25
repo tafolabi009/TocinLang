@@ -52,6 +52,39 @@ extern "C" {
     void __tocin_try_pop();
     int64_t __tocin_exc_value();
     void __tocin_throw(int64_t);
+    // Dynamic collections
+    void *__tocin_vec_new();
+    void __tocin_vec_push(void *, int64_t);
+    int64_t __tocin_vec_get(void *, int64_t);
+    void __tocin_vec_set(void *, int64_t, int64_t);
+    int64_t __tocin_vec_len(void *);
+    int64_t __tocin_vec_pop(void *);
+    void __tocin_vec_free(void *);
+    void *__tocin_map_new();
+    void __tocin_map_put(void *, int64_t, int64_t);
+    int64_t __tocin_map_get(void *, int64_t);
+    int64_t __tocin_map_has(void *, int64_t);
+    void __tocin_map_put_str(void *, const char *, int64_t);
+    int64_t __tocin_map_get_str(void *, const char *);
+    int64_t __tocin_map_has_str(void *, const char *);
+    int64_t __tocin_map_len(void *);
+    void __tocin_map_free(void *);
+    // Strings
+    int64_t __tocin_str_len(const char *);
+    int64_t __tocin_str_char_at(const char *, int64_t);
+    char *__tocin_str_substring(const char *, int64_t, int64_t);
+    int64_t __tocin_str_eq(const char *, const char *);
+    int64_t __tocin_str_cmp(const char *, const char *);
+    int64_t __tocin_str_index_of_char(const char *, int64_t);
+    char *__tocin_int_to_str(int64_t);
+    int64_t __tocin_str_to_int(const char *);
+    char *__tocin_char_to_str(int64_t);
+    char *__tocin_str_concat(const char *, const char *);
+    // File I/O
+    char *__tocin_read_file(const char *);
+    int64_t __tocin_write_file(const char *, const char *);
+    int64_t __tocin_append_file(const char *, const char *);
+    char *__tocin_read_line();
 }
 
 // Conditionally include Python
@@ -437,6 +470,36 @@ public:
             def("__tocin_try_pop", reinterpret_cast<void *>(&__tocin_try_pop));
             def("__tocin_exc_value", reinterpret_cast<void *>(&__tocin_exc_value));
             def("__tocin_throw", reinterpret_cast<void *>(&__tocin_throw));
+            def("__tocin_vec_new", reinterpret_cast<void *>(&__tocin_vec_new));
+            def("__tocin_vec_push", reinterpret_cast<void *>(&__tocin_vec_push));
+            def("__tocin_vec_get", reinterpret_cast<void *>(&__tocin_vec_get));
+            def("__tocin_vec_set", reinterpret_cast<void *>(&__tocin_vec_set));
+            def("__tocin_vec_len", reinterpret_cast<void *>(&__tocin_vec_len));
+            def("__tocin_vec_pop", reinterpret_cast<void *>(&__tocin_vec_pop));
+            def("__tocin_vec_free", reinterpret_cast<void *>(&__tocin_vec_free));
+            def("__tocin_map_new", reinterpret_cast<void *>(&__tocin_map_new));
+            def("__tocin_map_put", reinterpret_cast<void *>(&__tocin_map_put));
+            def("__tocin_map_get", reinterpret_cast<void *>(&__tocin_map_get));
+            def("__tocin_map_has", reinterpret_cast<void *>(&__tocin_map_has));
+            def("__tocin_map_put_str", reinterpret_cast<void *>(&__tocin_map_put_str));
+            def("__tocin_map_get_str", reinterpret_cast<void *>(&__tocin_map_get_str));
+            def("__tocin_map_has_str", reinterpret_cast<void *>(&__tocin_map_has_str));
+            def("__tocin_map_len", reinterpret_cast<void *>(&__tocin_map_len));
+            def("__tocin_map_free", reinterpret_cast<void *>(&__tocin_map_free));
+            def("__tocin_str_len", reinterpret_cast<void *>(&__tocin_str_len));
+            def("__tocin_str_char_at", reinterpret_cast<void *>(&__tocin_str_char_at));
+            def("__tocin_str_substring", reinterpret_cast<void *>(&__tocin_str_substring));
+            def("__tocin_str_eq", reinterpret_cast<void *>(&__tocin_str_eq));
+            def("__tocin_str_cmp", reinterpret_cast<void *>(&__tocin_str_cmp));
+            def("__tocin_str_index_of_char", reinterpret_cast<void *>(&__tocin_str_index_of_char));
+            def("__tocin_int_to_str", reinterpret_cast<void *>(&__tocin_int_to_str));
+            def("__tocin_str_to_int", reinterpret_cast<void *>(&__tocin_str_to_int));
+            def("__tocin_char_to_str", reinterpret_cast<void *>(&__tocin_char_to_str));
+            def("__tocin_str_concat", reinterpret_cast<void *>(&__tocin_str_concat));
+            def("__tocin_read_file", reinterpret_cast<void *>(&__tocin_read_file));
+            def("__tocin_write_file", reinterpret_cast<void *>(&__tocin_write_file));
+            def("__tocin_append_file", reinterpret_cast<void *>(&__tocin_append_file));
+            def("__tocin_read_line", reinterpret_cast<void *>(&__tocin_read_line));
             llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
         }
 

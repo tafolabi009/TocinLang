@@ -1,0 +1,2 @@
+// expect: 11
+def main() -> int { return writeFile("tocin_test_bytes.txt", "hello world"); }

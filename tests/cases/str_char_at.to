@@ -1,0 +1,2 @@
+// expect: 108
+def main() -> int { return charAt("hello", 2); }

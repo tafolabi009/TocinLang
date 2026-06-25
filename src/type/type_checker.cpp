@@ -1126,14 +1126,18 @@ namespace type_checker
 
         if (isArithmetic)
         {
-            // string + string -> string
+            // String concatenation with '+': if either operand is a string and
+            // the other is a string or unknown (e.g. a builtin like intToStr
+            // whose return type the checker sees as UNKNOWN), the result is a
+            // string. This keeps `s + intToStr(n) + "-"` chains valid.
             if (expr->op.type == lexer::TokenType::PLUS)
             {
                 auto lb = std::dynamic_pointer_cast<ast::BasicType>(leftType);
                 auto rb = std::dynamic_pointer_cast<ast::BasicType>(rightType);
                 bool lStr = lb && lb->getKind() == ast::TypeKind::STRING;
                 bool rStr = rb && rb->getKind() == ast::TypeKind::STRING;
-                if (lStr && rStr)
+                if ((lStr && (rStr || isUnknown(rightType))) ||
+                    (rStr && (lStr || isUnknown(leftType))))
                 {
                     currentType_ = makeBasic(ast::TypeKind::STRING);
                     return;
