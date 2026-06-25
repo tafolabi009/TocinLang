@@ -1,0 +1,13 @@
+// expect-output: eq ne match
+def main() {
+    let a = "hello";
+    let b = "hel" + "lo";
+    if a == b { print("eq"); } else { print("ne"); }
+    print(" ");
+    if a != "world" { print("ne"); } else { print("eq"); }
+    print(" ");
+    let s = intToStr(7);
+    if s == "7" { print("match"); } else { print("nomatch"); }
+    println("");
+    return 0;
+}

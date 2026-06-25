@@ -14,6 +14,7 @@
 #include <llvm/IR/BasicBlock.h>
 #include <string>
 #include <map>
+#include <set>
 #include <memory>
 #include <vector>
 
@@ -166,6 +167,7 @@ namespace codegen
         std::map<std::string, std::string> varClasses;                            // Variable name -> class name
         std::map<std::string, llvm::Type *> varArrayElem;                         // Variable name -> array element LLVM type
         std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
+        std::set<std::string> varIsString;                                        // Variables statically known to hold strings
         std::vector<std::pair<llvm::BasicBlock *, llvm::BasicBlock *>> loopStack; // {continue target, break target} per enclosing loop
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
@@ -269,6 +271,10 @@ namespace codegen
 
         // Determine the element LLVM type of an array-valued expression.
         llvm::Type *getArrayElemType(const ast::ExprPtr &expr);
+
+        // True when an expression is statically known to evaluate to a string,
+        // so == / != can route to value comparison instead of pointer identity.
+        bool isStringExpr(const ast::ExprPtr &expr);
 
         // If a parameter is typed list<T>/array<T>, remember its element type
         // so indexing the parameter inside the function uses the right type.
