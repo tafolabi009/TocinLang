@@ -155,6 +155,22 @@ private:
 };
 
 /**
+ * @brief Expand function-like macros at the token level, before parsing.
+ *
+ * Definitions use `macro name(p1, p2) { body-tokens }` and invocations use
+ * `name!(arg-tokens, ...)`. Each invocation is replaced by the macro body with
+ * parameters textually substituted by the (parenthesized) argument tokens; the
+ * whole expansion is parenthesized so it composes safely as an expression.
+ * Expansion iterates to a fixed point so macros may use other macros. The
+ * returned token stream has all definitions removed and invocations expanded.
+ *
+ * This is intentionally unhygienic (C-style): identifiers introduced by a macro
+ * body are not renamed. Macros are expression-shaped and file-local.
+ */
+std::vector<lexer::Token> expandMacroTokens(const std::vector<lexer::Token> &tokens,
+                                            error::ErrorHandler &errorHandler);
+
+/**
  * @brief Built-in macros
  */
 namespace builtin_macros {
