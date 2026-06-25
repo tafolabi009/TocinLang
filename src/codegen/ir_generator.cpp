@@ -120,6 +120,19 @@ void IRGenerator::declareStdLibFunctions()
         freeType, llvm::Function::ExternalLinkage, "free", *module);
     stdLibFunctions["free"] = freeFunc;
 
+    // libc string helpers (used for string concatenation with '+').
+    llvm::Type *charPtr = llvm::PointerType::get(context, 0);
+    llvm::Type *i64Ty = llvm::Type::getInt64Ty(context);
+    auto declare = [&](const std::string &name, llvm::Type *ret,
+                       std::vector<llvm::Type *> params) {
+        llvm::FunctionType *ft = llvm::FunctionType::get(ret, params, false);
+        stdLibFunctions[name] =
+            llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name, *module);
+    };
+    declare("strlen", i64Ty, {charPtr});
+    declare("strcpy", charPtr, {charPtr, charPtr});
+    declare("strcat", charPtr, {charPtr, charPtr});
+
     // Future/Promise functions for async/await
     // These would be implemented in the runtime
     // For now, just declare the interfaces
@@ -3302,6 +3315,21 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
             lastValue = builder.CreateFAdd(left, right, "fadd");
+        } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+            // String concatenation: malloc(strlen(a)+strlen(b)+1); strcpy; strcat.
+            llvm::Function *strlenF = stdLibFunctions["strlen"];
+            llvm::Function *strcpyF = stdLibFunctions["strcpy"];
+            llvm::Function *strcatF = stdLibFunctions["strcat"];
+            llvm::Function *mallocF = stdLibFunctions["malloc"];
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Value *la = builder.CreateCall(strlenF->getFunctionType(), strlenF, {left}, "lenl");
+            llvm::Value *lb = builder.CreateCall(strlenF->getFunctionType(), strlenF, {right}, "lenr");
+            llvm::Value *total = builder.CreateAdd(builder.CreateAdd(la, lb),
+                                                   llvm::ConstantInt::get(i64, 1), "len");
+            llvm::Value *buf = builder.CreateCall(mallocF->getFunctionType(), mallocF, {total}, "concat");
+            builder.CreateCall(strcpyF->getFunctionType(), strcpyF, {buf, left});
+            builder.CreateCall(strcatF->getFunctionType(), strcatF, {buf, right});
+            lastValue = buf;
         } else if (left->getType()->isPointerTy() && right->getType()->isIntegerTy()) {
             // Pointer arithmetic - use element type if available, else i8
             llvm::Type* elemTy = nullptr;
