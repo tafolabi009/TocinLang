@@ -1,0 +1,15 @@
+// expect: 42
+// A thrown value propagates out of a called function to the caller's handler.
+def boom() -> int {
+    throw 42;
+    return 0;
+}
+
+def main() {
+    try {
+        boom();
+    } catch (e) {
+        return e;
+    }
+    return 0;
+}

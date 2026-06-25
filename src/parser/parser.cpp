@@ -67,6 +67,10 @@ namespace parser
             {
                 return classDeclaration();
             }
+            if (match(lexer::TokenType::ENUM))
+            {
+                return enumDeclaration();
+            }
             if (match(lexer::TokenType::TRAIT))
             {
                 return traitDeclaration();
@@ -228,6 +232,31 @@ namespace parser
         return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
     }
 
+    ast::StmtPtr Parser::enumDeclaration()
+    {
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected enum name");
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before enum body");
+        std::vector<std::pair<std::string, int64_t>> members;
+        int64_t next = 0;
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            auto member = consume(lexer::TokenType::IDENTIFIER, "Expected enum member name");
+            int64_t value = next;
+            if (match(lexer::TokenType::EQUAL))
+            {
+                bool neg = match(lexer::TokenType::MINUS);
+                auto v = consume(lexer::TokenType::INT, "Expected integer after '=' in enum");
+                value = std::stoll(v.value);
+                if (neg) value = -value;
+            }
+            members.emplace_back(member.value, value);
+            next = value + 1;
+            match(lexer::TokenType::COMMA); // optional separator
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after enum body");
+        return std::make_shared<ast::EnumStmt>(name, name.value, members);
+    }
+
     ast::StmtPtr Parser::traitDeclaration()
     {
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected trait name");
@@ -295,7 +324,62 @@ namespace parser
             return goStmt();
         if (match(lexer::TokenType::SELECT))
             return selectStmt();
+        if (match(lexer::TokenType::TRY))
+            return tryStmt();
+        if (match(lexer::TokenType::THROW))
+            return throwStmt();
         return expressionStmt();
+    }
+
+    // try { ... } catch (e) { ... } finally { ... }
+    // The catch clause and finally clause are each optional, but at least one
+    // must be present. The catch variable is optional: `catch { ... }`.
+    ast::StmtPtr Parser::tryStmt()
+    {
+        lexer::Token keyword = previous();
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after 'try'");
+        ast::StmtPtr tryBlock = blockStmt();
+
+        std::string catchVar;
+        ast::StmtPtr catchBlock = nullptr;
+        if (match(lexer::TokenType::CATCH))
+        {
+            // Optional `(name)` or bare `name` binding for the caught value.
+            if (match(lexer::TokenType::LEFT_PAREN))
+            {
+                if (check(lexer::TokenType::IDENTIFIER))
+                    catchVar = advance().value;
+                consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after catch variable");
+            }
+            else if (check(lexer::TokenType::IDENTIFIER))
+            {
+                catchVar = advance().value;
+            }
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after catch");
+            catchBlock = blockStmt();
+        }
+
+        ast::StmtPtr finallyBlock = nullptr;
+        if (match(lexer::TokenType::FINALLY))
+        {
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after finally");
+            finallyBlock = blockStmt();
+        }
+
+        if (!catchBlock && !finallyBlock)
+            error(keyword, "'try' must be followed by 'catch' or 'finally'");
+
+        return std::make_shared<ast::TryStmt>(keyword, tryBlock, catchVar,
+                                              catchBlock, finallyBlock);
+    }
+
+    // throw <expr>;
+    ast::StmtPtr Parser::throwStmt()
+    {
+        lexer::Token keyword = previous();
+        ast::ExprPtr value = expression();
+        consume(lexer::TokenType::SEMI_COLON, "Expected ';' after thrown value");
+        return std::make_shared<ast::ThrowStmt>(keyword, value);
     }
 
     ast::StmtPtr Parser::expressionStmt()
