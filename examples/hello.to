@@ -1,0 +1,5 @@
+// The classic. Run with:  tocin examples/hello.to --run
+def main() {
+    println("Hello from Tocin!");
+    return 0;
+}
