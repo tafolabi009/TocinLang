@@ -246,7 +246,7 @@ namespace parser
             {
                 bool neg = match(lexer::TokenType::MINUS);
                 auto v = consume(lexer::TokenType::INT, "Expected integer after '=' in enum");
-                value = std::stoll(v.value);
+                value = lexer::parseIntegerLiteral(v.value);
                 if (neg) value = -value;
             }
             members.emplace_back(member.value, value);
@@ -670,8 +670,47 @@ namespace parser
 
     ast::ExprPtr Parser::andExpr()
     {
-        auto expr = equality();
+        auto expr = bitOr();
         while (match(lexer::TokenType::AND))
+        {
+            auto op = previous();
+            auto right = bitOr();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
+    // Bitwise OR (|), lowest-precedence bitwise operator.
+    ast::ExprPtr Parser::bitOr()
+    {
+        auto expr = bitXor();
+        while (match(lexer::TokenType::BITWISE_OR))
+        {
+            auto op = previous();
+            auto right = bitXor();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
+    // Bitwise XOR (^).
+    ast::ExprPtr Parser::bitXor()
+    {
+        auto expr = bitAnd();
+        while (match(lexer::TokenType::BITWISE_XOR))
+        {
+            auto op = previous();
+            auto right = bitAnd();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
+    // Bitwise AND (&).
+    ast::ExprPtr Parser::bitAnd()
+    {
+        auto expr = equality();
+        while (match(lexer::TokenType::BITWISE_AND))
         {
             auto op = previous();
             auto right = equality();
@@ -694,9 +733,22 @@ namespace parser
 
     ast::ExprPtr Parser::comparison()
     {
-        auto expr = term();
+        auto expr = shift();
         while (match(lexer::TokenType::LESS) || match(lexer::TokenType::LESS_EQUAL) ||
                match(lexer::TokenType::GREATER) || match(lexer::TokenType::GREATER_EQUAL))
+        {
+            auto op = previous();
+            auto right = shift();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
+    // Bit shifts (<< >>), just above additive precedence.
+    ast::ExprPtr Parser::shift()
+    {
+        auto expr = term();
+        while (match(lexer::TokenType::LEFT_SHIFT) || match(lexer::TokenType::RIGHT_SHIFT))
         {
             auto op = previous();
             auto right = term();
@@ -732,7 +784,8 @@ namespace parser
 
     ast::ExprPtr Parser::unary()
     {
-        if (match(lexer::TokenType::BANG) || match(lexer::TokenType::MINUS))
+        if (match(lexer::TokenType::BANG) || match(lexer::TokenType::MINUS) ||
+            match(lexer::TokenType::BITWISE_NOT))
         {
             lexer::Token op = previous();
             ast::ExprPtr right = unary();

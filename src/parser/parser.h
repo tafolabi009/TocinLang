@@ -83,8 +83,12 @@ namespace parser
         ast::ExprPtr elvis();
         ast::ExprPtr orExpr();
         ast::ExprPtr andExpr();
+        ast::ExprPtr bitOr();
+        ast::ExprPtr bitXor();
+        ast::ExprPtr bitAnd();
         ast::ExprPtr equality();
         ast::ExprPtr comparison();
+        ast::ExprPtr shift();
         ast::ExprPtr term();
         ast::ExprPtr factor();
         ast::ExprPtr unary();

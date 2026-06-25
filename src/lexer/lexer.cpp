@@ -510,26 +510,35 @@ namespace lexer
                     tokens.emplace_back(TokenType::ERROR, value, filename, line, column - value.length());
                     return;
                 }
+            } else if (next == 'o' || next == 'O') {
+                isOctal = true;
+                value += advance();
+                if (!(peek() >= '0' && peek() <= '7')) {
+                    reportError(error::ErrorCode::L003_INVALID_NUMBER_FORMAT,
+                               "Invalid octal number");
+                    tokens.emplace_back(TokenType::ERROR, value, filename, line, column - value.length());
+                    return;
+                }
             } else if (std::isdigit(next) && next != '0') {
                 isOctal = true;
             }
         }
-        
-        // Scan digits
+
+        // Scan digits ('_' allowed as a visual separator between digits).
         if (isHex) {
-            while (std::isxdigit(peek())) {
+            while (std::isxdigit(peek()) || peek() == '_') {
                 value += advance();
             }
         } else if (isBinary) {
-            while (peek() == '0' || peek() == '1') {
+            while (peek() == '0' || peek() == '1' || peek() == '_') {
                 value += advance();
             }
         } else if (isOctal) {
-            while (std::isdigit(peek()) && peek() < '8') {
+            while ((std::isdigit(peek()) && peek() < '8') || peek() == '_') {
                 value += advance();
             }
         } else {
-            while (std::isdigit(peek())) {
+            while (std::isdigit(peek()) || peek() == '_') {
                 value += advance();
             }
         }

@@ -472,15 +472,19 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
     {
     case ast::LiteralExpr::LiteralType::INTEGER:
     {
-        // Convert string to int64
-        int64_t value = std::stoll(expr->value);
+        // Convert string to int64 (handles 0x/0o/0b and digit separators).
+        int64_t value = lexer::parseIntegerLiteral(expr->value);
         lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), value);
         break;
     }
     case ast::LiteralExpr::LiteralType::FLOAT:
     {
-        // Convert string to double
-        double value = std::stod(expr->value);
+        // Convert string to double (drop any '_' digit separators / 'f' suffix).
+        std::string fv;
+        for (char c : expr->value)
+            if (c != '_' && c != 'f' && c != 'F')
+                fv += c;
+        double value = fv.empty() ? 0.0 : std::stod(fv);
         lastValue = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), value);
         break;
     }
