@@ -1,0 +1,44 @@
+// First-class functions: functions are values you can pass, store, and return.
+//   tocin examples/first_class_functions.to --run
+
+def inc(x: int) -> int { return x + 1; }
+def trip(x: int) -> int { return x * 3; }
+
+// A function-typed parameter: `(int) -> int`.
+def apply(f: (int) -> int, x: int) -> int {
+    return f(x);
+}
+
+// Compose two functions.
+def compose(f: (int) -> int, g: (int) -> int, x: int) -> int {
+    return f(g(x));
+}
+
+// Return a function value.
+def chooser(big: int) -> (int) -> int {
+    if big > 0 { return trip; }
+    return inc;
+}
+
+// Higher-order over a vector with a lambda.
+def mapSum(f: (int) -> int, v: vector) -> int {
+    let total = 0;
+    for i in 0..vecLen(v) { total = total + f(vecGet(v, i)); }
+    return total;
+}
+
+def main() {
+    println("apply(inc, 5)      = {}", apply(inc, 5));            // 6
+    println("compose(inc,trip,4)= {}", compose(inc, trip, 4));    // 13
+
+    let f: (int) -> int = chooser(1);    // a function value in a local
+    println("chooser(1)(10)     = {}", f(10));                    // 30
+
+    println("lambda apply       = {}", apply(lambda (x: int) -> int x * x, 9)); // 81
+
+    let v = vecNew();
+    vecPush(v, 1); vecPush(v, 2); vecPush(v, 3);
+    println("sum of squares     = {}", mapSum(lambda (x: int) -> int x * x, v)); // 14
+
+    return apply(inc, 5);
+}

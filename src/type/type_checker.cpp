@@ -736,9 +736,21 @@ namespace type_checker
 
     void TypeChecker::visitLambdaExpr(ast::LambdaExpr *expr)
     {
-        // For now, return a generic function type
-        currentType_ = std::make_shared<ast::GenericType>(
-            expr->token, "Function", std::vector<ast::TypePtr>{});
+        // A lambda has a first-class function type built from its parameter
+        // types and (annotated or unknown) return type.
+        std::vector<ast::TypePtr> paramTypes;
+        for (const auto &p : expr->parameters)
+            paramTypes.push_back(p.type ? canonicalize(p.type) : makeBasic(ast::TypeKind::UNKNOWN));
+
+        ast::TypePtr ret;
+        auto rb = std::dynamic_pointer_cast<ast::SimpleType>(expr->returnType);
+        if (!expr->returnType || (rb && (rb->toString() == "None" || rb->toString().empty())))
+            ret = makeBasic(ast::TypeKind::UNKNOWN);
+        else
+            ret = canonicalize(expr->returnType);
+
+        currentType_ = std::make_shared<ast::FunctionType>(
+            expr->token, std::move(paramTypes), ret, false);
     }
 
     void TypeChecker::visitDeleteExpr(ast::DeleteExpr *expr)

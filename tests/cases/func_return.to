@@ -1,0 +1,4 @@
+// expect: 7
+def inc(x: int) -> int { return x + 1; }
+def picker() -> (int) -> int { return inc; }
+def main() -> int { let f: (int) -> int = picker(); return f(6); }
