@@ -163,6 +163,7 @@ namespace codegen
         std::map<std::string, llvm::AllocaInst *> namedValues;                     // Variable symbol table
         std::map<std::string, std::string> varClasses;                            // Variable name -> class name
         std::map<std::string, llvm::Type *> varArrayElem;                         // Variable name -> array element LLVM type
+        std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
@@ -181,6 +182,10 @@ namespace codegen
         llvm::AllocaInst *createEntryBlockAlloca(llvm::Function *function, const std::string &name, llvm::Type *type);
         llvm::Type *getLLVMType(ast::TypePtr type);
         llvm::FunctionType *getLLVMFunctionType(ast::TypePtr returnType, const std::vector<ast::Parameter> &params);
+        // Build an LLVM function type from a first-class function-type signature.
+        llvm::FunctionType *llvmFnTypeOf(const std::shared_ptr<ast::FunctionType> &ft);
+        // Recover the signature for an indirect call from the callee expression.
+        llvm::FunctionType *recoverCalleeFnType(const ast::ExprPtr &callee);
 
         // Lightweight, non-emitting type inference used to determine a
         // function's return type when it is not explicitly annotated.

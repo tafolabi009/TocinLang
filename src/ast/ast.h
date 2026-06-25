@@ -472,7 +472,8 @@ namespace ast
         LambdaExpr(const lexer::Token &token, std::vector<Parameter> parameters, TypePtr returnType, ExprPtr body)
             : Expression(token), parameters(std::move(parameters)), returnType(std::move(returnType)), body(std::move(body))
         {
-            if (!returnType)
+            // Check the member, not the moved-from `returnType` parameter.
+            if (!this->returnType)
             {
                 throw std::runtime_error("LambdaExpr returnType cannot be null");
             }

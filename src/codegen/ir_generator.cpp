@@ -320,6 +320,10 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         }
     }
 
+    // Function types lower to an (opaque) function pointer.
+    if (std::dynamic_pointer_cast<ast::FunctionType>(type))
+        return llvm::PointerType::get(context, 0);
+
     // If all else fails, return a void type
     return llvm::Type::getVoidTy(context);
 }
@@ -621,6 +625,18 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             varArrayElem[stmt->name] = it->second;
     }
 
+    // Track a function-pointer-typed local so calls through it recover the
+    // signature: from an explicit annotation, or copied from the initializer
+    // variable's own signature.
+    if (auto ft = std::dynamic_pointer_cast<ast::FunctionType>(stmt->type))
+        varFuncSig[stmt->name] = ft;
+    else if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(stmt->initializer))
+    {
+        auto it = varFuncSig.find(v->name);
+        if (it != varFuncSig.end())
+            varFuncSig[stmt->name] = it->second;
+    }
+
     // Store the initializer value (already evaluated above).
     if (initVal)
     {
@@ -868,6 +884,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     
     // Clear named values for next function
     namedValues.clear();
+    varFuncSig.clear();
 }
 
 void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
@@ -1504,25 +1521,16 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         }
     }
 
-    // Ensure callee is a function
+    // Ensure callee is a function (direct) or a function-pointer value (indirect).
     llvm::FunctionType *funcType = nullptr;
     if (callee->getType()->isPointerTy())
     {
         if (auto func = llvm::dyn_cast<llvm::Function>(callee))
-        {
-            funcType = func->getFunctionType();
-        }
+            funcType = func->getFunctionType();           // direct / named function value
         else
-        {
-            // Try to get function type from context
-            errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
-                                     "Called value is not a function",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            lastValue = nullptr;
-            return;
-        }
+            funcType = recoverCalleeFnType(expr->callee); // indirect: function-pointer value
     }
-    else
+    if (!funcType)
     {
         errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
                                  "Called value is not a function",
@@ -1531,14 +1539,25 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         return;
     }
 
-    // Evaluate arguments
+    // Evaluate arguments, coercing each to the callee's declared parameter type.
     std::vector<llvm::Value *> args;
-    for (const auto &arg : expr->arguments)
+    for (size_t i = 0; i < expr->arguments.size(); ++i)
     {
-        arg->accept(*this);
+        expr->arguments[i]->accept(*this);
         if (!lastValue)
             return;
-        args.push_back(lastValue);
+        llvm::Value *v = lastValue;
+        if (i < funcType->getNumParams() && v->getType() != funcType->getParamType(i))
+        {
+            llvm::Type *pt = funcType->getParamType(i);
+            if (v->getType()->isIntegerTy() && pt->isIntegerTy())
+                v = builder.CreateIntCast(v, pt, true, "argcast");
+            else if (v->getType()->isFloatingPointTy() && pt->isFloatingPointTy())
+                v = builder.CreateFPCast(v, pt, "argcast");
+            else if (v->getType()->isPointerTy() && pt->isPointerTy())
+                v = builder.CreateBitCast(v, pt, "argcast");
+        }
+        args.push_back(v);
     }
 
     // Create the call instruction
@@ -2545,6 +2564,35 @@ llvm::Value *IRGenerator::makeOptRes(int64_t tag, llvm::Value *payload)
     return obj;
 }
 
+llvm::FunctionType *IRGenerator::llvmFnTypeOf(const std::shared_ptr<ast::FunctionType> &ft)
+{
+    if (!ft)
+        return nullptr;
+    std::vector<llvm::Type *> params;
+    for (const auto &p : ft->parameterTypes)
+    {
+        llvm::Type *t = getLLVMType(p);
+        params.push_back(t ? t : llvm::Type::getInt64Ty(context));
+    }
+    llvm::Type *ret = ft->returnType ? getLLVMType(ft->returnType) : llvm::Type::getVoidTy(context);
+    if (!ret)
+        ret = llvm::Type::getVoidTy(context);
+    return llvm::FunctionType::get(ret, params, false);
+}
+
+// Recover the LLVM function type for an indirect call from the callee
+// expression: a variable whose declared type is a function type.
+llvm::FunctionType *IRGenerator::recoverCalleeFnType(const ast::ExprPtr &callee)
+{
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(callee))
+    {
+        auto it = varFuncSig.find(var->name);
+        if (it != varFuncSig.end())
+            return llvmFnTypeOf(it->second);
+    }
+    return nullptr;
+}
+
 void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &type)
 {
     if (auto g = std::dynamic_pointer_cast<ast::GenericType>(type))
@@ -2553,6 +2601,10 @@ void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &
             !g->typeArguments.empty())
             varArrayElem[name] = getLLVMType(g->typeArguments[0]);
     }
+    // Record a function-typed binding so indirect calls through it can recover
+    // the callee signature.
+    if (auto ft = std::dynamic_pointer_cast<ast::FunctionType>(type))
+        varFuncSig[name] = ft;
 }
 
 llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
@@ -2655,6 +2707,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     builder.SetInsertPoint(entry);
     currentFunction = function;
     namedValues.clear();
+    varFuncSig.clear();
     varClasses.clear();
     varArrayElem.clear();
     unsigned i = 0;
@@ -2954,6 +3007,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     currentFunction = function;
     currentClassName = className;
     namedValues.clear();
+    varFuncSig.clear();
 
     // Bind parameters (including `self`) into the method scope.
     ai = 0;
@@ -4475,11 +4529,16 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
     if (alloca)
     {
         lastValue = builder.CreateLoad(alloca->getAllocatedType(), alloca, expr->name);
+        return;
     }
-    else
+    // A bare top-level function name used as a value is a first-class function
+    // pointer (all top-level functions are pre-declared by predeclareTopLevel).
+    if (llvm::Function *fn = module->getFunction(expr->name))
     {
-        lastValue = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0);
+        lastValue = fn;
+        return;
     }
+    lastValue = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0);
 }
 
 void IRGenerator::visitExpressionStmt(ast::ExpressionStmt *stmt)

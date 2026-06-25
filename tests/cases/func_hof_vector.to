@@ -1,0 +1,13 @@
+// expect: 14
+// Higher-order function over a vector (functions + collections together).
+def sq(x: int) -> int { return x * x; }
+def mapSum(f: (int) -> int, v: vector) -> int {
+    let total = 0;
+    for i in 0..vecLen(v) { total = total + f(vecGet(v, i)); }
+    return total;
+}
+def main() -> int {
+    let v = vecNew();
+    vecPush(v, 1); vecPush(v, 2); vecPush(v, 3);
+    return mapSum(sq, v);
+}

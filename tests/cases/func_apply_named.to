@@ -1,0 +1,4 @@
+// expect: 6
+def inc(x: int) -> int { return x + 1; }
+def apply(f: (int) -> int, x: int) -> int { return f(x); }
+def main() -> int { return apply(inc, 5); }

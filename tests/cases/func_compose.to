@@ -1,0 +1,5 @@
+// expect: 13
+def inc(x: int) -> int { return x + 1; }
+def trip(x: int) -> int { return x * 3; }
+def compose(f: (int) -> int, g: (int) -> int, x: int) -> int { return f(g(x)); }
+def main() -> int { return compose(inc, trip, 4); }

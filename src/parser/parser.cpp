@@ -870,6 +870,24 @@ namespace parser
 
     ast::TypePtr Parser::parseType()
     {
+        // Function type with no leading name: (T1, T2, ...) -> R
+        if (check(lexer::TokenType::LEFT_PAREN))
+        {
+            lexer::Token lp = advance();
+            std::vector<ast::TypePtr> paramTypes;
+            if (!check(lexer::TokenType::RIGHT_PAREN))
+            {
+                do
+                {
+                    paramTypes.push_back(parseType());
+                } while (match(lexer::TokenType::COMMA));
+            }
+            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' in function type");
+            consume(lexer::TokenType::ARROW, "Expected '->' in function type");
+            auto returnType = parseType();
+            return std::make_shared<ast::FunctionType>(lp, paramTypes, returnType);
+        }
+
         // Accept the `channel` keyword as a type name (channel<T>).
         lexer::Token token = (check(lexer::TokenType::CHANNEL))
                                  ? advance()

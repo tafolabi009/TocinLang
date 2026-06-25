@@ -1,0 +1,3 @@
+// expect: 8
+def apply(f: (int) -> int, x: int) -> int { return f(x); }
+def main() -> int { return apply(lambda (x: int) -> int x * 2, 4); }
