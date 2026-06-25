@@ -1,0 +1,7 @@
+// expect: 12
+def main() -> int {
+    let sym = mapNew();
+    mapPutStr(sym, "x", 5);
+    mapPutStr(sym, "y", 7);
+    return mapGetStr(sym, "x") + mapGetStr(sym, "y") + mapHasStr(sym, "x") - mapHasStr(sym, "z") - 1;
+}

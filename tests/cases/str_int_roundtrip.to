@@ -1,0 +1,2 @@
+// expect: 42
+def main() -> int { return strToInt(intToStr(42)); }

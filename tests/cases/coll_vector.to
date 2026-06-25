@@ -1,0 +1,8 @@
+// expect: 30
+def main() -> int {
+    let v = vecNew();
+    vecPush(v, 5); vecPush(v, 10); vecPush(v, 15);
+    let s = 0;
+    for i in 0..vecLen(v) { s = s + vecGet(v, i); }
+    return s;
+}

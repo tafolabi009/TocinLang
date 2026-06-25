@@ -11,9 +11,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -163,5 +166,250 @@ extern "C"
         std::jmp_buf *buf = g_handlerStack.back();
         g_handlerStack.pop_back();
         std::longjmp(*buf, 1);
+    }
+}
+
+// ===========================================================================
+// Dynamic collections: growable vector and hashmap behind opaque handles.
+// Elements/keys/values are 64-bit slots (ints stored directly; pointers/
+// strings via ptrtoint round-trip on the codegen side). These leak unless
+// *Free is called.
+// ===========================================================================
+namespace
+{
+    struct TocinMap
+    {
+        std::unordered_map<int64_t, int64_t> ints;
+        std::unordered_map<std::string, int64_t> strs;
+    };
+}
+
+extern "C"
+{
+    // ---- vector: std::vector<int64_t> ----
+    void *__tocin_vec_new() { return new std::vector<int64_t>(); }
+    void __tocin_vec_push(void *h, int64_t x)
+    {
+        if (h) static_cast<std::vector<int64_t> *>(h)->push_back(x);
+    }
+    int64_t __tocin_vec_get(void *h, int64_t i)
+    {
+        if (!h) return 0;
+        auto *v = static_cast<std::vector<int64_t> *>(h);
+        if (i < 0 || (size_t)i >= v->size()) return 0;
+        return (*v)[(size_t)i];
+    }
+    void __tocin_vec_set(void *h, int64_t i, int64_t x)
+    {
+        if (!h) return;
+        auto *v = static_cast<std::vector<int64_t> *>(h);
+        if (i < 0 || (size_t)i >= v->size()) return;
+        (*v)[(size_t)i] = x;
+    }
+    int64_t __tocin_vec_len(void *h)
+    {
+        return h ? (int64_t)static_cast<std::vector<int64_t> *>(h)->size() : 0;
+    }
+    int64_t __tocin_vec_pop(void *h)
+    {
+        if (!h) return 0;
+        auto *v = static_cast<std::vector<int64_t> *>(h);
+        if (v->empty()) return 0;
+        int64_t x = v->back();
+        v->pop_back();
+        return x;
+    }
+    void __tocin_vec_free(void *h) { delete static_cast<std::vector<int64_t> *>(h); }
+
+    // ---- hashmap: int-keyed + string-keyed entries behind one handle ----
+    void *__tocin_map_new() { return new TocinMap(); }
+    void __tocin_map_put(void *h, int64_t k, int64_t v)
+    {
+        if (h) static_cast<TocinMap *>(h)->ints[k] = v;
+    }
+    int64_t __tocin_map_get(void *h, int64_t k)
+    {
+        if (!h) return 0;
+        auto *m = static_cast<TocinMap *>(h);
+        auto it = m->ints.find(k);
+        return it == m->ints.end() ? 0 : it->second;
+    }
+    int64_t __tocin_map_has(void *h, int64_t k)
+    {
+        return h && static_cast<TocinMap *>(h)->ints.count(k) ? 1 : 0;
+    }
+    void __tocin_map_put_str(void *h, const char *k, int64_t v)
+    {
+        if (h && k) static_cast<TocinMap *>(h)->strs[std::string(k)] = v;
+    }
+    int64_t __tocin_map_get_str(void *h, const char *k)
+    {
+        if (!h || !k) return 0;
+        auto *m = static_cast<TocinMap *>(h);
+        auto it = m->strs.find(std::string(k));
+        return it == m->strs.end() ? 0 : it->second;
+    }
+    int64_t __tocin_map_has_str(void *h, const char *k)
+    {
+        return (h && k && static_cast<TocinMap *>(h)->strs.count(std::string(k))) ? 1 : 0;
+    }
+    int64_t __tocin_map_len(void *h)
+    {
+        if (!h) return 0;
+        auto *m = static_cast<TocinMap *>(h);
+        return (int64_t)(m->ints.size() + m->strs.size());
+    }
+    void __tocin_map_free(void *h) { delete static_cast<TocinMap *>(h); }
+}
+
+// ===========================================================================
+// String runtime: char*-based, NUL-terminated. Functions returning a string
+// return a fresh malloc'd buffer (never aliasing an input). Out-of-range char
+// access returns -1; substring bounds are clamped; NULL inputs are tolerated.
+// ===========================================================================
+extern "C"
+{
+    static char *tocin_str_empty()
+    {
+        char *p = (char *)std::malloc(1);
+        if (p) p[0] = '\0';
+        return p;
+    }
+    int64_t __tocin_str_len(const char *s) { return s ? (int64_t)std::strlen(s) : 0; }
+    int64_t __tocin_str_char_at(const char *s, int64_t i)
+    {
+        if (!s) return -1;
+        int64_t n = (int64_t)std::strlen(s);
+        if (i < 0 || i >= n) return -1;
+        return (int64_t)(unsigned char)s[i];
+    }
+    char *__tocin_str_substring(const char *s, int64_t start, int64_t len)
+    {
+        if (!s) return tocin_str_empty();
+        int64_t n = (int64_t)std::strlen(s);
+        if (start < 0) start = 0;
+        if (start > n) start = n;
+        if (len < 0) len = 0;
+        if (start + len > n) len = n - start;
+        char *out = (char *)std::malloc((size_t)len + 1);
+        if (!out) return nullptr;
+        std::memcpy(out, s + start, (size_t)len);
+        out[len] = '\0';
+        return out;
+    }
+    int64_t __tocin_str_eq(const char *a, const char *b)
+    {
+        if (a == b) return 1;
+        if (!a || !b) return 0;
+        return std::strcmp(a, b) == 0 ? 1 : 0;
+    }
+    int64_t __tocin_str_cmp(const char *a, const char *b)
+    {
+        if (!a) a = "";
+        if (!b) b = "";
+        int r = std::strcmp(a, b);
+        return r < 0 ? -1 : (r > 0 ? 1 : 0);
+    }
+    int64_t __tocin_str_index_of_char(const char *s, int64_t c)
+    {
+        if (!s) return -1;
+        for (int64_t i = 0; s[i]; ++i)
+            if ((unsigned char)s[i] == (unsigned char)c) return i;
+        return -1;
+    }
+    char *__tocin_int_to_str(int64_t n)
+    {
+        char buf[32];
+        int len = std::snprintf(buf, sizeof(buf), "%lld", (long long)n);
+        if (len < 0) return tocin_str_empty();
+        char *out = (char *)std::malloc((size_t)len + 1);
+        if (!out) return nullptr;
+        std::memcpy(out, buf, (size_t)len + 1);
+        return out;
+    }
+    int64_t __tocin_str_to_int(const char *s) { return s ? (int64_t)std::atoll(s) : 0; }
+    char *__tocin_char_to_str(int64_t c)
+    {
+        char *out = (char *)std::malloc(2);
+        if (!out) return nullptr;
+        out[0] = (char)(unsigned char)c;
+        out[1] = '\0';
+        return out;
+    }
+    char *__tocin_str_concat(const char *a, const char *b)
+    {
+        if (!a) a = "";
+        if (!b) b = "";
+        size_t la = std::strlen(a), lb = std::strlen(b);
+        char *out = (char *)std::malloc(la + lb + 1);
+        if (!out) return nullptr;
+        std::memcpy(out, a, la);
+        std::memcpy(out + la, b, lb + 1);
+        return out;
+    }
+}
+
+// ===========================================================================
+// File I/O. Strings are NUL-terminated char*. Returned buffers are malloc'd
+// and owned by the caller; read errors yield an empty string (use len/strLen
+// safely). Write/append return bytes written, or -1 on error.
+// ===========================================================================
+extern "C"
+{
+    char *__tocin_read_file(const char *path)
+    {
+        if (!path) return tocin_str_empty();
+        FILE *f = std::fopen(path, "rb");
+        if (!f) return tocin_str_empty();
+        if (std::fseek(f, 0, SEEK_END) != 0) { std::fclose(f); return tocin_str_empty(); }
+        long sz = std::ftell(f);
+        if (sz < 0) { std::fclose(f); return tocin_str_empty(); }
+        std::rewind(f);
+        char *buf = (char *)std::malloc((size_t)sz + 1);
+        if (!buf) { std::fclose(f); return tocin_str_empty(); }
+        size_t got = std::fread(buf, 1, (size_t)sz, f);
+        std::fclose(f);
+        buf[got] = '\0';
+        return buf;
+    }
+    int64_t __tocin_write_file(const char *path, const char *contents)
+    {
+        if (!path || !contents) return -1;
+        FILE *f = std::fopen(path, "wb");
+        if (!f) return -1;
+        size_t len = std::strlen(contents);
+        size_t wrote = std::fwrite(contents, 1, len, f);
+        if (std::fclose(f) != 0) return -1;
+        return (wrote == len) ? (int64_t)wrote : -1;
+    }
+    int64_t __tocin_append_file(const char *path, const char *contents)
+    {
+        if (!path || !contents) return -1;
+        FILE *f = std::fopen(path, "ab");
+        if (!f) return -1;
+        size_t len = std::strlen(contents);
+        size_t wrote = std::fwrite(contents, 1, len, f);
+        if (std::fclose(f) != 0) return -1;
+        return (wrote == len) ? (int64_t)wrote : -1;
+    }
+    char *__tocin_read_line()
+    {
+        size_t cap = 128, n = 0;
+        char *buf = (char *)std::malloc(cap);
+        if (!buf) return tocin_str_empty();
+        int c;
+        while ((c = std::fgetc(stdin)) != EOF && c != '\n')
+        {
+            if (n + 1 >= cap)
+            {
+                cap *= 2;
+                char *nb = (char *)std::realloc(buf, cap);
+                if (!nb) { std::free(buf); return tocin_str_empty(); }
+                buf = nb;
+            }
+            buf[n++] = (char)c;
+        }
+        buf[n] = '\0';
+        return buf;
     }
 }
