@@ -1,0 +1,6 @@
+// expect: 200
+def describe(n: int) -> int {
+    switch n { case 1: { return 100; } case 2: { return 200; } default: { return 9; } }
+    return 0;
+}
+def main() { return describe(2); }

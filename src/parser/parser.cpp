@@ -320,6 +320,10 @@ namespace parser
             return returnStmt();
         if (match(lexer::TokenType::MATCH))
             return matchStmt();
+        // `switch` is an alias for `match`: same `case <value>:` / `default:`
+        // structure, value-equality dispatch.
+        if (match(lexer::TokenType::SWITCH))
+            return matchStmt();
         if (match(lexer::TokenType::GO))
             return goStmt();
         if (match(lexer::TokenType::SELECT))
@@ -1091,6 +1095,7 @@ namespace parser
             case lexer::TokenType::RETURN:
             case lexer::TokenType::IMPORT:
             case lexer::TokenType::MATCH:
+            case lexer::TokenType::SWITCH:
             case lexer::TokenType::GO:
             case lexer::TokenType::SELECT:
                 return;
