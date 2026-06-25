@@ -1,0 +1,77 @@
+// Recursive-descent arithmetic evaluator: + - * / and parentheses.
+// State (input + cursor) lives in a class; functions mutate it via the instance.
+class P { src: string; pos: int; }
+
+def peek(p: P) -> int {
+    if p.pos >= strLen(p.src) { return -1; }
+    return charAt(p.src, p.pos);
+}
+def skipws(p: P) {
+    while peek(p) == 32 { p.pos = p.pos + 1; }   // skip spaces
+}
+def number(p: P) -> int {
+    skipws(p);
+    let n = 0;
+    let c = peek(p);
+    while c >= 48 and c <= 57 {
+        n = n * 10 + (c - 48);
+        p.pos = p.pos + 1;
+        c = peek(p);
+    }
+    return n;
+}
+
+// factor := number | '(' expr ')'
+def factor(p: P) -> int {
+    skipws(p);
+    if peek(p) == 40 {              // '('
+        p.pos = p.pos + 1;         // consume '('
+        let v = expr(p);
+        skipws(p);
+        p.pos = p.pos + 1;         // consume ')'
+        return v;
+    }
+    return number(p);
+}
+// term := factor (('*'|'/') factor)*
+def term(p: P) -> int {
+    let v = factor(p);
+    skipws(p);
+    let c = peek(p);
+    while c == 42 or c == 47 {      // '*' '/'
+        p.pos = p.pos + 1;
+        let r = factor(p);
+        if c == 42 { v = v * r; } else { v = v / r; }
+        skipws(p);
+        c = peek(p);
+    }
+    return v;
+}
+// expr := term (('+'|'-') term)*
+def expr(p: P) -> int {
+    let v = term(p);
+    skipws(p);
+    let c = peek(p);
+    while c == 43 or c == 45 {      // '+' '-'
+        p.pos = p.pos + 1;
+        let r = term(p);
+        if c == 43 { v = v + r; } else { v = v - r; }
+        skipws(p);
+        c = peek(p);
+    }
+    return v;
+}
+
+def eval(s: string) -> int {
+    let p = P(s, 0);
+    return expr(p);
+}
+
+def main() -> int {
+    println("1+2*3        = {}", eval("1+2*3"));         // 7
+    println("(1+2)*3      = {}", eval("(1+2)*3"));       // 9
+    println("100-4*5+2    = {}", eval("100 - 4*5 + 2")); // 82
+    println("(8/(2+2))*10 = {}", eval("(8/(2+2))*10"));  // 20
+    println("2*(3+(4-1))  = {}", eval("2*(3+(4-1))"));   // 12
+    return eval("(1+2)*3");                               // exit 9
+}

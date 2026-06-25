@@ -1,0 +1,9 @@
+// expect: 30
+class Box { v: int; }
+def readField(b: Box) -> int { return b.v; }
+def bump(b: Box) { b.v = b.v + 5; }
+def main() {
+    let b = Box(25);
+    bump(b);              // mutate field through a parameter
+    return readField(b);  // read field through a parameter -> 30
+}
