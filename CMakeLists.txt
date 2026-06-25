@@ -454,9 +454,37 @@ target_link_libraries(tocin_core PUBLIC ${LINK_LIBS})
 # Standalone Tocin runtime (channels/goroutines/exceptions) — no LLVM
 # dependency, so it can be linked into native executables produced by the AOT
 # path.
+# Garbage collection: link the Boehm-Demers-Weiser collector (libgc) when
+# available so all Tocin heap allocations are reclaimed automatically. The dev
+# header is not required — the runtime declares the few symbols it uses. We look
+# for the import library or fall back to the versioned soname.
+set(TOCIN_GC_LIB "")
+find_library(TOCIN_GC_FOUND NAMES gc gc-threaded)
+if(TOCIN_GC_FOUND)
+    set(TOCIN_GC_LIB "${TOCIN_GC_FOUND}")
+else()
+    foreach(_cand /lib/x86_64-linux-gnu/libgc.so.1 /usr/lib/x86_64-linux-gnu/libgc.so.1
+                  /usr/lib/libgc.so.1 /usr/local/lib/libgc.so.1 /opt/homebrew/lib/libgc.dylib
+                  /usr/local/lib/libgc.dylib)
+        if(EXISTS "${_cand}")
+            set(TOCIN_GC_LIB "${_cand}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(TOCIN_GC_LIB)
+    message(STATUS "Tocin: garbage collection enabled (${TOCIN_GC_LIB})")
+else()
+    message(STATUS "Tocin: libgc not found — allocations will not be collected")
+endif()
+
 add_library(tocin_runtime STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp)
 set_target_properties(tocin_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(tocin_runtime PUBLIC Threads::Threads)
+if(TOCIN_GC_LIB)
+    target_compile_definitions(tocin_runtime PUBLIC TOCIN_HAVE_GC=1)
+    target_link_libraries(tocin_runtime PUBLIC "${TOCIN_GC_LIB}")
+endif()
 
 # A shared-library build of the same runtime, so the LLVM interpreter (lli) used
 # by the .to test suite can `-load` it and resolve the __tocin_* symbols when
@@ -464,8 +492,16 @@ target_link_libraries(tocin_runtime PUBLIC Threads::Threads)
 add_library(tocin_runtime_shared SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp)
 set_target_properties(tocin_runtime_shared PROPERTIES OUTPUT_NAME tocin_runtime)
 target_link_libraries(tocin_runtime_shared PUBLIC Threads::Threads)
+if(TOCIN_GC_LIB)
+    target_compile_definitions(tocin_runtime_shared PUBLIC TOCIN_HAVE_GC=1)
+    target_link_libraries(tocin_runtime_shared PUBLIC "${TOCIN_GC_LIB}")
+endif()
 
 target_link_libraries(tocin PRIVATE tocin_core tocin_runtime)
+# Make the GC library path available to the AOT driver so native binaries link it.
+if(TOCIN_GC_LIB)
+    target_compile_definitions(tocin PRIVATE TOCIN_GC_LIB="${TOCIN_GC_LIB}")
+endif()
 # Tell the driver where to find the runtime archive when linking AOT binaries.
 target_compile_definitions(tocin PRIVATE TOCIN_RUNTIME_LIB="$<TARGET_FILE:tocin_runtime>")
 # Default search path for `import` of standard-library modules.

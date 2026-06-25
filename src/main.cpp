@@ -87,6 +87,8 @@ extern "C" {
     int64_t __tocin_str_starts_with(const char *, const char *);
     int64_t __tocin_str_ends_with(const char *, const char *);
     void __tocin_free(void *);
+    void *__tocin_alloc(int64_t);
+    void *__tocin_realloc(void *, int64_t);
     // File I/O
     char *__tocin_read_file(const char *);
     int64_t __tocin_write_file(const char *, const char *);
@@ -510,6 +512,8 @@ public:
             def("__tocin_str_starts_with", reinterpret_cast<void *>(&__tocin_str_starts_with));
             def("__tocin_str_ends_with", reinterpret_cast<void *>(&__tocin_str_ends_with));
             def("__tocin_free", reinterpret_cast<void *>(&__tocin_free));
+            def("__tocin_alloc", reinterpret_cast<void *>(&__tocin_alloc));
+            def("__tocin_realloc", reinterpret_cast<void *>(&__tocin_realloc));
             def("__tocin_read_file", reinterpret_cast<void *>(&__tocin_read_file));
             def("__tocin_write_file", reinterpret_cast<void *>(&__tocin_write_file));
             def("__tocin_append_file", reinterpret_cast<void *>(&__tocin_append_file));
@@ -598,6 +602,10 @@ public:
         // concurrency resolve their __tocin_* calls.
 #ifdef TOCIN_RUNTIME_LIB
         cmd += std::string(" \"") + TOCIN_RUNTIME_LIB + "\"";
+#endif
+        // Link the garbage collector so collected allocations resolve at runtime.
+#ifdef TOCIN_GC_LIB
+        cmd += std::string(" \"") + TOCIN_GC_LIB + "\"";
 #endif
         cmd += " -lm -lpthread -lstdc++";
         int rc = std::system(cmd.c_str());
