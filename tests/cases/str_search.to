@@ -1,0 +1,11 @@
+// expect-output: HELLO|world|6|1|1|1|0
+def main() {
+    print(toUpper("hello")); print("|");
+    print(toLower("WoRlD")); print("|");
+    print(intToStr(strIndexOf("hello world", "world"))); print("|");
+    print(intToStr(strContains("hello", "ell"))); print("|");
+    print(intToStr(startsWith("foobar", "foo"))); print("|");
+    print(intToStr(endsWith("foobar", "bar"))); print("|");
+    println("{}", strContains("abc", "xyz"));
+    return 0;
+}

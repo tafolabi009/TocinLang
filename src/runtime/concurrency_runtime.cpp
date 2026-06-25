@@ -5,6 +5,7 @@
 // C toolchain. Values flowing through channels are passed as 64-bit slots
 // (ints, bit-cast floats, or pointers), matching the codegen ABI.
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <csetjmp>
@@ -347,6 +348,57 @@ extern "C"
         std::memcpy(out + la, b, lb + 1);
         return out;
     }
+
+    // Case conversion (fresh malloc'd copies).
+    char *__tocin_str_to_upper(const char *s)
+    {
+        if (!s) return tocin_str_empty();
+        size_t n = std::strlen(s);
+        char *out = (char *)std::malloc(n + 1);
+        if (!out) return nullptr;
+        for (size_t i = 0; i < n; ++i)
+            out[i] = (char)std::toupper((unsigned char)s[i]);
+        out[n] = '\0';
+        return out;
+    }
+    char *__tocin_str_to_lower(const char *s)
+    {
+        if (!s) return tocin_str_empty();
+        size_t n = std::strlen(s);
+        char *out = (char *)std::malloc(n + 1);
+        if (!out) return nullptr;
+        for (size_t i = 0; i < n; ++i)
+            out[i] = (char)std::tolower((unsigned char)s[i]);
+        out[n] = '\0';
+        return out;
+    }
+    // Substring search: index of first occurrence, or -1.
+    int64_t __tocin_str_index_of(const char *s, const char *sub)
+    {
+        if (!s || !sub) return -1;
+        const char *p = std::strstr(s, sub);
+        return p ? (int64_t)(p - s) : -1;
+    }
+    int64_t __tocin_str_contains(const char *s, const char *sub)
+    {
+        return __tocin_str_index_of(s, sub) >= 0 ? 1 : 0;
+    }
+    int64_t __tocin_str_starts_with(const char *s, const char *pre)
+    {
+        if (!s || !pre) return 0;
+        size_t lp = std::strlen(pre);
+        return std::strncmp(s, pre, lp) == 0 ? 1 : 0;
+    }
+    int64_t __tocin_str_ends_with(const char *s, const char *suf)
+    {
+        if (!s || !suf) return 0;
+        size_t ls = std::strlen(s), lf = std::strlen(suf);
+        if (lf > ls) return 0;
+        return std::strcmp(s + (ls - lf), suf) == 0 ? 1 : 0;
+    }
+
+    // Explicit deallocation for programs that want to manage memory.
+    void __tocin_free(void *p) { if (p) std::free(p); }
 }
 
 // ===========================================================================
