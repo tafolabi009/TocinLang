@@ -2400,6 +2400,18 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     return function;
 }
 
+void IRGenerator::visitEnumStmt(ast::EnumStmt *stmt)
+{
+    // Enum members are integer constants, registered both bare (Red) and
+    // qualified (Color.Red) for use in expressions.
+    for (const auto &m : stmt->members)
+    {
+        enumConstants[m.first] = m.second;
+        enumConstants[stmt->name + "." + m.first] = m.second;
+    }
+    lastValue = nullptr;
+}
+
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
 {
     llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
@@ -2522,6 +2534,17 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
 void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 {
+    // Qualified enum access: EnumName.Member -> integer constant.
+    if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr->object))
+    {
+        auto e = enumConstants.find(v->name + "." + expr->name);
+        if (e != enumConstants.end())
+        {
+            lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
+            return;
+        }
+    }
+
     // Evaluate the object expression
     expr->object->accept(*this);
     if (!lastValue)
@@ -3117,10 +3140,15 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     else
         stmts.push_back(ast);
 
-    // Register class types first (so signatures can reference them).
+    // Register class types and enum constants first (so they can be referenced
+    // regardless of declaration order).
     for (auto &s : stmts)
+    {
         if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
             registerClassType(cls.get());
+        else if (auto en = std::dynamic_pointer_cast<ast::EnumStmt>(s))
+            visitEnumStmt(en.get());
+    }
 
     // Then forward-declare free functions and method prototypes.
     for (auto &s : stmts)
@@ -3868,6 +3896,13 @@ void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
 
 void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
 {
+    // Enum members resolve to their integer constant.
+    auto e = enumConstants.find(expr->name);
+    if (e != enumConstants.end())
+    {
+        lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
+        return;
+    }
     // Look up variable in current scope
     llvm::AllocaInst *alloca = lookupVariable(expr->name);
     if (alloca)

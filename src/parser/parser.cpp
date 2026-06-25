@@ -67,6 +67,10 @@ namespace parser
             {
                 return classDeclaration();
             }
+            if (match(lexer::TokenType::ENUM))
+            {
+                return enumDeclaration();
+            }
             if (match(lexer::TokenType::TRAIT))
             {
                 return traitDeclaration();
@@ -226,6 +230,31 @@ namespace parser
             return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
                                                        parameters, returnType, body, isAsync);
         return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
+    }
+
+    ast::StmtPtr Parser::enumDeclaration()
+    {
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected enum name");
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before enum body");
+        std::vector<std::pair<std::string, int64_t>> members;
+        int64_t next = 0;
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            auto member = consume(lexer::TokenType::IDENTIFIER, "Expected enum member name");
+            int64_t value = next;
+            if (match(lexer::TokenType::EQUAL))
+            {
+                bool neg = match(lexer::TokenType::MINUS);
+                auto v = consume(lexer::TokenType::INT, "Expected integer after '=' in enum");
+                value = std::stoll(v.value);
+                if (neg) value = -value;
+            }
+            members.emplace_back(member.value, value);
+            next = value + 1;
+            match(lexer::TokenType::COMMA); // optional separator
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after enum body");
+        return std::make_shared<ast::EnumStmt>(name, name.value, members);
     }
 
     ast::StmtPtr Parser::traitDeclaration()
