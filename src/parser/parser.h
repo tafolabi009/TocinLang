@@ -89,6 +89,7 @@ namespace parser
         ast::ExprPtr channelReceiveExpr();
         ast::TypePtr parseType();
         std::vector<ast::Parameter> parseParameters();
+        std::vector<ast::TypeParameter> parseTypeParameters();
         void synchronize();
 
         bool match(lexer::TokenType type);

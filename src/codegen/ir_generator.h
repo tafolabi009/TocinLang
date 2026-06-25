@@ -163,6 +163,8 @@ namespace codegen
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
+        std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
+        std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
         std::map<std::string, llvm::Function *> classMethods;                      // Class method table
@@ -253,6 +255,11 @@ namespace codegen
 
         // Determine the element LLVM type of an array-valued expression.
         llvm::Type *getArrayElemType(const ast::ExprPtr &expr);
+
+        // Monomorphize a generic function for a concrete set of type bindings.
+        llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,
+                                            const std::map<std::string, llvm::Type *> &bindings);
+        std::string llvmTypeName(llvm::Type *t);
     };
 
     // Pattern visitor for match statements

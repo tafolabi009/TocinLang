@@ -222,6 +222,11 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
     {
         std::string typeName = simpleType->toString();
 
+        // Resolve active generic type-parameter bindings first (e.g. T -> i64).
+        auto bound = typeBindings.find(typeName);
+        if (bound != typeBindings.end())
+            return bound->second;
+
         // Check for basic type names
         if (typeName == "int" || typeName == "i64")
         {
@@ -751,10 +756,11 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         return;
     }
 
-    // Handle generic functions
+    // Generic functions are templates: record them and instantiate lazily
+    // (monomorphize) when called with concrete argument types.
     if (stmt->isGeneric())
     {
-        // ... existing generic function implementation ...
+        genericFunctions[stmt->name] = stmt;
         return;
     }
 
@@ -1127,6 +1133,53 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 format += "\n";
             printfArgs[0] = builder.CreateGlobalString(format, "fmt");
             lastValue = builder.CreateCall(printfFunc->getFunctionType(), printfFunc, printfArgs);
+            return;
+        }
+
+        // Generic function call: monomorphize for the concrete argument types.
+        auto git = genericFunctions.find(funcName);
+        if (git != genericFunctions.end())
+        {
+            ast::FunctionStmt *tmpl = git->second;
+            std::vector<llvm::Value *> argVals;
+            for (const auto &a : expr->arguments)
+            {
+                a->accept(*this);
+                if (!lastValue) return;
+                argVals.push_back(lastValue);
+            }
+            // Infer type-parameter bindings from argument types.
+            std::map<std::string, llvm::Type *> bindings;
+            std::set<std::string> tparams;
+            for (const auto &tp : tmpl->typeParameters)
+                tparams.insert(tp.getName());
+            for (size_t i = 0; i < tmpl->parameters.size() && i < argVals.size(); ++i)
+            {
+                std::string pt = tmpl->parameters[i].type ? tmpl->parameters[i].type->toString() : "";
+                if (tparams.count(pt) && !bindings.count(pt))
+                    bindings[pt] = argVals[i]->getType();
+            }
+            for (const auto &tp : tmpl->typeParameters)
+                if (!bindings.count(tp.getName()))
+                    bindings[tp.getName()] = llvm::Type::getInt64Ty(context);
+
+            llvm::Function *inst = emitGenericInstance(tmpl, bindings);
+            llvm::FunctionType *ift = inst->getFunctionType();
+            std::vector<llvm::Value *> callArgs;
+            for (size_t i = 0; i < argVals.size(); ++i)
+            {
+                llvm::Value *v = argVals[i];
+                if (i < ift->getNumParams() && v->getType() != ift->getParamType(i))
+                {
+                    llvm::Type *pt = ift->getParamType(i);
+                    if (v->getType()->isIntegerTy() && pt->isIntegerTy())
+                        v = builder.CreateIntCast(v, pt, true, "argcast");
+                    else if (v->getType()->isFloatingPointTy() && pt->isFloatingPointTy())
+                        v = builder.CreateFPCast(v, pt, "argcast");
+                }
+                callArgs.push_back(v);
+            }
+            lastValue = builder.CreateCall(ift, inst, callArgs);
             return;
         }
 
@@ -2167,6 +2220,98 @@ void IRGenerator::visitIndexExpr(ast::IndexExpr *expr)
     lastValue = builder.CreateLoad(elemTy, slot, "idx.val");
 }
 
+std::string IRGenerator::llvmTypeName(llvm::Type *t)
+{
+    if (t->isIntegerTy(1)) return "i1";
+    if (t->isIntegerTy(64)) return "i64";
+    if (t->isIntegerTy()) return "i" + std::to_string(t->getIntegerBitWidth());
+    if (t->isDoubleTy()) return "f64";
+    if (t->isFloatTy()) return "f32";
+    if (t->isPointerTy()) return "ptr";
+    return "t";
+}
+
+llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
+                                                const std::map<std::string, llvm::Type *> &bindings)
+{
+    // Mangle the instance name from the concrete type arguments.
+    std::string mangled = stmt->name;
+    for (const auto &tp : stmt->typeParameters)
+    {
+        auto it = bindings.find(tp.getName());
+        mangled += "$" + (it != bindings.end() ? llvmTypeName(it->second) : "t");
+    }
+    if (llvm::Function *existing = module->getFunction(mangled))
+        return existing;
+
+    // Save codegen state.
+    auto savedBindings = typeBindings;
+    auto savedNamed = namedValues;
+    auto savedVarClasses = varClasses;
+    auto savedArrayElem = varArrayElem;
+    llvm::Function *savedFunction = currentFunction;
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    typeBindings = bindings;
+
+    // Build the concrete signature (getLLVMType resolves type params).
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &p : stmt->parameters)
+    {
+        llvm::Type *t = getLLVMType(p.type);
+        paramTypes.push_back(t ? t : llvm::Type::getInt64Ty(context));
+    }
+    llvm::Type *retType = stmt->returnType ? getLLVMType(stmt->returnType)
+                                           : inferFunctionReturnType(stmt);
+    if (!retType)
+        retType = llvm::Type::getVoidTy(context);
+    auto *ft = llvm::FunctionType::get(retType, paramTypes, false);
+    auto *function = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, mangled, module.get());
+
+    // Generate the body.
+    auto *entry = llvm::BasicBlock::Create(context, "entry", function);
+    builder.SetInsertPoint(entry);
+    currentFunction = function;
+    namedValues.clear();
+    varClasses.clear();
+    varArrayElem.clear();
+    unsigned i = 0;
+    for (auto &arg : function->args())
+    {
+        const std::string &pname = stmt->parameters[i].name;
+        arg.setName(pname);
+        llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
+        builder.CreateStore(&arg, alloca);
+        namedValues[pname] = alloca;
+        ++i;
+    }
+    if (stmt->body)
+        stmt->body->accept(*this);
+    if (!builder.GetInsertBlock()->getTerminator())
+    {
+        if (retType->isVoidTy())
+            builder.CreateRetVoid();
+        else if (retType->isIntegerTy())
+            builder.CreateRet(llvm::ConstantInt::get(retType, 0));
+        else if (retType->isFloatingPointTy())
+            builder.CreateRet(llvm::ConstantFP::get(retType, 0.0));
+        else if (retType->isPointerTy())
+            builder.CreateRet(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(retType)));
+        else
+            builder.CreateRet(llvm::UndefValue::get(retType));
+    }
+    llvm::verifyFunction(*function);
+
+    // Restore state.
+    typeBindings = savedBindings;
+    namedValues = savedNamed;
+    varClasses = savedVarClasses;
+    varArrayElem = savedArrayElem;
+    currentFunction = savedFunction;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
+    return function;
+}
+
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
 {
     llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
@@ -2892,7 +3037,12 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     for (auto &s : stmts)
     {
         if (auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(s))
-            declareFunctionProto(fn.get());
+        {
+            if (fn->isGeneric())
+                genericFunctions[fn->name] = fn.get();  // record template for lazy instantiation
+            else
+                declareFunctionProto(fn.get());
+        }
         else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
         {
             auto cit = classTypes.find(cls->name);
