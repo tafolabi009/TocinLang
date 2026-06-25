@@ -1,0 +1,16 @@
+// Control flow, loops, and the modulo operator.
+//   tocin examples/fizzbuzz.to --run
+def main() {
+    for i in 1..21 {
+        if i % 15 == 0 {
+            println("FizzBuzz");
+        } elif i % 3 == 0 {
+            println("Fizz");
+        } elif i % 5 == 0 {
+            println("Buzz");
+        } else {
+            println("{}", i);
+        }
+    }
+    return 0;
+}

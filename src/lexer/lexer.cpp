@@ -16,14 +16,14 @@ namespace lexer
         {"case", TokenType::CASE}, {"default", TokenType::DEFAULT}, {"const", TokenType::CONST}, 
         {"true", TokenType::TRUE}, {"false", TokenType::FALSE}, {"None", TokenType::NIL}, 
         {"and", TokenType::AND}, {"or", TokenType::OR}, {"lambda", TokenType::LAMBDA}, 
-        {"print", TokenType::PRINT}, {"new", TokenType::NEW}, {"delete", TokenType::DELETE},
+        {"new", TokenType::NEW}, {"delete", TokenType::DELETE},
         {"try", TokenType::TRY}, {"catch", TokenType::CATCH}, {"finally", TokenType::FINALLY},
         {"throw", TokenType::THROW}, {"break", TokenType::BREAK}, {"continue", TokenType::CONTINUE},
         {"switch", TokenType::SWITCH}, {"enum", TokenType::ENUM}, {"struct", TokenType::STRUCT},
         {"interface", TokenType::INTERFACE}, {"trait", TokenType::TRAIT}, {"impl", TokenType::IMPL},
         {"pub", TokenType::PUB}, {"priv", TokenType::PRIV}, {"static", TokenType::STATIC},
         {"final", TokenType::FINAL}, {"abstract", TokenType::ABSTRACT}, {"virtual", TokenType::VIRTUAL},
-        {"override", TokenType::OVERRIDE}, {"super", TokenType::SUPER}, {"self", TokenType::SELF},
+        {"override", TokenType::OVERRIDE}, {"super", TokenType::SUPER},
         {"null", TokenType::NULL_TOKEN}, {"undefined", TokenType::UNDEFINED}, {"void", TokenType::VOID},
         {"typeof", TokenType::TYPEOF}, {"instanceof", TokenType::INSTANCEOF}, {"as", TokenType::AS},
         {"is", TokenType::IS}, {"where", TokenType::WHERE}, {"yield", TokenType::YIELD},
@@ -648,10 +648,11 @@ namespace lexer
 
         // For all other tokens, advance and process
         advance();  // Now advance for non-identifier tokens
-        
-        // After advancing, check again if we're at EOF
-        // This handles the case where the last character was consumed
-        if (c == '\0' || isAtEnd())
+
+        // `c` was already validated (we peeked a real character above), so it
+        // must still be tokenized even when it was the final character of the
+        // source. Only bail on a genuine null.
+        if (c == '\0')
             return;
 
         switch (c)
