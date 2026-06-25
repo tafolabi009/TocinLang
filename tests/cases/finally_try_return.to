@@ -1,0 +1,10 @@
+// expect-output: A
+def f() -> int {
+    try {
+        return 7;
+    } finally {
+        println("A");
+    }
+    return 99;
+}
+def main() { let r = f(); return 0; }

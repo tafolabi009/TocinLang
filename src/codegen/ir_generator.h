@@ -169,6 +169,11 @@ namespace codegen
         std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
         std::set<std::string> varIsString;                                        // Variables statically known to hold strings
         std::vector<std::pair<llvm::BasicBlock *, llvm::BasicBlock *>> loopStack; // {continue target, break target} per enclosing loop
+        // Pending cleanups an early `return` must run while unwinding out of
+        // try/finally scopes: the finally block (may be null) and whether the
+        // exception handler registered for this try must also be popped.
+        struct PendingFinally { ast::StmtPtr block; bool popHandler; };
+        std::vector<PendingFinally> finallyStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
@@ -205,6 +210,9 @@ namespace codegen
         // If v is a bare top-level llvm::Function used as a value, box it into a
         // closure; otherwise return v unchanged.
         llvm::Value *wrapIfRawFunction(llvm::Value *v);
+        // Emit any pending finally blocks (innermost first) before a return
+        // unwinds out of the enclosing try/finally scopes.
+        void runPendingFinally();
         // Cache of generated thunks, keyed by the wrapped target function.
         std::map<llvm::Function *, llvm::Function *> thunks;
 
