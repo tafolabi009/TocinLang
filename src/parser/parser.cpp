@@ -282,12 +282,14 @@ namespace parser
             {
                 auto pattern = expression();
                 consume(lexer::TokenType::COLON, "Expected ':' after case pattern");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after case pattern");
                 auto body = blockStmt();
                 cases.emplace_back(pattern, body);
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
                 consume(lexer::TokenType::COLON, "Expected ':' after default");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after default");
                 defaultCase = blockStmt();
             }
             else
