@@ -1184,99 +1184,77 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 
 void IRGenerator::visitIfStmt(ast::IfStmt *stmt)
 {
-    // Generate condition
-    stmt->condition->accept(*this);
-    if (!lastValue)
-        return;
+    llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *mergeBlock = llvm::BasicBlock::Create(context, "ifcont");
 
-    // Convert condition to boolean if needed
-    llvm::Value *condValue = lastValue;
-    if (!condValue->getType()->isIntegerTy(1))
+    // Collect all (condition, body) clauses: the leading `if` plus each `elif`.
+    std::vector<std::pair<ast::ExprPtr, ast::StmtPtr>> clauses;
+    clauses.emplace_back(stmt->condition, stmt->thenBranch);
+    for (auto &eb : stmt->elifBranches)
+        clauses.emplace_back(eb.first, eb.second);
+
+    auto toBool = [&](llvm::Value *v) -> llvm::Value * {
+        if (!v) return nullptr;
+        if (v->getType()->isIntegerTy(1)) return v;
+        if (v->getType()->isIntegerTy())
+            return builder.CreateICmpNE(v, llvm::ConstantInt::get(v->getType(), 0), "ifcond");
+        if (v->getType()->isFloatTy() || v->getType()->isDoubleTy())
+            return builder.CreateFCmpONE(v, llvm::ConstantFP::get(v->getType(), 0.0), "ifcond");
+        if (v->getType()->isPointerTy())
+            return builder.CreateICmpNE(
+                v, llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(v->getType())), "ifcond");
+        return nullptr;
+    };
+
+    for (size_t i = 0; i < clauses.size(); ++i)
     {
-        if (condValue->getType()->isIntegerTy())
-        {
-            // Compare with zero for integers
-            condValue = builder.CreateICmpNE(
-                condValue,
-                llvm::ConstantInt::get(condValue->getType(), 0),
-                "ifcond");
-        }
-        else if (condValue->getType()->isFloatTy() || condValue->getType()->isDoubleTy())
-        {
-            // Compare with zero for floating point
-            condValue = builder.CreateFCmpONE(
-                condValue,
-                llvm::ConstantFP::get(condValue->getType(), 0.0),
-                "ifcond");
-        }
-        else if (condValue->getType()->isPointerTy())
-        {
-            // Compare with null for pointers
-            condValue = builder.CreateICmpNE(
-                condValue,
-                llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(condValue->getType())),
-                "ifcond");
-        }
-        else
+        // Evaluate this clause's condition in the current insert block.
+        clauses[i].first->accept(*this);
+        llvm::Value *cond = toBool(lastValue);
+        if (!cond)
         {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Condition must be convertible to a boolean",
                                      "", 0, 0, error::ErrorSeverity::ERROR);
             return;
         }
-    }
 
-    // Create basic blocks for then, else, and continue
-    llvm::Function *function = builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock *thenBlock = llvm::BasicBlock::Create(context, "then", function);
+        bool lastClause = (i + 1 == clauses.size());
+        llvm::BasicBlock *falseBlock;
+        if (!lastClause)
+            falseBlock = llvm::BasicBlock::Create(context, "elif.cond", function);
+        else if (stmt->elseBranch)
+            falseBlock = llvm::BasicBlock::Create(context, "else", function);
+        else
+            falseBlock = mergeBlock;
 
-    llvm::BasicBlock *thenBlock = llvm::BasicBlock::Create(context, "then", function);
-    llvm::BasicBlock *elseBlock = stmt->elseBranch ? llvm::BasicBlock::Create(context, "else") : nullptr;
-    llvm::BasicBlock *continueBlock = llvm::BasicBlock::Create(context, "ifcont");
+        builder.CreateCondBr(cond, thenBlock, falseBlock);
 
-    // Create conditional branch
-    if (elseBlock)
-        builder.CreateCondBr(condValue, thenBlock, elseBlock);
-    else
-        builder.CreateCondBr(condValue, thenBlock, continueBlock);
-
-    // Generate then branch
-    builder.SetInsertPoint(thenBlock);
-
-    // Save environment before entering new scope
-    createEnvironment();
-
-    stmt->thenBranch->accept(*this);
-
-    // Restore environment after exiting scope
-    restoreEnvironment();
-
-    // Create branch to continue block if needed
-    if (!builder.GetInsertBlock()->getTerminator())
-        builder.CreateBr(continueBlock);
-
-    // Generate else branch if it exists
-    if (elseBlock)
-    {
-        elseBlock->insertInto(function);
-        builder.SetInsertPoint(elseBlock);
-
-        // Save environment before entering new scope
+        // Then body.
+        builder.SetInsertPoint(thenBlock);
         createEnvironment();
-
-        if (stmt->elseBranch)
-            stmt->elseBranch->accept(*this);
-
-        // Restore environment after exiting scope
+        if (clauses[i].second)
+            clauses[i].second->accept(*this);
         restoreEnvironment();
-
-        // Create branch to continue block if needed
         if (!builder.GetInsertBlock()->getTerminator())
-            builder.CreateBr(continueBlock);
+            builder.CreateBr(mergeBlock);
+
+        // Emit the next condition (or the else body) into the false block.
+        if (falseBlock != mergeBlock)
+            builder.SetInsertPoint(falseBlock);
+        if (lastClause && stmt->elseBranch)
+        {
+            createEnvironment();
+            stmt->elseBranch->accept(*this);
+            restoreEnvironment();
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(mergeBlock);
+        }
     }
 
-    // Continue with the next block
-    continueBlock->insertInto(function);
-    builder.SetInsertPoint(continueBlock);
+    mergeBlock->insertInto(function);
+    builder.SetInsertPoint(mergeBlock);
 }
 
 void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
