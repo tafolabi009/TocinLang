@@ -413,11 +413,12 @@ namespace ast
     class GetExpr : public Expression
     {
     public:
-        GetExpr(const lexer::Token &token, ExprPtr object, const std::string &name)
-            : Expression(token), object(std::move(object)), name(name) {}
+        GetExpr(const lexer::Token &token, ExprPtr object, const std::string &name, bool isSafe = false)
+            : Expression(token), object(std::move(object)), name(name), isSafe(isSafe) {}
         void accept(Visitor &visitor) override;
         ExprPtr object;
         std::string name;
+        bool isSafe = false; // true when parsed from `?.` (safe navigation)
         TypePtr getType() const override { return object ? object->getType() : nullptr; }
     };
 
@@ -736,6 +737,11 @@ namespace ast
         void accept(Visitor &visitor) override;
         ExprPtr value;
         std::vector<std::pair<ExprPtr, StmtPtr>> cases;
+        // Per-case constructor-pattern metadata, index-aligned with `cases`.
+        // caseCtor: "Some"/"None"/"Ok"/"Err" for a constructor pattern, else "".
+        // caseBind: payload variable bound by the pattern (e.g. "x"), else "".
+        std::vector<std::string> caseCtor;
+        std::vector<std::string> caseBind;
         StmtPtr defaultCase;
     };
 
@@ -849,12 +855,14 @@ namespace ast
     public:
         struct Case
         {
-            ExprPtr channel;
+            ExprPtr channel;      // channel expression for `<-channel` (null for default)
+            std::string bindName; // receive bind variable, e.g. `v` in `case v = <-ch:` ("" = none)
             StmtPtr body;
             bool isDefault;
 
-            Case(ExprPtr ch, StmtPtr b, bool def = false)
-                : channel(std::move(ch)), body(std::move(b)), isDefault(def) {}
+            Case(ExprPtr ch, std::string bind, StmtPtr b, bool def = false)
+                : channel(std::move(ch)), bindName(std::move(bind)),
+                  body(std::move(b)), isDefault(def) {}
         };
 
         SelectStmt(const lexer::Token &token, std::vector<Case> cases)

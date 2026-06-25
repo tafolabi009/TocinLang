@@ -1,0 +1,12 @@
+// expect: 42
+// Regression: two explicitly-typed locals each initialized by a call must each
+// evaluate their own initializer (previously the second reused a stale value,
+// producing invalid IR / a wrong result).
+def f(x: int) -> int { return x; }
+def g(x: int) -> int { return x; }
+
+def main() {
+    let a: int = f(10);
+    let b: int = g(32);
+    return a + b;
+}

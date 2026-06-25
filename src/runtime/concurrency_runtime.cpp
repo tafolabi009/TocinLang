@@ -5,6 +5,7 @@
 // C toolchain. Values flowing through channels are passed as 64-bit slots
 // (ints, bit-cast floats, or pointers), matching the codegen ABI.
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <csetjmp>
 #include <cstdint>
@@ -61,6 +62,27 @@ extern "C"
         int64_t value = ch->q.front();
         ch->q.pop_front();
         return value;
+    }
+
+    // Non-blocking receive: if a value is available, dequeue it into *out and
+    // return 1; otherwise return 0 without blocking. Used to implement `select`.
+    int8_t __tocin_chan_try_recv(void *handle, int64_t *out)
+    {
+        if (!handle || !out)
+            return 0;
+        auto *ch = static_cast<Channel *>(handle);
+        std::lock_guard<std::mutex> lock(ch->m);
+        if (ch->q.empty())
+            return 0;
+        *out = ch->q.front();
+        ch->q.pop_front();
+        return 1;
+    }
+
+    // Briefly sleep to avoid a hot busy-wait in a blocking `select` poll loop.
+    void __tocin_chan_park()
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     void __tocin_join_all();

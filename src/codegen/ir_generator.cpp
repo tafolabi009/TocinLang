@@ -558,26 +558,25 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
 
 void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
-    // Get the variable type
-    llvm::Type *varType = nullptr;
+    llvm::Type *varType = stmt->type ? getLLVMType(stmt->type) : nullptr;
 
-    if (stmt->type)
+    // Evaluate the initializer exactly once, here. Never reuse a stale
+    // `lastValue` left over from a previous statement (it may even belong to a
+    // different function, which produced "does not dominate all uses"). For an
+    // inferred type, the evaluated value also determines the variable's type.
+    llvm::Value *initVal = nullptr;
+    if (stmt->initializer)
     {
-        // If type is explicitly specified
-        varType = getLLVMType(stmt->type);
-    }
-    else if (stmt->initializer)
-    {
-        // If type is inferred from initializer
+        lastValue = nullptr;
         stmt->initializer->accept(*this);
         if (!lastValue)
             return;
-
-        varType = lastValue->getType();
+        initVal = lastValue;
+        if (!varType)
+            varType = initVal->getType();
     }
-    else
+    else if (!stmt->type)
     {
-        // No type and no initializer - error
         errorHandler.reportError(error::ErrorCode::T032_CANNOT_INFER_TYPE,
                                  "Cannot infer type for variable '" + stmt->name + "' without initializer",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
@@ -598,7 +597,9 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     // Store the variable in the symbol table
     namedValues[stmt->name] = alloca;
 
-    // Track the variable's class (for field/method resolution).
+    // Track the variable's class (for field/method resolution). Done after the
+    // initializer is evaluated so generic-constructor calls have already been
+    // resolved to a concrete mangled class name.
     std::string vcls = getExprClassName(stmt->initializer);
     if (vcls.empty() && stmt->type && classTypes.count(stmt->type->toString()))
         vcls = stmt->type->toString();
@@ -620,30 +621,16 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             varArrayElem[stmt->name] = it->second;
     }
 
-    // If there's an initializer, store its value
-    if (stmt->initializer)
+    // Store the initializer value (already evaluated above).
+    if (initVal)
     {
-        if (!lastValue)
+        if (initVal->getType() != varType)
         {
-            // If we don't have a value yet, compute the initializer
-            stmt->initializer->accept(*this);
-            if (!lastValue)
-                return;
-        }
-
-        // Validate that initializer type matches variable type
-        if (lastValue->getType() != varType)
-        {
-            // Simple cast for numeric values
-            if (lastValue->getType()->isIntegerTy() && varType->isIntegerTy())
-            {
-                lastValue = builder.CreateIntCast(lastValue, varType, true, "cast");
-            }
-            else if ((lastValue->getType()->isFloatTy() || lastValue->getType()->isDoubleTy()) &&
+            if (initVal->getType()->isIntegerTy() && varType->isIntegerTy())
+                initVal = builder.CreateIntCast(initVal, varType, true, "cast");
+            else if ((initVal->getType()->isFloatTy() || initVal->getType()->isDoubleTy()) &&
                      (varType->isFloatTy() || varType->isDoubleTy()))
-            {
-                lastValue = builder.CreateFPCast(lastValue, varType, "cast");
-            }
+                initVal = builder.CreateFPCast(initVal, varType, "cast");
             else
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
@@ -652,9 +639,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
                 return;
             }
         }
-
-        // Store the initial value
-        builder.CreateStore(lastValue, alloca);
+        builder.CreateStore(initVal, alloca);
     }
 }
 
@@ -1100,6 +1085,23 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     if (auto varExpr = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
     {
         std::string funcName = varExpr->name;
+
+        // Option/Result constructors. Some(x)/Ok(v) are tag 1; Err(e) is tag 0.
+        // None is the nil literal (a null pointer), handled in visitLiteralExpr.
+        if ((funcName == "Some" || funcName == "Ok") && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            lastValue = makeOptRes(1, lastValue);
+            return;
+        }
+        if (funcName == "Err" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            lastValue = makeOptRes(0, lastValue);
+            return;
+        }
 
         // len(arr) reads the length stored in the array header (offset 0).
         if (funcName == "len" && expr->arguments.size() == 1)
@@ -1764,6 +1766,35 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         }
         break;
 
+    case lexer::TokenType::BANG_BANG:
+    {
+        // Force-unwrap: abort if the operand is null, otherwise yield it.
+        if (!operand->getType()->isPointerTy()) {
+            // Non-pointer values can never be null; identity.
+            lastValue = operand;
+            break;
+        }
+        llvm::Function *fn = builder.GetInsertBlock()->getParent();
+        llvm::Value *isNull = builder.CreateICmpEQ(
+            operand,
+            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(operand->getType())),
+            "uw.isnull");
+        llvm::BasicBlock *nullBB = llvm::BasicBlock::Create(context, "unwrap.null", fn);
+        llvm::BasicBlock *okBB = llvm::BasicBlock::Create(context, "unwrap.ok", fn);
+        builder.CreateCondBr(isNull, nullBB, okBB);
+        builder.SetInsertPoint(nullBB);
+        llvm::Function *abortFn = module->getFunction("abort");
+        if (!abortFn)
+            abortFn = llvm::Function::Create(
+                llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+                llvm::Function::ExternalLinkage, "abort", *module);
+        builder.CreateCall(abortFn, {});
+        builder.CreateUnreachable();
+        builder.SetInsertPoint(okBB);
+        lastValue = operand;
+        break;
+    }
+
     case lexer::TokenType::BITWISE_NOT:
         if (operand->getType()->isIntegerTy()) {
             lastValue = builder.CreateNot(operand, "bitnot");
@@ -2319,7 +2350,62 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
             (void)cit;
         }
     }
+    // Null-safety operators preserve the operand's class: `a ?: b` and `a!!`.
+    if (auto bin = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+    {
+        if (bin->op.type == lexer::TokenType::ELVIS ||
+            bin->op.type == lexer::TokenType::NULL_COALESCE)
+        {
+            std::string c = getExprClassName(bin->left);
+            return !c.empty() ? c : getExprClassName(bin->right);
+        }
+    }
+    if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+    {
+        if (un->op.type == lexer::TokenType::BANG_BANG)
+            return getExprClassName(un->right);
+    }
     return "";
+}
+
+llvm::StructType *IRGenerator::getOptResType()
+{
+    if (!optResTy)
+    {
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        optResTy = llvm::StructType::create(context, {i64, i64}, "tocin.optres");
+    }
+    return optResTy;
+}
+
+llvm::Value *IRGenerator::normalizeToSlot(llvm::Value *v)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    if (v->getType()->isPointerTy())
+        return builder.CreatePtrToInt(v, i64, "slot");
+    if (v->getType()->isDoubleTy())
+        return builder.CreateBitCast(v, i64, "slot");
+    if (v->getType()->isIntegerTy() && v->getType() != i64)
+        return builder.CreateSExt(v, i64, "slot");
+    return v;
+}
+
+// Allocate a { tag, payload } Option/Result object on the heap.
+llvm::Value *IRGenerator::makeOptRes(int64_t tag, llvm::Value *payload)
+{
+    llvm::StructType *st = getOptResType();
+    llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Function *mallocFn = stdLibFunctions["malloc"];
+    llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+    llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {size}, "optres");
+    llvm::Value *tagP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "tagp");
+    builder.CreateStore(llvm::ConstantInt::get(i64, tag), tagP);
+    llvm::Value *payP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "payp");
+    builder.CreateStore(payload ? normalizeToSlot(payload) : llvm::ConstantInt::get(i64, 0), payP);
+    return obj;
 }
 
 void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &type)
@@ -2855,17 +2941,42 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 
         if (fieldIndex != -1)
         {
-            // Create a GEP instruction to access the field
             std::vector<llvm::Value *> indices = {
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), fieldIndex)};
+            llvm::Type *fieldType = structType->getStructElementType(fieldIndex);
+
+            // Safe navigation `a?.b`: when the base is null, yield a null/zero
+            // value of the field type instead of dereferencing.
+            if (expr->isSafe && object->getType()->isPointerTy())
+            {
+                llvm::Function *fn = builder.GetInsertBlock()->getParent();
+                llvm::Value *isNull = builder.CreateICmpEQ(
+                    object,
+                    llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(object->getType())),
+                    "safe.isnull");
+                llvm::BasicBlock *nullBB = builder.GetInsertBlock();
+                llvm::BasicBlock *loadBB = llvm::BasicBlock::Create(context, "safe.load", fn);
+                llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "safe.merge", fn);
+                builder.CreateCondBr(isNull, mergeBB, loadBB);
+
+                builder.SetInsertPoint(loadBB);
+                llvm::Value *fieldPtr = builder.CreateGEP(structType, object, indices, "field." + expr->name);
+                llvm::Value *loaded = builder.CreateLoad(fieldType, fieldPtr);
+                llvm::BasicBlock *loadEnd = builder.GetInsertBlock();
+                builder.CreateBr(mergeBB);
+
+                builder.SetInsertPoint(mergeBB);
+                llvm::PHINode *phi = builder.CreatePHI(fieldType, 2, "safe");
+                phi->addIncoming(llvm::Constant::getNullValue(fieldType), nullBB);
+                phi->addIncoming(loaded, loadEnd);
+                lastValue = phi;
+                return;
+            }
 
             // Get a pointer to the field (using the known struct type)
             llvm::Value *fieldPtr = builder.CreateGEP(
                 structType, object, indices, "field." + expr->name);
-
-            // Load the field value (use the field type from class info)
-            llvm::Type *fieldType = structType->getStructElementType(fieldIndex);
             lastValue = builder.CreateLoad(fieldType, fieldPtr);
             return;
         }
@@ -3878,6 +3989,48 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         return;
     }
 
+    // Elvis / null-coalescing: `a ?: b` / `a ?? b`. Short-circuit — only
+    // evaluate `b` when `a` is null. Handled before the eager both-operands
+    // evaluation below.
+    if (expr->op.type == lexer::TokenType::ELVIS ||
+        expr->op.type == lexer::TokenType::NULL_COALESCE)
+    {
+        expr->left->accept(*this);
+        llvm::Value *lhs = lastValue;
+        if (!lhs) { lastValue = nullptr; return; }
+
+        if (!lhs->getType()->isPointerTy()) {
+            // A non-pointer left operand is never null; result is the left.
+            lastValue = lhs;
+            return;
+        }
+
+        llvm::Function *fn = builder.GetInsertBlock()->getParent();
+        llvm::Value *isNull = builder.CreateICmpEQ(
+            lhs, llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(lhs->getType())),
+            "elvis.isnull");
+        llvm::BasicBlock *lhsBB = builder.GetInsertBlock();
+        llvm::BasicBlock *rhsBB = llvm::BasicBlock::Create(context, "elvis.rhs", fn);
+        llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "elvis.merge", fn);
+        builder.CreateCondBr(isNull, rhsBB, mergeBB);
+
+        builder.SetInsertPoint(rhsBB);
+        expr->right->accept(*this);
+        llvm::Value *rhs = lastValue;
+        if (!rhs) { lastValue = nullptr; return; }
+        if (rhs->getType() != lhs->getType() && rhs->getType()->isPointerTy())
+            rhs = builder.CreateBitCast(rhs, lhs->getType(), "elvis.cast");
+        llvm::BasicBlock *rhsEnd = builder.GetInsertBlock();
+        builder.CreateBr(mergeBB);
+
+        builder.SetInsertPoint(mergeBB);
+        llvm::PHINode *phi = builder.CreatePHI(lhs->getType(), 2, "elvis");
+        phi->addIncoming(lhs, lhsBB);
+        phi->addIncoming(rhs, rhsEnd);
+        lastValue = phi;
+        return;
+    }
+
     // Evaluate left operand
     expr->left->accept(*this);
     llvm::Value *left = lastValue;
@@ -4237,7 +4390,69 @@ void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
 
     for (size_t i = 0; i < stmt->cases.size(); ++i)
     {
-        // Evaluate this case's pattern and compare for equality with the value.
+        std::string ctor = i < stmt->caseCtor.size() ? stmt->caseCtor[i] : "";
+
+        // ---- Option/Result constructor pattern (Some/Ok/Err/None) ----
+        if (!ctor.empty())
+        {
+            llvm::StructType *st = getOptResType();
+            llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *mvPtr = matchVal->getType()->isPointerTy()
+                                     ? matchVal
+                                     : builder.CreateIntToPtr(matchVal, ptrTy, "mv.ptr");
+            llvm::Value *nullp = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(mvPtr->getType()));
+
+            llvm::BasicBlock *caseBlock = llvm::BasicBlock::Create(context, "case", function);
+            llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context, "casenext", function);
+
+            if (ctor == "None")
+            {
+                // None is the null pointer.
+                builder.CreateCondBr(builder.CreateICmpEQ(mvPtr, nullp, "is.none"),
+                                     caseBlock, nextBlock);
+            }
+            else
+            {
+                // Some/Ok/Err are non-null; distinguish by tag (Some/Ok=1, Err=0).
+                int64_t wantTag = (ctor == "Some" || ctor == "Ok") ? 1 : 0;
+                llvm::BasicBlock *tagBlock = llvm::BasicBlock::Create(context, "casetag", function);
+                builder.CreateCondBr(builder.CreateICmpNE(mvPtr, nullp, "nonnull"),
+                                     tagBlock, nextBlock);
+                builder.SetInsertPoint(tagBlock);
+                llvm::Value *tagP = builder.CreateGEP(st, mvPtr,
+                    {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "tagp");
+                llvm::Value *tag = builder.CreateLoad(i64, tagP, "tag");
+                builder.CreateCondBr(
+                    builder.CreateICmpEQ(tag, llvm::ConstantInt::get(i64, wantTag), "tagcmp"),
+                    caseBlock, nextBlock);
+            }
+
+            builder.SetInsertPoint(caseBlock);
+            auto savedNamed = namedValues;
+            createEnvironment();
+            std::string bind = i < stmt->caseBind.size() ? stmt->caseBind[i] : "";
+            if (!bind.empty() && ctor != "None")
+            {
+                llvm::Value *payP = builder.CreateGEP(st, mvPtr,
+                    {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "payp");
+                llvm::Value *pay = builder.CreateLoad(i64, payP, bind);
+                llvm::AllocaInst *slot = builder.CreateAlloca(i64, nullptr, bind);
+                builder.CreateStore(pay, slot);
+                namedValues[bind] = slot;
+            }
+            if (stmt->cases[i].second)
+                stmt->cases[i].second->accept(*this);
+            restoreEnvironment();
+            namedValues = savedNamed;
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(mergeBlock);
+
+            builder.SetInsertPoint(nextBlock);
+            continue;
+        }
+
+        // ---- Value-equality pattern (case 5:, case "x":) ----
         stmt->cases[i].first->accept(*this);
         llvm::Value *pat = lastValue;
         if (!pat)
@@ -4451,87 +4666,100 @@ void codegen::IRGenerator::visitChannelReceiveExpr(ast::ChannelReceiveExpr* expr
 }
 
 void codegen::IRGenerator::visitSelectStmt(ast::SelectStmt* stmt) {
-    // Generate IR for select statement
-    
-    // Create a function to handle the select logic
-    std::string selectFuncName = "select_handler_" + std::to_string(getNextId());
-    llvm::Function* selectFunc = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false), // Returns case index
-        llvm::Function::InternalLinkage,
-        selectFuncName,
-        module.get()
-    );
-    
-    // Create the select function body
-    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", selectFunc);
-    builder.SetInsertPoint(entryBlock);
-    
-    // Get the runtime select function
-    llvm::Function* runtimeSelectFunc = module->getFunction("runtime_select");
-    if (!runtimeSelectFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* selectType = llvm::FunctionType::get(
-            llvm::Type::getInt32Ty(context), // Returns selected case index
-            {llvm::Type::getInt32Ty(context)}, // Number of cases
-            false
-        );
-        runtimeSelectFunc = llvm::Function::Create(
-            selectType,
-            llvm::Function::ExternalLinkage,
-            "runtime_select",
-            module.get()
-        );
+    // `select` waits on multiple channel receives. Lowered to a poll loop over
+    // the cases using the non-blocking __tocin_chan_try_recv: try each channel;
+    // run the first ready case's body; with a `default`, run it when none are
+    // ready; otherwise park briefly and retry (blocking).
+    llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+
+    llvm::Function *tryF = module->getFunction("__tocin_chan_try_recv");
+    if (!tryF)
+        tryF = llvm::Function::Create(
+            llvm::FunctionType::get(i8, {ptr, ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_try_recv", *module);
+    llvm::Function *parkF = module->getFunction("__tocin_chan_park");
+    if (!parkF)
+        parkF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_park", *module);
+
+    // Split receive cases from an optional default.
+    std::vector<const ast::SelectStmt::Case *> recvCases;
+    const ast::SelectStmt::Case *defCase = nullptr;
+    for (const auto &c : stmt->cases) {
+        if (c.isDefault) defCase = &c;
+        else recvCases.push_back(&c);
     }
-    
-    // Call the runtime select function with the number of cases
-    std::vector<llvm::Value*> args = {
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), stmt->cases.size())
-    };
-    llvm::Value* selectedCase = builder.CreateCall(runtimeSelectFunc, args);
-    
-    // Return the selected case index
-    builder.CreateRet(selectedCase);
-    
-    // Now create the main select logic in the current function
-    llvm::BasicBlock* currentBlock = builder.GetInsertBlock();
-    llvm::Function* currentFunction = currentBlock->getParent();
-    
-    // Call the select handler
-    std::vector<llvm::Value*> callArgs;
-    llvm::Value* caseIndex = builder.CreateCall(selectFunc, callArgs);
-    
-    // Create a switch statement to handle each case
-    llvm::SwitchInst* switchInst = builder.CreateSwitch(caseIndex, nullptr, stmt->cases.size());
-    
-    // Add cases for each select case
-    for (size_t i = 0; i < stmt->cases.size(); ++i) {
-        const auto& selectCase = stmt->cases[i];
-        
-        // Create a basic block for this case
-        llvm::BasicBlock* caseBlock = llvm::BasicBlock::Create(context, 
-            "select_case_" + std::to_string(i), currentFunction);
-        
-        // Add the case to the switch
-        switchInst->addCase(llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), i), caseBlock);
-        
-        // Set the insert point to the case block
-        builder.SetInsertPoint(caseBlock);
-        
-        // Execute the case body
-        if (selectCase.body) {
-            selectCase.body->accept(*this);
+
+    // Evaluate channel handles once; one received-value slot per case.
+    std::vector<llvm::Value *> handles, slots;
+    for (auto *c : recvCases) {
+        c->channel->accept(*this);
+        llvm::Value *h = lastValue;
+        if (!h) { lastValue = nullptr; return; }
+        if (!h->getType()->isPointerTy())
+            h = builder.CreateIntToPtr(h, ptr, "ch.ptr");
+        handles.push_back(h);
+        slots.push_back(createEntryBlockAlloca(function, "sel.slot", i64));
+    }
+
+    llvm::BasicBlock *pollBlock = llvm::BasicBlock::Create(context, "select.poll", function);
+    llvm::BasicBlock *noMatch = llvm::BasicBlock::Create(context, "select.nomatch", function);
+    llvm::BasicBlock *contBlock = llvm::BasicBlock::Create(context, "select.cont", function);
+    std::vector<llvm::BasicBlock *> tryBlocks, bodyBlocks;
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        tryBlocks.push_back(llvm::BasicBlock::Create(context, "select.try", function));
+        bodyBlocks.push_back(llvm::BasicBlock::Create(context, "select.body", function));
+    }
+
+    builder.CreateBr(pollBlock);
+    builder.SetInsertPoint(pollBlock);
+    builder.CreateBr(recvCases.empty() ? noMatch : tryBlocks[0]);
+
+    // Per-case readiness checks, chained.
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        builder.SetInsertPoint(tryBlocks[i]);
+        llvm::Value *got = builder.CreateCall(tryF, {handles[i], slots[i]}, "got");
+        llvm::Value *ready = builder.CreateICmpNE(got, llvm::ConstantInt::get(i8, 0), "ready");
+        llvm::BasicBlock *nextTry = (i + 1 < recvCases.size()) ? tryBlocks[i + 1] : noMatch;
+        builder.CreateCondBr(ready, bodyBlocks[i], nextTry);
+    }
+
+    // No case ready: run default, or park and retry (blocking).
+    builder.SetInsertPoint(noMatch);
+    if (defCase) {
+        createEnvironment();
+        if (defCase->body) defCase->body->accept(*this);
+        restoreEnvironment();
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(contBlock);
+    } else {
+        builder.CreateCall(parkF, {});
+        builder.CreateBr(pollBlock);
+    }
+
+    // Case bodies: bind the received value (if named), then run the body.
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        builder.SetInsertPoint(bodyBlocks[i]);
+        auto savedNamed = namedValues;
+        createEnvironment();
+        if (!recvCases[i]->bindName.empty()) {
+            llvm::AllocaInst *bindSlot = createEntryBlockAlloca(function, recvCases[i]->bindName, i64);
+            builder.CreateStore(builder.CreateLoad(i64, slots[i], "recv"), bindSlot);
+            namedValues[recvCases[i]->bindName] = bindSlot;
         }
-        
-        // Branch to the end of the select
-        llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(context, "select_end", currentFunction);
-        builder.CreateBr(endBlock);
-        
-        // Set the insert point to the end block
-        builder.SetInsertPoint(endBlock);
+        if (recvCases[i]->body) recvCases[i]->body->accept(*this);
+        restoreEnvironment();
+        namedValues = savedNamed;
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(contBlock);
     }
-    
-    // Set the current value to void
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+
+    builder.SetInsertPoint(contBlock);
+    lastValue = nullptr;
 }
 
 int IRGenerator::getNextId() {

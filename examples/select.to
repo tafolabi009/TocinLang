@@ -1,0 +1,30 @@
+// select waits on multiple channels and runs the case that becomes ready.
+//   tocin examples/select.to --run
+
+def worker(ch: channel<int>, n: int) {
+    ch <- n;
+}
+
+def main() {
+    let fast = channel<int>();
+    let slow = channel<int>();
+
+    go worker(fast, 10);
+
+    // Blocking select: waits until one of the channels has a value. Only `fast`
+    // gets one here, so we receive 10.
+    let got = 0;
+    select {
+        case v = <-fast: { got = v; }
+        case v = <-slow: { got = v; }
+    }
+    println("received {}", got);     // received 10
+
+    // Non-blocking select: nothing is ready, so the default runs.
+    select {
+        case v = <-slow: { println("unexpected {}", v); }
+        default: { println("nothing ready"); }
+    }
+
+    return got;
+}

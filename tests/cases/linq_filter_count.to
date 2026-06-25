@@ -1,0 +1,6 @@
+// expect: 3
+import std.linq;
+def main() -> int {
+    let a = [5, 1, 8, 2, 9, 0];
+    return countGreater(a, 3);   // 5,8,9 -> 3
+}

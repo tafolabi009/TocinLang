@@ -1,0 +1,4 @@
+// expect: 42
+// C FFI: call libc labs via an extern declaration.
+extern def labs(x: int) -> int;
+def main() -> int { return labs(-42); }

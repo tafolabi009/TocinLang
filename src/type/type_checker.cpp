@@ -397,8 +397,19 @@ namespace type_checker
 
     void TypeChecker::visitSelectStmt(ast::SelectStmt *stmt)
     {
-        // Type check select statement (concurrency)
-        // In practice, check all cases and ensure they are valid channel operations
+        // Check each case's channel expression and body. The received value is
+        // bound as an int (the 64-bit channel slot) in the case body's scope.
+        for (auto &c : stmt->cases)
+        {
+            pushScope();
+            if (!c.isDefault && c.channel)
+                c.channel->accept(*this);
+            if (environment_ && !c.bindName.empty())
+                environment_->define(c.bindName, makeBasic(ast::TypeKind::INT), false);
+            if (c.body)
+                c.body->accept(*this);
+            popScope();
+        }
         currentType_ = nullptr;
     }
 

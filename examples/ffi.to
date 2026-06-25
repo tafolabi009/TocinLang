@@ -1,0 +1,20 @@
+// C FFI: call C library functions directly via `extern def`.
+//   tocin examples/ffi.to --run
+//
+// An `extern def` declares a function with no body; the JIT resolves it from
+// the running process (libc/libm here), and native builds link it normally.
+
+extern def labs(x: int) -> int;          // C long abs
+extern def atoi(s: string) -> int;       // parse an int from a string
+extern def putchar(c: int) -> int;       // write one byte to stdout
+extern def hypot(x: float, y: float) -> float;  // libm
+
+def main() {
+    println("labs(-42)   = {}", labs(-42));      // 42
+    println("atoi(\"123\") = {}", atoi("123"));   // 123
+    println("hypot(3,4)  = {}", hypot(3.0, 4.0)); // 5
+
+    putchar(72); putchar(105); putchar(10);       // "Hi\n"
+
+    return labs(-7);                               // exit 7
+}

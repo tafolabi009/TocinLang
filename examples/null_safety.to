@@ -1,0 +1,29 @@
+// Null-safety operators: safe navigation (?.), elvis / null-coalescing (?:),
+// and force-unwrap (!!).
+//   tocin examples/null_safety.to --run
+//
+// References (class instances) can be null (`None`). These operators make
+// working with possibly-null references concise and safe.
+
+class Box {
+    v: int;
+    def get(self) -> int { return self.v; }
+}
+
+def main() {
+    let present: Box = Box(42);
+    let missing: Box = None;
+
+    // ?: supplies a fallback when the left side is null.
+    let a = present ?: Box(0);     // present is non-null -> present
+    let b = missing ?: Box(7);     // missing is null     -> Box(7)
+    println("elvis: {} {}", a.get(), b.get());     // 42 7
+
+    // ?. reads a field only when the base is non-null, else yields 0/null.
+    println("safe:  {} {}", present?.v, missing?.v); // 42 0
+
+    // !! asserts non-null (would abort if it were null).
+    println("force: {}", present!!.get());          // 42
+
+    return present!!.get();                          // 42
+}
