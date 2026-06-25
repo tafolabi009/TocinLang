@@ -637,6 +637,13 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             varFuncSig[stmt->name] = it->second;
     }
 
+    // Track string-typed locals so == / != compare by value, not pointer.
+    bool declaredString = stmt->type && stmt->type->toString() == "string";
+    if (declaredString || isStringExpr(stmt->initializer))
+        varIsString.insert(stmt->name);
+    else
+        varIsString.erase(stmt->name);
+
     // Store the initializer value (already evaluated above).
     if (initVal)
     {
@@ -647,6 +654,10 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             else if ((initVal->getType()->isFloatTy() || initVal->getType()->isDoubleTy()) &&
                      (varType->isFloatTy() || varType->isDoubleTy()))
                 initVal = builder.CreateFPCast(initVal, varType, "cast");
+            else if (initVal->getType()->isIntegerTy() && !initVal->getType()->isIntegerTy(1) &&
+                     (varType->isFloatTy() || varType->isDoubleTy()))
+                // Implicit int -> float when the variable is declared float.
+                initVal = builder.CreateSIToFP(initVal, varType, "promote");
             else
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
@@ -885,6 +896,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     // Clear named values for next function
     namedValues.clear();
     varFuncSig.clear();
+    varIsString.clear();
 }
 
 void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
@@ -2605,6 +2617,37 @@ void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &
     // the callee signature.
     if (auto ft = std::dynamic_pointer_cast<ast::FunctionType>(type))
         varFuncSig[name] = ft;
+    // Record string parameters so == / != compare by value.
+    if (type && type->toString() == "string")
+        varIsString.insert(name);
+}
+
+bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
+{
+    if (!expr)
+        return false;
+    if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr))
+        return lit->literalType == ast::LiteralExpr::LiteralType::STRING;
+    if (auto grp = std::dynamic_pointer_cast<ast::GroupingExpr>(expr))
+        return isStringExpr(grp->expression);
+    if (std::dynamic_pointer_cast<ast::StringInterpolationExpr>(expr))
+        return true;
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+        return varIsString.count(var->name) > 0;
+    if (auto bin = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+        return bin->op.type == lexer::TokenType::PLUS &&
+               (isStringExpr(bin->left) || isStringExpr(bin->right));
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+    {
+        if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            // Builtins whose return value is a freshly-allocated string.
+            static const std::set<std::string> strFns = {
+                "substring", "intToStr", "charToStr", "readFile", "readLine"};
+            return strFns.count(callee->name) > 0;
+        }
+    }
+    return false;
 }
 
 llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
@@ -2708,6 +2751,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     currentFunction = function;
     namedValues.clear();
     varFuncSig.clear();
+    varIsString.clear();
     varClasses.clear();
     varArrayElem.clear();
     unsigned i = 0;
@@ -3038,6 +3082,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     currentClassName = className;
     namedValues.clear();
     varFuncSig.clear();
+    varIsString.clear();
 
     // Bind parameters (including `self`) into the method scope.
     ai = 0;
@@ -4378,6 +4423,15 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
             lastValue = builder.CreateFCmpOEQ(left, right, "feq");
+        } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy() &&
+                   isStringExpr(expr->left) && isStringExpr(expr->right)) {
+            // String value equality: __tocin_str_eq(a,b) != 0
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Type *ptr = llvm::PointerType::get(context, 0);
+            auto callee = module->getOrInsertFunction(
+                "__tocin_str_eq", llvm::FunctionType::get(i64, {ptr, ptr}, false));
+            llvm::Value *r = builder.CreateCall(callee, {left, right}, "streq");
+            lastValue = builder.CreateICmpNE(r, llvm::ConstantInt::get(i64, 0), "eq");
         } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
             lastValue = builder.CreateICmpEQ(left, right, "ptr_eq");
         } else {
@@ -4394,6 +4448,15 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
             lastValue = builder.CreateFCmpONE(left, right, "fne");
+        } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy() &&
+                   isStringExpr(expr->left) && isStringExpr(expr->right)) {
+            // String value inequality: __tocin_str_eq(a,b) == 0
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Type *ptr = llvm::PointerType::get(context, 0);
+            auto callee = module->getOrInsertFunction(
+                "__tocin_str_eq", llvm::FunctionType::get(i64, {ptr, ptr}, false));
+            llvm::Value *r = builder.CreateCall(callee, {left, right}, "streq");
+            lastValue = builder.CreateICmpEQ(r, llvm::ConstantInt::get(i64, 0), "ne");
         } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
             lastValue = builder.CreateICmpNE(left, right, "ptr_ne");
         } else {
