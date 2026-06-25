@@ -1,4 +1,4 @@
-// Tocin concurrency runtime: goroutines (OS threads) and channels.
+// Tocin runtime: goroutines (OS threads), channels, and exception handling.
 //
 // These symbols are linked into the compiler/runtime and resolved by the JIT
 // from the running process, and linked into native executables via the normal
@@ -6,7 +6,9 @@
 // (ints, bit-cast floats, or pointers), matching the codegen ABI.
 #include <atomic>
 #include <condition_variable>
+#include <csetjmp>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <mutex>
@@ -86,5 +88,58 @@ extern "C"
         for (auto &t : threads)
             if (t.joinable())
                 t.join();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exception handling: setjmp/longjmp-based unwinding.
+//
+// Each `try` allocates a jmp_buf in its own frame, calls setjmp, and registers
+// the buffer with __tocin_try_register. `throw` records a 64-bit value and
+// longjmps back to the most recently registered handler. The handler stack is
+// thread-local so goroutines have independent exception state.
+// ---------------------------------------------------------------------------
+namespace
+{
+    thread_local std::vector<std::jmp_buf *> g_handlerStack;
+    thread_local int64_t g_excValue = 0;
+}
+
+extern "C"
+{
+    // Register a setjmp buffer as the innermost active exception handler.
+    void __tocin_try_register(void *buf)
+    {
+        g_handlerStack.push_back(static_cast<std::jmp_buf *>(buf));
+    }
+
+    // Remove the innermost handler (try body completed without throwing).
+    void __tocin_try_pop()
+    {
+        if (!g_handlerStack.empty())
+            g_handlerStack.pop_back();
+    }
+
+    // Return the value carried by the most recently thrown exception.
+    int64_t __tocin_exc_value()
+    {
+        return g_excValue;
+    }
+
+    // Throw: record the value and unwind to the nearest handler via longjmp.
+    // With no active handler the exception is fatal.
+    void __tocin_throw(int64_t value)
+    {
+        g_excValue = value;
+        if (g_handlerStack.empty())
+        {
+            std::fprintf(stderr,
+                         "Tocin: uncaught exception (value=%lld)\n",
+                         static_cast<long long>(value));
+            std::abort();
+        }
+        std::jmp_buf *buf = g_handlerStack.back();
+        g_handlerStack.pop_back();
+        std::longjmp(*buf, 1);
     }
 }

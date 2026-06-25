@@ -69,6 +69,9 @@ namespace ast
     class GoStmt;
     class ArrayLiteralExpr;
     class IndexExpr;
+    class EnumStmt;
+    class TryStmt;
+    class ThrowStmt;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -115,6 +118,9 @@ namespace ast
         virtual void visitGoStmt(GoStmt *stmt) = 0;
         virtual void visitArrayLiteralExpr(ArrayLiteralExpr *expr) = 0;
         virtual void visitIndexExpr(IndexExpr *expr) = 0;
+        virtual void visitEnumStmt(EnumStmt *stmt) = 0;
+        virtual void visitTryStmt(TryStmt *stmt) = 0;
+        virtual void visitThrowStmt(ThrowStmt *stmt) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -899,6 +905,52 @@ namespace ast
         ExprPtr object;
         ExprPtr index;
         TypePtr getType() const override { return nullptr; }
+    };
+
+    /**
+     * @brief Enum declaration (e.g., enum Color { Red, Green, Blue }).
+     *        Members are integer constants with auto-incrementing values.
+     */
+    class EnumStmt : public Statement
+    {
+    public:
+        EnumStmt(const lexer::Token &token, const std::string &name,
+                 std::vector<std::pair<std::string, int64_t>> members)
+            : Statement(token), name(name), members(std::move(members)) {}
+        void accept(Visitor &visitor) override { visitor.visitEnumStmt(this); }
+        std::string name;
+        std::vector<std::pair<std::string, int64_t>> members;
+    };
+
+    /**
+     * @brief Try/catch/finally statement for error handling.
+     *        try { ... } catch (e) { ... } finally { ... }
+     *        catchBlock/finallyBlock may be null when absent.
+     */
+    class TryStmt : public Statement
+    {
+    public:
+        TryStmt(const lexer::Token &token, StmtPtr tryBlock,
+                const std::string &catchVar, StmtPtr catchBlock, StmtPtr finallyBlock)
+            : Statement(token), tryBlock(std::move(tryBlock)), catchVar(catchVar),
+              catchBlock(std::move(catchBlock)), finallyBlock(std::move(finallyBlock)) {}
+        void accept(Visitor &visitor) override { visitor.visitTryStmt(this); }
+        StmtPtr tryBlock;
+        std::string catchVar;   // name bound to the caught value (may be empty)
+        StmtPtr catchBlock;     // may be null
+        StmtPtr finallyBlock;   // may be null
+    };
+
+    /**
+     * @brief Throw statement: throw <expr>;
+     */
+    class ThrowStmt : public Statement
+    {
+    public:
+        ThrowStmt(const lexer::Token &token, ExprPtr value)
+            : Statement(token), value(std::move(value)) {}
+        void accept(Visitor &visitor) override { visitor.visitThrowStmt(this); }
+        ExprPtr value;
     };
 
     /**

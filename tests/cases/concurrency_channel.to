@@ -1,0 +1,18 @@
+// expect: 55
+// Five goroutines (real OS threads) each send a square into a channel; the main
+// thread sums them. The total is order-independent, so the result is stable.
+def worker(ch: channel<int>, n: int) {
+    ch <- n * n;
+}
+
+def main() {
+    let ch = channel<int>();
+    for i in 1..6 {
+        go worker(ch, i);
+    }
+    let total = 0;
+    for i in 0..5 {
+        total = total + <-ch;
+    }
+    return total;
+}

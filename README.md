@@ -22,6 +22,10 @@ clear what is implemented versus planned.
   (declarations are order-independent via two-pass code generation).
 - **Control flow** — `if / elif / else`, `while`, range-based `for i in a..b`, and
   `match` / `case` / `default`.
+- **Error handling** — `throw`, `try` / `catch (e)` / `finally`; exceptions unwind
+  across function calls (setjmp/longjmp runtime) in both JIT and native builds.
+- **Enums** — `enum Color { Red, Green, Blue }` with auto-incrementing integer
+  constants, usable bare or qualified (`Color.Red`).
 - **Classes / structs** — fields, methods with `self`, construction, field read and
   mutation, and method calls.
 - **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with
@@ -171,6 +175,27 @@ def main() {
 }
 ```
 
+Error handling with `throw` / `try` / `catch` / `finally`:
+
+```tocin
+def divide(a: int, b: int) -> int {
+    if b == 0 { throw 1; }                 // unwinds to the nearest catch
+    return a / b;
+}
+
+def main() {
+    try {
+        let r = divide(10, 0);
+        println("never printed: {}", r);
+    } catch (e) {
+        println("error code {}", e);       // error code 1
+    } finally {
+        println("done");                   // always runs
+    }
+    return 0;
+}
+```
+
 ## How it works
 
 ```
@@ -209,7 +234,9 @@ tocin-compiler/
 ## Testing
 
 ```bash
-cmake --build build --target tocin tocin_tests
+# tocin_runtime_shared lets the .to runner (lli) resolve the __tocin_* runtime
+# symbols used by concurrency and exception programs.
+cmake --build build --target tocin tocin_tests tocin_runtime_shared
 ctest --test-dir build --output-on-failure       # C++ unit tests
 bash scripts/run_to_tests.sh                      # .to integration programs
 ```
@@ -229,7 +256,8 @@ end-to-end**. They are listed honestly so expectations match reality:
   propagation pending.
 - **`async` / `await`** — goroutines and channels work; structured async is pending.
 - **`select`** over multiple channels.
-- **Error handling** — `try` / `catch` / `throw` and **enums**.
+- **Typed exceptions** — `throw` / `catch` carry an integer code today; throwing and
+  binding arbitrary typed payloads (e.g. error objects) is pending.
 - **Python / JavaScript FFI** — C FFI works via `extern`; deep CPython and V8
   integration is gated behind build flags (V8 is not bundled — it is not
   installable from standard package managers, so CI builds with `-DWITH_V8=OFF`).

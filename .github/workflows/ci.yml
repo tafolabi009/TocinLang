@@ -73,7 +73,7 @@ jobs:
             -DLLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION }}/lib/cmake/llvm
 
       - name: Build compiler and tests
-        run: ninja -C build tocin tocin_tests
+        run: ninja -C build tocin tocin_tests tocin_runtime_shared
 
       - name: Run C++ unit tests (ctest)
         working-directory: build
@@ -130,7 +130,7 @@ jobs:
             -DLLVM_DIR="${LLVM_DIR}"
 
       - name: Build compiler and tests
-        run: ninja -C build tocin tocin_tests
+        run: ninja -C build tocin tocin_tests tocin_runtime_shared
 
       - name: Run C++ unit tests (ctest)
         working-directory: build

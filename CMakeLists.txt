@@ -451,11 +451,19 @@ endif()
 # Propagate all library dependencies through the core library so both the
 # tocin executable and the test binary inherit them automatically.
 target_link_libraries(tocin_core PUBLIC ${LINK_LIBS})
-# Standalone Tocin runtime (channels/goroutines) — no LLVM dependency, so it
-# can be linked into native executables produced by the AOT path.
+# Standalone Tocin runtime (channels/goroutines/exceptions) — no LLVM
+# dependency, so it can be linked into native executables produced by the AOT
+# path.
 add_library(tocin_runtime STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp)
 set_target_properties(tocin_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(tocin_runtime PUBLIC Threads::Threads)
+
+# A shared-library build of the same runtime, so the LLVM interpreter (lli) used
+# by the .to test suite can `-load` it and resolve the __tocin_* symbols when
+# executing IR for programs that use channels, goroutines or exceptions.
+add_library(tocin_runtime_shared SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp)
+set_target_properties(tocin_runtime_shared PROPERTIES OUTPUT_NAME tocin_runtime)
+target_link_libraries(tocin_runtime_shared PUBLIC Threads::Threads)
 
 target_link_libraries(tocin PRIVATE tocin_core tocin_runtime)
 # Tell the driver where to find the runtime archive when linking AOT binaries.
