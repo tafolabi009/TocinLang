@@ -135,6 +135,20 @@ namespace parser
             {
                 methods.push_back(functionDeclaration());
             }
+            else if (check(lexer::TokenType::IDENTIFIER))
+            {
+                // Bare field declaration: `name: Type;` (struct-style)
+                auto fieldName = consume(lexer::TokenType::IDENTIFIER, "Expected field name");
+                ast::TypePtr fieldType = nullptr;
+                if (match(lexer::TokenType::COLON))
+                    fieldType = parseType();
+                ast::ExprPtr init = nullptr;
+                if (match(lexer::TokenType::EQUAL))
+                    init = expression();
+                match(lexer::TokenType::SEMI_COLON); // optional trailing ';'
+                fields.push_back(std::make_shared<ast::VariableStmt>(
+                    fieldName, fieldName.value, fieldType, init, false));
+            }
             else
             {
                 error(peek(), "Expected field or method declaration");
@@ -592,6 +606,21 @@ namespace parser
         {
             do
             {
+                // Method receiver: a leading `self` with no required type.
+                if (check(lexer::TokenType::SELF) ||
+                    (check(lexer::TokenType::IDENTIFIER) && peek().value == "self"))
+                {
+                    auto selfTok = advance();
+                    ast::TypePtr selfType;
+                    if (match(lexer::TokenType::COLON))
+                        selfType = parseType();
+                    else
+                        selfType = std::make_shared<ast::SimpleType>(
+                            lexer::Token(lexer::TokenType::IDENTIFIER, "Self", "",
+                                         selfTok.line, selfTok.column));
+                    parameters.emplace_back("self", selfType);
+                    continue;
+                }
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected parameter name");
                 consume(lexer::TokenType::COLON, "Expected ':' after parameter name");
                 auto type = parseType();

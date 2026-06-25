@@ -157,6 +157,9 @@ namespace codegen
 
         // Symbol tables
         std::map<std::string, llvm::AllocaInst *> namedValues;                     // Variable symbol table
+        std::map<std::string, std::string> varClasses;                            // Variable name -> class name
+        std::string currentClassName;                                              // Enclosing class while generating a method
+        std::string lastExprClassName;                                             // Class name of the most recent expression value
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
         std::map<std::string, llvm::Function *> classMethods;                      // Class method table
@@ -231,6 +234,10 @@ namespace codegen
 
         // Utility to infer type name from a value (for opaque pointers)
         std::string inferTypeNameFromValue(llvm::Value *value);
+
+        // Determine the class name of an expression (self, local variables of
+        // class type, and constructor calls), used for field/method resolution.
+        std::string getExprClassName(const ast::ExprPtr &expr);
     };
 
     // Pattern visitor for match statements
