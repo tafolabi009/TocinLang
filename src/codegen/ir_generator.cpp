@@ -928,6 +928,50 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     {
         std::string funcName = varExpr->name;
 
+        // print()/println() are built-ins: format each argument according to
+        // its runtime type and forward to printf. println appends a newline.
+        if (funcName == "print" || funcName == "println")
+        {
+            llvm::Function *printfFunc = stdLibFunctions["printf"];
+            std::string format;
+            std::vector<llvm::Value *> printfArgs;
+            printfArgs.push_back(nullptr); // reserved for the format string
+            for (const auto &arg : expr->arguments)
+            {
+                arg->accept(*this);
+                if (!lastValue)
+                    return;
+                llvm::Value *v = lastValue;
+                llvm::Type *t = v->getType();
+                if (t->isIntegerTy())
+                {
+                    v = builder.CreateIntCast(v, llvm::Type::getInt64Ty(context),
+                                              !t->isIntegerTy(1), "printi");
+                    format += "%lld";
+                }
+                else if (t->isFloatTy() || t->isDoubleTy())
+                {
+                    if (t->isFloatTy())
+                        v = builder.CreateFPExt(v, llvm::Type::getDoubleTy(context), "printf_d");
+                    format += "%f";
+                }
+                else if (t->isPointerTy())
+                {
+                    format += "%s";
+                }
+                else
+                {
+                    format += "%p";
+                }
+                printfArgs.push_back(v);
+            }
+            if (funcName == "println")
+                format += "\n";
+            printfArgs[0] = builder.CreateGlobalString(format, "fmt");
+            lastValue = builder.CreateCall(printfFunc->getFunctionType(), printfFunc, printfArgs);
+            return;
+        }
+
         // Check for standard library functions
         if (stdLibFunctions.find(funcName) != stdLibFunctions.end())
         {

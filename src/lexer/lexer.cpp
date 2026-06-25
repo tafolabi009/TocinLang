@@ -16,7 +16,7 @@ namespace lexer
         {"case", TokenType::CASE}, {"default", TokenType::DEFAULT}, {"const", TokenType::CONST}, 
         {"true", TokenType::TRUE}, {"false", TokenType::FALSE}, {"None", TokenType::NIL}, 
         {"and", TokenType::AND}, {"or", TokenType::OR}, {"lambda", TokenType::LAMBDA}, 
-        {"print", TokenType::PRINT}, {"new", TokenType::NEW}, {"delete", TokenType::DELETE},
+        {"new", TokenType::NEW}, {"delete", TokenType::DELETE},
         {"try", TokenType::TRY}, {"catch", TokenType::CATCH}, {"finally", TokenType::FINALLY},
         {"throw", TokenType::THROW}, {"break", TokenType::BREAK}, {"continue", TokenType::CONTINUE},
         {"switch", TokenType::SWITCH}, {"enum", TokenType::ENUM}, {"struct", TokenType::STRUCT},
