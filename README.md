@@ -20,10 +20,22 @@ clear what is implemented versus planned.
   annotated; a real type checker reports genuine type errors.
 - **Functions** — parameters, recursion, mutual recursion, and use-before-definition
   (declarations are order-independent via two-pass code generation).
-- **Control flow** — `if / elif / else`, `while`, and range-based `for i in a..b`.
+- **Control flow** — `if / elif / else`, `while`, range-based `for i in a..b`, and
+  `match` / `case` / `default`.
 - **Classes / structs** — fields, methods with `self`, construction, field read and
   mutation, and method calls.
+- **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with
+  per-type method dispatch.
+- **Generics** — `def f<T>(...)` monomorphized per concrete type at the call site.
+- **Arrays** — array literals, indexing (read/write), `len`, iteration, and arrays
+  as reference-typed function parameters.
+- **Concurrency** — `go f(args)` goroutines (real OS threads) and typed `channel<T>`
+  send/receive, in both JIT and native builds.
+- **Modules** — `import a.b.c` / `import "path"` resolves and merges other `.to`
+  files; a small standard library ships in `stdlib/std/` (math, list).
+- **C FFI** — call C library functions via `extern def name(...) -> T;`.
 - **Strings** — string literals and concatenation with `+`.
+- **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
 
 ## Quick start
@@ -118,6 +130,47 @@ def main() {
 }
 ```
 
+Generics, traits, arrays, and the standard library:
+
+```tocin
+import std.list;                          // listSum, listMax, ...
+
+def max<T>(a: T, b: T) -> T {             // monomorphized per type
+    if a > b { return a; }
+    return b;
+}
+
+trait Shape { def area(self) -> int; }
+struct Square { side: int; }
+impl Shape for Square {
+    def area(self) -> int { return self.side * self.side; }
+}
+
+def main() {
+    let nums = [3, 1, 4, 1, 5, 9];        // array literal
+    println("len={} sum={} max={}", len(nums), listSum(nums), listMax(nums));
+    println("max(2, 7) = {}", max(2, 7)); // generic
+    let s = Square(5);
+    println("area = {}", s.area());       // trait method = 25
+    return s.area();
+}
+```
+
+Goroutines and channels:
+
+```tocin
+def worker(ch: channel<int>, n: int) { ch <- n * n; }
+
+def main() {
+    let ch = channel<int>();
+    for i in 1..6 { go worker(ch, i); }   // 5 goroutines (OS threads)
+    let total = 0;
+    for i in 0..5 { total = total + <-ch; }
+    println("sum of squares = {}", total); // 55
+    return total;
+}
+```
+
 ## How it works
 
 ```
@@ -163,27 +216,30 @@ bash scripts/run_to_tests.sh                      # .to integration programs
 
 ## Roadmap
 
-These features are partially scaffolded in the source tree and/or planned, but are
-**not yet fully working end-to-end**. They are listed here honestly so expectations
-match reality:
+These features are planned or partially scaffolded but **not yet fully working
+end-to-end**. They are listed honestly so expectations match reality:
 
-- **Traits & `impl` blocks** — AST/parsing groundwork exists; resolution and codegen pending.
-- **Generics** — generic syntax is recognized; monomorphization is pending.
-- **Collections & LINQ** — arrays/lists with indexing, and `where`/`select`/`aggregate`.
-- **Pattern matching** — `match` with destructuring patterns.
+- **Generic classes** — generic *functions* are monomorphized today; generic
+  `class C<T>` instantiation is still pending (generic free functions work).
+- **LINQ-style collections** — `where` / `select` / `aggregate` over collections.
+- **Pattern matching destructuring** — `match` works on values today; binding
+  sub-patterns (e.g. `case Some(x)`) is pending.
 - **Null safety** — `?.`, `?:`, `!!` operators and nullable-type flow analysis.
-- **`Option` / `Result`** — types are defined; exhaustiveness checking and ergonomics pending.
-- **Concurrency** — `go`, channels, and `select` parse today; a fiber scheduler exists in
-  `src/runtime` but is not yet wired to codegen. `async` / `await`.
-- **FFI** — Python (CPython) and C/C++ (`dlopen`) backends are largely implemented;
-  JavaScript is a stub. V8 is gated behind `-DWITH_V8=ON` and is **not** bundled
-  (it is not installable from standard package managers), so CI builds with `-DWITH_V8=OFF`.
-- **Macros** — a macro engine exists but is not yet invoked by the compile pipeline.
+- **`Option` / `Result`** — types are defined; exhaustiveness checking and `?`
+  propagation pending.
+- **`async` / `await`** — goroutines and channels work; structured async is pending.
+- **`select`** over multiple channels.
+- **Error handling** — `try` / `catch` / `throw` and **enums**.
+- **Python / JavaScript FFI** — C FFI works via `extern`; deep CPython and V8
+  integration is gated behind build flags (V8 is not bundled — it is not
+  installable from standard package managers, so CI builds with `-DWITH_V8=OFF`).
+- **Macros** — a macro engine exists but is not yet invoked by the pipeline.
 - **WebAssembly target**, **package manager**, and an **interactive debugger**
   (behind their respective CMake flags).
 - **Advanced optimization** — the standard LLVM `-O0..-O3` pipelines are wired and
-  working today (e.g. constant folding); profile-guided/interprocedural/polyhedral
-  passes in `src/compiler/advanced_optimizations.cpp` are not yet on the default path.
+  working today (e.g. constant folding); profile-guided / interprocedural /
+  polyhedral passes in `src/compiler/advanced_optimizations.cpp` are not yet on
+  the default path.
 
 Contributions toward any of these are very welcome.
 
