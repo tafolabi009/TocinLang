@@ -328,6 +328,18 @@ namespace parser
             return tryStmt();
         if (match(lexer::TokenType::THROW))
             return throwStmt();
+        if (match(lexer::TokenType::BREAK))
+        {
+            lexer::Token kw = previous();
+            match(lexer::TokenType::SEMI_COLON); // optional ';'
+            return std::make_shared<ast::BreakStmt>(kw);
+        }
+        if (match(lexer::TokenType::CONTINUE))
+        {
+            lexer::Token kw = previous();
+            match(lexer::TokenType::SEMI_COLON); // optional ';'
+            return std::make_shared<ast::ContinueStmt>(kw);
+        }
         return expressionStmt();
     }
 

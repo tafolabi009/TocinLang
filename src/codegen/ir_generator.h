@@ -123,6 +123,8 @@ namespace codegen
         void visitEnumStmt(ast::EnumStmt *stmt) override;
         void visitTryStmt(ast::TryStmt *stmt) override;
         void visitThrowStmt(ast::ThrowStmt *stmt) override;
+        void visitBreakStmt(ast::BreakStmt *stmt) override;
+        void visitContinueStmt(ast::ContinueStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
@@ -164,6 +166,7 @@ namespace codegen
         std::map<std::string, std::string> varClasses;                            // Variable name -> class name
         std::map<std::string, llvm::Type *> varArrayElem;                         // Variable name -> array element LLVM type
         std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
+        std::vector<std::pair<llvm::BasicBlock *, llvm::BasicBlock *>> loopStack; // {continue target, break target} per enclosing loop
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression

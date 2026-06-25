@@ -1705,7 +1705,10 @@ void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
     // Save environment before entering new scope
     createEnvironment();
 
+    // break -> afterBlock, continue -> condBlock (re-checks the condition).
+    loopStack.push_back({condBlock, afterBlock});
     stmt->body->accept(*this);
+    loopStack.pop_back();
 
     // Restore environment after exiting scope
     restoreEnvironment();
@@ -1749,6 +1752,7 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
 
             llvm::BasicBlock *condBB = llvm::BasicBlock::Create(context, "for.cond", fn);
             llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "for.body", fn);
+            llvm::BasicBlock *incBB = llvm::BasicBlock::Create(context, "for.inc", fn);
             llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(context, "for.after", fn);
 
             builder.CreateBr(condBB);
@@ -1758,97 +1762,93 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
             builder.CreateCondBr(cond, bodyBB, afterBB);
 
             builder.SetInsertPoint(bodyBB);
+            // continue -> incBB (advances the counter), break -> afterBB
+            loopStack.push_back({incBB, afterBB});
             if (stmt->body) stmt->body->accept(*this);
+            loopStack.pop_back();
             if (!builder.GetInsertBlock()->getTerminator())
-            {
-                llvm::Value *c2 = builder.CreateLoad(i64, iterVar, variable);
-                llvm::Value *next = builder.CreateAdd(c2, llvm::ConstantInt::get(i64, 1), "for.inc");
-                builder.CreateStore(next, iterVar);
-                builder.CreateBr(condBB);
-            }
+                builder.CreateBr(incBB);
+
+            builder.SetInsertPoint(incBB);
+            llvm::Value *c2 = builder.CreateLoad(i64, iterVar, variable);
+            llvm::Value *next = builder.CreateAdd(c2, llvm::ConstantInt::get(i64, 1), "for.next");
+            builder.CreateStore(next, iterVar);
+            builder.CreateBr(condBB);
+
             builder.SetInsertPoint(afterBB);
             return;
         }
     }
 
     llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
 
-    // Create blocks for loop
-    llvm::BasicBlock *loopBlock = llvm::BasicBlock::Create(context, "loop", function);
-    llvm::BasicBlock *afterBlock = llvm::BasicBlock::Create(context, "after");
-
-    // Evaluate the iterable expression
+    // Evaluate the iterable expression -> base pointer of a flat array
+    // laid out as [i64 length][elem0][elem1]... (same layout as visitIndexExpr).
     stmt->iterable->accept(*this);
     if (!lastValue)
         return;
     llvm::Value *iterableValue = lastValue;
 
-    // With opaque pointers, we need to handle type info differently
-    bool isValidIterable = true; // Assume valid until proven otherwise
+    // Element type: prefer the declared loop-variable type, else infer from the
+    // iterable's recorded element type.
+    llvm::Type *elemTy = (variableType && getLLVMType(variableType))
+                             ? getLLVMType(variableType)
+                             : getArrayElemType(stmt->iterable);
+    if (!elemTy) elemTy = i64;
+    llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
 
-    // Get a type for the iteration variable
-    llvm::Type *varType = getLLVMType(variableType);
-    llvm::AllocaInst *iterVar = builder.CreateAlloca(varType, nullptr, variable);
-
-    // Store variable in the symbol table
+    llvm::AllocaInst *iterVar = builder.CreateAlloca(elemTy, nullptr, variable);
     namedValues[variable] = iterVar;
 
-    // Create a counter variable
-    llvm::AllocaInst *indexVar = builder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, "loop.index");
-    builder.CreateStore(llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0), indexVar);
+    // Counter variable.
+    llvm::AllocaInst *indexVar = builder.CreateAlloca(i64, nullptr, "loop.index");
+    builder.CreateStore(llvm::ConstantInt::get(i64, 0), indexVar);
 
-    // Create a simple struct type for list-like structures
-    llvm::StructType *iterableStructType = llvm::StructType::get(
-        context,
-        {llvm::Type::getInt64Ty(context), llvm::PointerType::get(context, 0)});
+    // Length lives at offset 0 of the array.
+    llvm::Value *length = builder.CreateLoad(i64, iterableValue, "length");
 
-    // Get the length of the iterable
-    std::vector<llvm::Value *> indices = {
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0)};
+    // Proper cond / body / inc / after structure so break & continue work.
+    llvm::BasicBlock *condBlock = llvm::BasicBlock::Create(context, "loop.cond", function);
+    llvm::BasicBlock *bodyBlock = llvm::BasicBlock::Create(context, "loop.body", function);
+    llvm::BasicBlock *incBlock = llvm::BasicBlock::Create(context, "loop.inc", function);
+    llvm::BasicBlock *afterBlock = llvm::BasicBlock::Create(context, "loop.after", function);
 
-    llvm::Value *lengthPtr = builder.CreateGEP(
-        iterableStructType, iterableValue, indices, "length.ptr");
-    llvm::Value *length = builder.CreateLoad(llvm::Type::getInt64Ty(context), lengthPtr, "length");
+    builder.CreateBr(condBlock);
 
-    // Check condition (i < length)
-    llvm::Value *index = builder.CreateLoad(llvm::Type::getInt64Ty(context), indexVar, "index");
+    // Condition: index < length
+    builder.SetInsertPoint(condBlock);
+    llvm::Value *index = builder.CreateLoad(i64, indexVar, "index");
     llvm::Value *cond = builder.CreateICmpSLT(index, length, "loop.cond");
-    builder.CreateCondBr(cond, loopBlock, afterBlock);
+    builder.CreateCondBr(cond, bodyBlock, afterBlock);
 
-    // Start the loop body
-    builder.SetInsertPoint(loopBlock);
-
-    // Get the element at the current index
-    // Load data pointer from iterable (assuming it's the second field)
-    indices[1] = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 1);
-    llvm::Value *dataPtr = builder.CreateGEP(
-        iterableStructType, iterableValue, indices, "data.ptr");
-    llvm::Value *data = builder.CreateLoad(llvm::PointerType::get(context, 0), dataPtr, "data");
-
-    // Get current element
-    index = builder.CreateLoad(llvm::Type::getInt64Ty(context), indexVar);
-    llvm::Value *elementPtr = builder.CreateGEP(varType, data, index, "element.ptr");
-    llvm::Value *element = builder.CreateLoad(varType, elementPtr, "element");
-
-    // Store element in loop variable
+    // Body: load element at offset 8 + index*sizeof(elem) into the loop var.
+    builder.SetInsertPoint(bodyBlock);
+    index = builder.CreateLoad(i64, indexVar);
+    llvm::Value *off = builder.CreateAdd(
+        llvm::ConstantInt::get(i64, 8),
+        builder.CreateMul(index, elemSize), "elem.off");
+    llvm::Value *elementPtr = builder.CreateGEP(i8, iterableValue, off, "element.ptr");
+    llvm::Value *element = builder.CreateLoad(elemTy, elementPtr, "element");
     builder.CreateStore(element, iterVar);
 
-    // Generate loop body
-    stmt->body->accept(*this);
+    // continue -> incBlock (advances the index), break -> afterBlock
+    loopStack.push_back({incBlock, afterBlock});
+    if (stmt->body) stmt->body->accept(*this);
+    loopStack.pop_back();
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(incBlock);
 
-    // Increment index
+    // Increment index, loop back.
+    builder.SetInsertPoint(incBlock);
     index = builder.CreateLoad(llvm::Type::getInt64Ty(context), indexVar);
     llvm::Value *nextIndex = builder.CreateAdd(
         index, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 1), "next.index");
     builder.CreateStore(nextIndex, indexVar);
-
-    // Check condition for next iteration
-    cond = builder.CreateICmpSLT(nextIndex, length, "loop.cond");
-    builder.CreateCondBr(cond, loopBlock, afterBlock);
+    builder.CreateBr(condBlock);
 
     // After the loop
-    afterBlock->insertInto(function);
     builder.SetInsertPoint(afterBlock);
 
     // Remove the loop variable from the symbol table
@@ -2843,6 +2843,36 @@ void IRGenerator::visitThrowStmt(ast::ThrowStmt *stmt)
     builder.CreateCall(throwF, {val});
     // __tocin_throw never returns (it longjmps); terminate the block.
     builder.CreateUnreachable();
+    lastValue = nullptr;
+}
+
+void IRGenerator::visitBreakStmt(ast::BreakStmt *stmt)
+{
+    (void)stmt;
+    if (loopStack.empty())
+    {
+        errorHandler.reportError(error::ErrorCode::S004_INVALID_STATEMENT,
+                                 "'break' used outside of a loop",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        return;
+    }
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(loopStack.back().second); // break target
+    lastValue = nullptr;
+}
+
+void IRGenerator::visitContinueStmt(ast::ContinueStmt *stmt)
+{
+    (void)stmt;
+    if (loopStack.empty())
+    {
+        errorHandler.reportError(error::ErrorCode::S004_INVALID_STATEMENT,
+                                 "'continue' used outside of a loop",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        return;
+    }
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(loopStack.back().first); // continue target
     lastValue = nullptr;
 }
 
@@ -4236,6 +4266,16 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
     if (!right) {
         lastValue = nullptr;
         return;
+    }
+
+    // Mixed int/float arithmetic and comparison: promote the integer side to
+    // floating point so e.g. `5 + 3.0` and `n < 2.5` work.
+    if (left->getType()->isIntegerTy() && !left->getType()->isIntegerTy(1) &&
+        (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
+        left = builder.CreateSIToFP(left, right->getType(), "promote");
+    } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
+               right->getType()->isIntegerTy() && !right->getType()->isIntegerTy(1)) {
+        right = builder.CreateSIToFP(right, left->getType(), "promote");
     }
 
     // Handle different operators

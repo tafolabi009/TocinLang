@@ -1,0 +1,8 @@
+// expect-output: 5 2.5 7
+def main() {
+    let x: float = 3.0 + 2;
+    let y: float = 10 / 4.0;
+    let z: float = 2 * 3.5;
+    println("{} {} {}", x, y, z);
+    return 0;
+}

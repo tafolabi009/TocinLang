@@ -93,6 +93,8 @@ ast::StmtPtr FunctionMacro::expand(const MacroContext& context, error::ErrorHand
         void visitEnumStmt(ast::EnumStmt* stmt) override {}
         void visitTryStmt(ast::TryStmt* stmt) override {}
         void visitThrowStmt(ast::ThrowStmt* stmt) override {}
+        void visitBreakStmt(ast::BreakStmt* stmt) override {}
+        void visitContinueStmt(ast::ContinueStmt* stmt) override {}
         void visitMoveExpr(void* expr) override {}
         void visitGoExpr(void* expr) override {}
         void visitRuntimeChannelSendExpr(void* expr) override {}
@@ -251,6 +253,8 @@ ast::StmtPtr MacroSystem::processMacros(ast::StmtPtr stmt, error::ErrorHandler& 
         void visitEnumStmt(ast::EnumStmt* stmt) override {}
         void visitTryStmt(ast::TryStmt* stmt) override {}
         void visitThrowStmt(ast::ThrowStmt* stmt) override {}
+        void visitBreakStmt(ast::BreakStmt* stmt) override {}
+        void visitContinueStmt(ast::ContinueStmt* stmt) override {}
         void visitMoveExpr(void* expr) override {}
         void visitGoExpr(void* expr) override {}
         void visitRuntimeChannelSendExpr(void* expr) override {}

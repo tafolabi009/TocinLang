@@ -1,0 +1,10 @@
+// expect: 15
+def main() {
+    let nums = [5, 10, 15, 20];
+    let total = 0;
+    for v in nums {
+        if v == 15 { break; }
+        total = total + v;
+    }
+    return total;  // 5+10 = 15
+}
