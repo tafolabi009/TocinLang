@@ -1044,6 +1044,73 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             return;
         }
 
+        // Math standard library: unary libm functions (double -> double).
+        static const std::set<std::string> unaryMath = {
+            "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+            "exp", "log", "log2", "log10", "floor", "ceil", "round", "fabs"};
+        llvm::Type *dbl = llvm::Type::getDoubleTy(context);
+        if (unaryMath.count(funcName) && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            llvm::Value *x = lastValue;
+            if (x->getType()->isIntegerTy())
+                x = builder.CreateSIToFP(x, dbl, "tofp");
+            llvm::Function *f = module->getFunction(funcName);
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl}, false),
+                                           llvm::Function::ExternalLinkage, funcName, *module);
+            lastValue = builder.CreateCall(f, {x}, funcName);
+            return;
+        }
+        if (funcName == "pow" && expr->arguments.size() == 2)
+        {
+            expr->arguments[0]->accept(*this); llvm::Value *a = lastValue;
+            expr->arguments[1]->accept(*this); llvm::Value *b = lastValue;
+            if (!a || !b) return;
+            if (a->getType()->isIntegerTy()) a = builder.CreateSIToFP(a, dbl, "tofp");
+            if (b->getType()->isIntegerTy()) b = builder.CreateSIToFP(b, dbl, "tofp");
+            llvm::Function *f = module->getFunction("pow");
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl, dbl}, false),
+                                           llvm::Function::ExternalLinkage, "pow", *module);
+            lastValue = builder.CreateCall(f, {a, b}, "pow");
+            return;
+        }
+        if (funcName == "abs" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            llvm::Value *x = lastValue;
+            if (x->getType()->isFloatingPointTy())
+            {
+                llvm::Value *neg = builder.CreateFNeg(x, "fneg");
+                llvm::Value *lt = builder.CreateFCmpOLT(x, llvm::ConstantFP::get(x->getType(), 0.0), "ltz");
+                lastValue = builder.CreateSelect(lt, neg, x, "fabs");
+            }
+            else
+            {
+                llvm::Value *neg = builder.CreateNeg(x, "neg");
+                llvm::Value *lt = builder.CreateICmpSLT(x, llvm::ConstantInt::get(x->getType(), 0), "ltz");
+                lastValue = builder.CreateSelect(lt, neg, x, "abs");
+            }
+            return;
+        }
+        if ((funcName == "min" || funcName == "max") && expr->arguments.size() == 2)
+        {
+            expr->arguments[0]->accept(*this); llvm::Value *a = lastValue;
+            expr->arguments[1]->accept(*this); llvm::Value *b = lastValue;
+            if (!a || !b) return;
+            bool wantMin = (funcName == "min");
+            llvm::Value *cmp;
+            if (a->getType()->isFloatingPointTy() || b->getType()->isFloatingPointTy())
+                cmp = wantMin ? builder.CreateFCmpOLT(a, b, "cmp") : builder.CreateFCmpOGT(a, b, "cmp");
+            else
+                cmp = wantMin ? builder.CreateICmpSLT(a, b, "cmp") : builder.CreateICmpSGT(a, b, "cmp");
+            lastValue = builder.CreateSelect(cmp, a, b, funcName);
+            return;
+        }
+
         // print()/println() are built-ins forwarded to printf. println appends
         // a newline. Two calling styles are supported:
         //   * format style: print("x = {}, y = {}", x, y)  (first arg is a
