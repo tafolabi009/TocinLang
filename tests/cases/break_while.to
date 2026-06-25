@@ -1,0 +1,9 @@
+// expect: 7
+def main() {
+    let n = 0;
+    while true {
+        n = n + 1;
+        if n >= 7 { break; }
+    }
+    return n;
+}

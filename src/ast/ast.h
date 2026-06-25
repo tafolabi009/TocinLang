@@ -72,6 +72,8 @@ namespace ast
     class EnumStmt;
     class TryStmt;
     class ThrowStmt;
+    class BreakStmt;
+    class ContinueStmt;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -121,6 +123,8 @@ namespace ast
         virtual void visitEnumStmt(EnumStmt *stmt) = 0;
         virtual void visitTryStmt(TryStmt *stmt) = 0;
         virtual void visitThrowStmt(ThrowStmt *stmt) = 0;
+        virtual void visitBreakStmt(BreakStmt *stmt) = 0;
+        virtual void visitContinueStmt(ContinueStmt *stmt) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -960,6 +964,26 @@ namespace ast
             : Statement(token), value(std::move(value)) {}
         void accept(Visitor &visitor) override { visitor.visitThrowStmt(this); }
         ExprPtr value;
+    };
+
+    /**
+     * @brief Break statement: exits the innermost loop.
+     */
+    class BreakStmt : public Statement
+    {
+    public:
+        explicit BreakStmt(const lexer::Token &token) : Statement(token) {}
+        void accept(Visitor &visitor) override { visitor.visitBreakStmt(this); }
+    };
+
+    /**
+     * @brief Continue statement: jumps to the next iteration of the innermost loop.
+     */
+    class ContinueStmt : public Statement
+    {
+    public:
+        explicit ContinueStmt(const lexer::Token &token) : Statement(token) {}
+        void accept(Visitor &visitor) override { visitor.visitContinueStmt(this); }
     };
 
     /**

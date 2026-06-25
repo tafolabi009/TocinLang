@@ -270,6 +270,18 @@ namespace type_checker
         currentType_ = nullptr;
     }
 
+    void TypeChecker::visitBreakStmt(ast::BreakStmt *stmt)
+    {
+        (void)stmt;
+        currentType_ = nullptr;
+    }
+
+    void TypeChecker::visitContinueStmt(ast::ContinueStmt *stmt)
+    {
+        (void)stmt;
+        currentType_ = nullptr;
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op

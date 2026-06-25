@@ -1,0 +1,10 @@
+// expect: 60
+def main() {
+    let nums = [5, 10, 15, 20, 25];
+    let s = 0;
+    for v in nums {
+        if v == 15 { continue; }
+        s = s + v;
+    }
+    return s;  // 75-15 = 60
+}
