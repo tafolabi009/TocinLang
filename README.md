@@ -76,6 +76,8 @@ clear what is implemented versus planned.
   `loadByte`/`storeByte`/`loadInt`/`storeInt`) and inline assembly
   (`asm("...")`, native builds) for VCS-style tools and OS/kernel work.
 - **`switch`** — C-style `switch`/`case`/`default` (alias of `match`).
+- **`defer`** — `defer <statement>` runs cleanup at function return (LIFO, every
+  return path); pairs with `free`/`vecFree` for deterministic resource release.
 - **Native performance** — default `-O2` (the full LLVM pipeline); a compute
   benchmark runs within ~9% of the equivalent C at `-O2`.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.

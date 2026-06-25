@@ -16,7 +16,7 @@ Tocin is a **statically typed, ahead-of-time compiled** language that lowers to 
 
 Semantics are **value semantics for scalars** (`int`, `float`, `bool` live in registers/stack slots) and **heap handles (opaque pointers) for everything else** — class/struct instances, strings (`char*`), arrays, dynamic collections (`vector`/`map`), channels, and `Option`/`Result` boxes. Heap memory is **garbage-collected** (Boehm GC, when the runtime is built with it — the default): unreachable allocations are reclaimed automatically, so long-running programs do not leak. `vecFree`/`mapFree`/`free` remain available for eager release of large buffers, but are optional.
 
-The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). Mixed int/float arithmetic **does** auto-promote the int operand to `float` (e.g. `3.0 + 2` → `5.0`; `let x: float = 5;` → `5.0`). Lambdas **do** capture enclosing locals **by value** (a snapshot), and the resulting closures can be returned/escape with independent state. `break` and `continue` **work** in every loop form. Some keywords still exist in the lexer but are **not implemented** in the parser/codegen — notably `defer` and most ownership keywords (`switch` IS implemented as an alias of `match`). Treat the verified feature set in this document as the real language.
+The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). Mixed int/float arithmetic **does** auto-promote the int operand to `float` (e.g. `3.0 + 2` → `5.0`; `let x: float = 5;` → `5.0`). Lambdas **do** capture enclosing locals **by value** (a snapshot), and the resulting closures can be returned/escape with independent state. `break` and `continue` **work** in every loop form. Some keywords still exist in the lexer but are **not implemented** in the parser/codegen — notably most ownership keywords (`switch`, `defer`, `break`, and `continue` are all implemented). Treat the verified feature set in this document as the real language.
 
 Key runtime facts:
 - `int` = 64-bit signed (`i64`). `float` = 64-bit (`double`). `bool` = `i1`.
@@ -50,7 +50,9 @@ params         ::= ( ("self" (":" type)?) | (IDENT ":" type) ) ("," ...)*       
 retType        ::= ("->" | ":") type
 
 statement      ::= ifStmt | whileStmt | forStmt | "{" block "}" | returnStmt
-                 | matchStmt | goStmt | selectStmt | tryStmt | throwStmt | exprStmt
+                 | matchStmt | switchStmt | goStmt | selectStmt | tryStmt | throwStmt
+                 | "break" ";"? | "continue" ";"? | "defer" statement | exprStmt
+switchStmt     ::= "switch" expression "{" ("case" expression ":" "{" block "}")* ("default" ":" "{" block "}")? "}"  // alias of match
 ifStmt         ::= "if" expression "{" block "}" ("elif" expression "{" block "}")* ("else" "{" block "}")?
 whileStmt      ::= "while" expression "{" block "}"
 forStmt        ::= "for" IDENT (":" type)? "in" expression (".." expression)? "{" block "}"
@@ -148,7 +150,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 
 ### Lexer keywords that are NOT implemented (do NOT use — they will fail to compile)
 
-`defer`, `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break`, `continue`, and `switch` **are** implemented.)
+`panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break`, `continue`, `switch`, and `defer` **are** implemented.)
 
 > **`break`/`continue` are the most common trap.** They parse as expression statements and produce `error [S001]: Expected expression`. Restructure loops with a boolean flag or a `while` condition instead. **Use `None`, never `null`.**
 
@@ -662,7 +664,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 
 ## 8. GOTCHAS / PITFALLS (read before writing — each is verified)
 
-1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (`switch` works as an alias of `match`. Still unimplemented: `defer`, `panic`, `assert`, `yield`, ownership keywords — see §3.)
+1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (`switch` aliases `match`; `defer` runs LIFO at function return. Still unimplemented: `panic`, `assert`, `yield`, ownership keywords — see §3.)
 2. **Use `None`, not `null`.** `null` is a reserved word the parser doesn't accept as a value (`Expected expression`). The empty value is `None` (the null pointer).
 3. **`len` is for array literals only.** `len("hello")` returns garbage (it reads the first 8 bytes of the string as an i64 "length"). For strings use **`strLen`**. `len` works on `[1,2,3]` and `list<int>` params; `vecLen` works on `vector` handles; `mapLen` on `map` handles.
 4. **Mixed int/float arithmetic auto-promotes the int to float.** `5 + 3.0` → `8.0`; `10 / 4.0` → `2.5`. Two ints stay int and `/` truncates (`5 / 2` → `2`). To force float division of two ints, make one a float (`x * 1.0 / y`).
@@ -697,7 +699,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - Generics: generic functions and generic classes, monomorphized by **inferred** type arguments.
 - Traits with `impl Trait for Type` and inherent `impl Type` methods.
 - Enums with integer values (auto and explicit, incl. negatives).
-- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match` (value equality + `Some/Ok/Err/None` patterns with payload binding).
+- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match`/`switch` (value equality + `Some/Ok/Err/None` patterns with payload binding), and `defer <stmt>` (LIFO cleanup at function return).
 - Exceptions: `throw` / `try` / `catch` / `finally` (setjmp-based, integer/handle payload).
 - `Option`/`Result` boxes and null-safety operators `?:` `?.` `!!`.
 - Fixed array literals (`[..]`, `len`, indexing/assignment) and dynamic `vector` + `map` (int- and string-keyed) builtins.
@@ -712,7 +714,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - `print`/`println` with `{}` formatting.
 
 **Tocin cannot (yet):**
-- `defer` / `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (`switch` works as an alias of `match`.)
+- `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (`switch` aliases `match`; `defer` is implemented.)
 - Capture **by reference** (capture is by value/snapshot); lambda bodies that are blocks (a lambda body is one expression); labeled `break`/`continue`.
 - Capture from nested `def` (those are non-capturing — use a lambda).
 - The power operator `**` and `++`/`--`.
