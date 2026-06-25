@@ -20,6 +20,9 @@ clear what is implemented versus planned.
   annotated; a real type checker reports genuine type errors.
 - **Functions** — parameters, recursion, mutual recursion, and use-before-definition
   (declarations are order-independent via two-pass code generation).
+- **First-class functions** — functions are values: pass them as arguments
+  (`f: (int) -> int`), store them, return them, and call them indirectly; plus
+  non-capturing `lambda (x: int) -> int  x * 2`.
 - **Control flow** — `if / elif / else`, `while`, range-based `for i in a..b`, and
   `match` / `case` / `default`.
 - **Error handling** — `throw`, `try` / `catch (e)` / `finally`; exceptions unwind
@@ -39,6 +42,9 @@ clear what is implemented versus planned.
   site).
 - **Arrays** — array literals, indexing (read/write), `len`, iteration, and arrays
   as reference-typed function parameters.
+- **Dynamic collections** — growable `vector` (`vecNew`/`vecPush`/`vecGet`/`vecLen`/…)
+  and `hashmap` with int **and string** keys (`mapPutStr`/`mapGetStr`/…) — the
+  building blocks for symbol tables and real data structures.
 - **Concurrency** — `go f(args)` goroutines (real OS threads), typed `channel<T>`
   send/receive, and `select` over multiple channels, in both JIT and native builds.
 - **Modules** — `import a.b.c` / `import "path"` resolves and merges other `.to`
@@ -49,7 +55,10 @@ clear what is implemented versus planned.
   expansion.
 - **C FFI** — call C library functions via `extern def name(...) -> T;`, resolved
   by the JIT and the native linker ([docs/ffi.md](docs/ffi.md)).
-- **Strings** — string literals and concatenation with `+`.
+- **Strings** — literals, `+` concatenation, and a char-level library: `strLen`,
+  `charAt`, `substring`, `strEq`/`strCmp`, `indexOfChar`, `intToStr`, `strToInt`,
+  `charToStr`.
+- **File I/O** — `readFile`, `writeFile`, `appendFile`, `readLine`.
 - **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
 
