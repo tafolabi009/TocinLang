@@ -460,6 +460,8 @@ target_link_libraries(tocin_runtime PUBLIC Threads::Threads)
 target_link_libraries(tocin PRIVATE tocin_core tocin_runtime)
 # Tell the driver where to find the runtime archive when linking AOT binaries.
 target_compile_definitions(tocin PRIVATE TOCIN_RUNTIME_LIB="$<TARGET_FILE:tocin_runtime>")
+# Default search path for `import` of standard-library modules.
+target_compile_definitions(tocin PRIVATE TOCIN_STDLIB_PATH="${CMAKE_SOURCE_DIR}/stdlib")
 
 # Export symbols dynamically so the JIT can resolve the Tocin runtime
 # (channels, goroutines, etc.) from within the running compiler process.
