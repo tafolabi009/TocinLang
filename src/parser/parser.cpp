@@ -57,9 +57,17 @@ namespace parser
             {
                 return functionDeclaration();
             }
-            if (match(lexer::TokenType::CLASS))
+            if (match(lexer::TokenType::CLASS) || match(lexer::TokenType::STRUCT))
             {
                 return classDeclaration();
+            }
+            if (match(lexer::TokenType::TRAIT))
+            {
+                return traitDeclaration();
+            }
+            if (match(lexer::TokenType::IMPL))
+            {
+                return implDeclaration();
             }
             if (match(lexer::TokenType::IMPORT))
             {
@@ -185,6 +193,82 @@ namespace parser
                                                     nullptr, std::vector<ast::TypePtr>{},
                                                     fields, methods);
         return std::make_shared<ast::ClassStmt>(name, name.value, fields, methods);
+    }
+
+    std::shared_ptr<ast::FunctionStmt> Parser::methodDeclaration(bool allowNoBody)
+    {
+        bool isAsync = previous().type == lexer::TokenType::ASYNC;
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected method name");
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
+        consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after method name");
+        auto parameters = parseParameters();
+        consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
+        ast::TypePtr returnType = nullptr;
+        if (match(lexer::TokenType::ARROW) || match(lexer::TokenType::COLON))
+            returnType = parseType();
+        ast::StmtPtr body = nullptr;
+        if (match(lexer::TokenType::LEFT_BRACE))
+            body = blockStmt();
+        else if (allowNoBody)
+            match(lexer::TokenType::SEMI_COLON); // signature only
+        else
+        {
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before method body");
+            body = blockStmt();
+        }
+        if (!typeParams.empty())
+            return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
+                                                       parameters, returnType, body, isAsync);
+        return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
+    }
+
+    ast::StmtPtr Parser::traitDeclaration()
+    {
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected trait name");
+        parseTypeParameters(); // optional generic params (ignored for now)
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before trait body");
+        auto trait = std::make_shared<ast::TraitStmt>(name, name.value);
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            if (match(lexer::TokenType::DEF) || match(lexer::TokenType::ASYNC))
+                trait->methods.push_back(methodDeclaration(/*allowNoBody=*/true));
+            else
+            {
+                error(peek(), "Expected method declaration in trait");
+                advance();
+            }
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after trait body");
+        return trait;
+    }
+
+    ast::StmtPtr Parser::implDeclaration()
+    {
+        auto first = consume(lexer::TokenType::IDENTIFIER, "Expected type or trait name after 'impl'");
+        std::string traitName;
+        lexer::Token typeTok = first;
+        if (match(lexer::TokenType::FOR))
+        {
+            traitName = first.value;
+            typeTok = consume(lexer::TokenType::IDENTIFIER, "Expected type name after 'for'");
+        }
+        parseTypeParameters(); // optional generic params (ignored for now)
+        ast::TypePtr typePtr = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, typeTok.value, "", typeTok.line, typeTok.column));
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before impl body");
+        auto impl = std::make_shared<ast::ImplStmt>(first, traitName, typePtr);
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            if (match(lexer::TokenType::DEF) || match(lexer::TokenType::ASYNC))
+                impl->methods.push_back(methodDeclaration(/*allowNoBody=*/false));
+            else
+            {
+                error(peek(), "Expected method declaration in impl");
+                advance();
+            }
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after impl body");
+        return impl;
     }
 
     ast::StmtPtr Parser::statement()

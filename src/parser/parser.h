@@ -61,6 +61,9 @@ namespace parser
         ast::StmtPtr varDeclaration();
         ast::StmtPtr functionDeclaration();
         ast::StmtPtr classDeclaration();
+        ast::StmtPtr traitDeclaration();
+        ast::StmtPtr implDeclaration();
+        std::shared_ptr<ast::FunctionStmt> methodDeclaration(bool allowNoBody);
         ast::StmtPtr statement();
         ast::StmtPtr expressionStmt();
         ast::StmtPtr ifStmt();

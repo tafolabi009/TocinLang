@@ -3052,6 +3052,16 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
                 if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(m))
                     declareMethodProto(cls->name, cit->second.classType, method.get());
         }
+        else if (auto impl = std::dynamic_pointer_cast<ast::ImplStmt>(s))
+        {
+            std::string typeName = impl->type ? impl->type->toString() : "";
+            auto cit = classTypes.find(typeName);
+            if (cit == classTypes.end())
+                continue;
+            for (auto &m : impl->methods)
+                if (m && m->body)
+                    declareMethodProto(typeName, cit->second.classType, m.get());
+        }
     }
 }
 
@@ -4168,36 +4178,31 @@ int IRGenerator::getNextId() {
 }
 
 void codegen::IRGenerator::visitTraitStmt(ast::TraitStmt* stmt) {
-    // Generate IR for trait statement
-    // Traits are compile-time constructs, so we mainly need to register them
-    
-    // For now, just visit all method signatures to ensure they're valid
-    for (const auto& method : stmt->methods) {
-        if (method) {
-            // Visit the method to ensure it's syntactically valid
-            // In practice, we would register the trait interface
-            method->accept(*this);
-        }
-    }
-    
-    // Trait statements don't generate runtime code
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    // Traits are interfaces: signature-only methods generate no code. Default
+    // methods (with bodies) are materialized per implementing type at the impl
+    // site, so nothing is emitted here.
+    (void)stmt;
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitImplStmt(ast::ImplStmt* stmt) {
-    // Generate IR for implementation statement
-    // This generates the actual method implementations for the trait
-    
-    // Visit all method implementations
-    for (const auto& method : stmt->methods) {
-        if (method) {
-            // Generate IR for each method implementation
-            method->accept(*this);
-        }
+    // An impl block adds methods to a concrete type. Generate each method as a
+    // method of that type (TypeName_methodName) so receiver.method(...) resolves.
+    std::string typeName = stmt->type ? stmt->type->toString() : "";
+    auto it = classTypes.find(typeName);
+    if (it == classTypes.end()) {
+        errorHandler.reportError(error::ErrorCode::T031_UNDEFINED_TYPE,
+                                 "impl target '" + typeName + "' is not a known type",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        return;
     }
-    
-    // Implementation statements don't have a return value
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    llvm::StructType* st = it->second.classType;
+    for (const auto& method : stmt->methods) {
+        if (method && method->body)
+            generateMethod(typeName, st, method.get());
+    }
+    lastValue = nullptr;
 }
 
 llvm::Value *IRGenerator::getVariable(const std::string &name) {
