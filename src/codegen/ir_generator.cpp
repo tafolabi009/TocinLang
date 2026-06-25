@@ -558,26 +558,25 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
 
 void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
-    // Get the variable type
-    llvm::Type *varType = nullptr;
+    llvm::Type *varType = stmt->type ? getLLVMType(stmt->type) : nullptr;
 
-    if (stmt->type)
+    // Evaluate the initializer exactly once, here. Never reuse a stale
+    // `lastValue` left over from a previous statement (it may even belong to a
+    // different function, which produced "does not dominate all uses"). For an
+    // inferred type, the evaluated value also determines the variable's type.
+    llvm::Value *initVal = nullptr;
+    if (stmt->initializer)
     {
-        // If type is explicitly specified
-        varType = getLLVMType(stmt->type);
-    }
-    else if (stmt->initializer)
-    {
-        // If type is inferred from initializer
+        lastValue = nullptr;
         stmt->initializer->accept(*this);
         if (!lastValue)
             return;
-
-        varType = lastValue->getType();
+        initVal = lastValue;
+        if (!varType)
+            varType = initVal->getType();
     }
-    else
+    else if (!stmt->type)
     {
-        // No type and no initializer - error
         errorHandler.reportError(error::ErrorCode::T032_CANNOT_INFER_TYPE,
                                  "Cannot infer type for variable '" + stmt->name + "' without initializer",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
@@ -598,7 +597,9 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     // Store the variable in the symbol table
     namedValues[stmt->name] = alloca;
 
-    // Track the variable's class (for field/method resolution).
+    // Track the variable's class (for field/method resolution). Done after the
+    // initializer is evaluated so generic-constructor calls have already been
+    // resolved to a concrete mangled class name.
     std::string vcls = getExprClassName(stmt->initializer);
     if (vcls.empty() && stmt->type && classTypes.count(stmt->type->toString()))
         vcls = stmt->type->toString();
@@ -620,30 +621,16 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             varArrayElem[stmt->name] = it->second;
     }
 
-    // If there's an initializer, store its value
-    if (stmt->initializer)
+    // Store the initializer value (already evaluated above).
+    if (initVal)
     {
-        if (!lastValue)
+        if (initVal->getType() != varType)
         {
-            // If we don't have a value yet, compute the initializer
-            stmt->initializer->accept(*this);
-            if (!lastValue)
-                return;
-        }
-
-        // Validate that initializer type matches variable type
-        if (lastValue->getType() != varType)
-        {
-            // Simple cast for numeric values
-            if (lastValue->getType()->isIntegerTy() && varType->isIntegerTy())
-            {
-                lastValue = builder.CreateIntCast(lastValue, varType, true, "cast");
-            }
-            else if ((lastValue->getType()->isFloatTy() || lastValue->getType()->isDoubleTy()) &&
+            if (initVal->getType()->isIntegerTy() && varType->isIntegerTy())
+                initVal = builder.CreateIntCast(initVal, varType, true, "cast");
+            else if ((initVal->getType()->isFloatTy() || initVal->getType()->isDoubleTy()) &&
                      (varType->isFloatTy() || varType->isDoubleTy()))
-            {
-                lastValue = builder.CreateFPCast(lastValue, varType, "cast");
-            }
+                initVal = builder.CreateFPCast(initVal, varType, "cast");
             else
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
@@ -652,9 +639,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
                 return;
             }
         }
-
-        // Store the initial value
-        builder.CreateStore(lastValue, alloca);
+        builder.CreateStore(initVal, alloca);
     }
 }
 
