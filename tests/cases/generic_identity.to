@@ -1,0 +1,3 @@
+// expect: 42
+def id<T>(x: T) -> T { return x; }
+def main() { return id(42); }

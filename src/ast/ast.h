@@ -68,6 +68,7 @@ namespace ast
     class SelectStmt;
     class GoStmt;
     class ArrayLiteralExpr;
+    class IndexExpr;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -113,6 +114,7 @@ namespace ast
         virtual void visitSelectStmt(SelectStmt *stmt) = 0;
         virtual void visitGoStmt(GoStmt *stmt) = 0;
         virtual void visitArrayLiteralExpr(ArrayLiteralExpr *expr) = 0;
+        virtual void visitIndexExpr(IndexExpr *expr) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -886,6 +888,20 @@ namespace ast
     };
 
     /**
+     * @brief Index/subscript expression (e.g., arr[i]).
+     */
+    class IndexExpr : public Expression
+    {
+    public:
+        IndexExpr(const lexer::Token &token, ExprPtr object, ExprPtr index)
+            : Expression(token), object(std::move(object)), index(std::move(index)) {}
+        void accept(Visitor &visitor) override;
+        ExprPtr object;
+        ExprPtr index;
+        TypePtr getType() const override { return nullptr; }
+    };
+
+    /**
      * @brief Trait statement - defines a trait
      */
     class TraitStmt : public Statement
@@ -957,6 +973,7 @@ namespace ast
     inline void SelectStmt::accept(Visitor &visitor) { visitor.visitSelectStmt(this); }
     inline void GoStmt::accept(Visitor &visitor) { visitor.visitGoStmt(this); }
     inline void ArrayLiteralExpr::accept(Visitor &visitor) { visitor.visitArrayLiteralExpr(this); }
+    inline void IndexExpr::accept(Visitor &visitor) { visitor.visitIndexExpr(this); }
 
 } // namespace ast
 

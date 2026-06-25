@@ -57,9 +57,23 @@ namespace parser
             {
                 return functionDeclaration();
             }
-            if (match(lexer::TokenType::CLASS))
+            if (match(lexer::TokenType::EXTERN))
+            {
+                // extern def f(params) -> T;  -> external (C) function declaration.
+                consume(lexer::TokenType::DEF, "Expected 'def' after 'extern'");
+                return methodDeclaration(/*allowNoBody=*/true);
+            }
+            if (match(lexer::TokenType::CLASS) || match(lexer::TokenType::STRUCT))
             {
                 return classDeclaration();
+            }
+            if (match(lexer::TokenType::TRAIT))
+            {
+                return traitDeclaration();
+            }
+            if (match(lexer::TokenType::IMPL))
+            {
+                return implDeclaration();
             }
             if (match(lexer::TokenType::IMPORT))
             {
@@ -96,6 +110,24 @@ namespace parser
         return std::make_shared<ast::VariableStmt>(name, name.value, type, initializer, isConstant);
     }
 
+    std::vector<ast::TypeParameter> Parser::parseTypeParameters()
+    {
+        std::vector<ast::TypeParameter> typeParams;
+        if (match(lexer::TokenType::LESS))
+        {
+            do
+            {
+                auto tpName = consume(lexer::TokenType::IDENTIFIER, "Expected type parameter name");
+                // Optional constraint `: SomeTrait` is parsed and ignored for now.
+                if (match(lexer::TokenType::COLON))
+                    parseType();
+                typeParams.emplace_back(tpName, tpName.value);
+            } while (match(lexer::TokenType::COMMA));
+            consume(lexer::TokenType::GREATER, "Expected '>' after type parameters");
+        }
+        return typeParams;
+    }
+
     ast::StmtPtr Parser::functionDeclaration()
     {
         bool isAsync = previous().type == lexer::TokenType::ASYNC;
@@ -104,6 +136,8 @@ namespace parser
             error(previous(), "Expected 'def' after 'async'");
         }
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected function name");
+        // Optional generic type parameters: def f<T, U>(...)
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
         consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after function name");
         auto parameters = parseParameters();
         consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
@@ -117,12 +151,16 @@ namespace parser
         }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before function body");
         auto body = blockStmt();
+        if (!typeParams.empty())
+            return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
+                                                       parameters, returnType, body, isAsync);
         return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
     }
 
     ast::StmtPtr Parser::classDeclaration()
     {
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected class name");
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before class body");
         std::vector<ast::StmtPtr> fields, methods;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
@@ -156,7 +194,87 @@ namespace parser
             }
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after class body");
+        if (!typeParams.empty())
+            return std::make_shared<ast::ClassStmt>(name, name.value, typeParams,
+                                                    nullptr, std::vector<ast::TypePtr>{},
+                                                    fields, methods);
         return std::make_shared<ast::ClassStmt>(name, name.value, fields, methods);
+    }
+
+    std::shared_ptr<ast::FunctionStmt> Parser::methodDeclaration(bool allowNoBody)
+    {
+        bool isAsync = previous().type == lexer::TokenType::ASYNC;
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected method name");
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
+        consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after method name");
+        auto parameters = parseParameters();
+        consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
+        ast::TypePtr returnType = nullptr;
+        if (match(lexer::TokenType::ARROW) || match(lexer::TokenType::COLON))
+            returnType = parseType();
+        ast::StmtPtr body = nullptr;
+        if (match(lexer::TokenType::LEFT_BRACE))
+            body = blockStmt();
+        else if (allowNoBody)
+            match(lexer::TokenType::SEMI_COLON); // signature only
+        else
+        {
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before method body");
+            body = blockStmt();
+        }
+        if (!typeParams.empty())
+            return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
+                                                       parameters, returnType, body, isAsync);
+        return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
+    }
+
+    ast::StmtPtr Parser::traitDeclaration()
+    {
+        auto name = consume(lexer::TokenType::IDENTIFIER, "Expected trait name");
+        parseTypeParameters(); // optional generic params (ignored for now)
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before trait body");
+        auto trait = std::make_shared<ast::TraitStmt>(name, name.value);
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            if (match(lexer::TokenType::DEF) || match(lexer::TokenType::ASYNC))
+                trait->methods.push_back(methodDeclaration(/*allowNoBody=*/true));
+            else
+            {
+                error(peek(), "Expected method declaration in trait");
+                advance();
+            }
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after trait body");
+        return trait;
+    }
+
+    ast::StmtPtr Parser::implDeclaration()
+    {
+        auto first = consume(lexer::TokenType::IDENTIFIER, "Expected type or trait name after 'impl'");
+        std::string traitName;
+        lexer::Token typeTok = first;
+        if (match(lexer::TokenType::FOR))
+        {
+            traitName = first.value;
+            typeTok = consume(lexer::TokenType::IDENTIFIER, "Expected type name after 'for'");
+        }
+        parseTypeParameters(); // optional generic params (ignored for now)
+        ast::TypePtr typePtr = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, typeTok.value, "", typeTok.line, typeTok.column));
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before impl body");
+        auto impl = std::make_shared<ast::ImplStmt>(first, traitName, typePtr);
+        while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
+        {
+            if (match(lexer::TokenType::DEF) || match(lexer::TokenType::ASYNC))
+                impl->methods.push_back(methodDeclaration(/*allowNoBody=*/false));
+            else
+            {
+                error(peek(), "Expected method declaration in impl");
+                advance();
+            }
+        }
+        consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after impl body");
+        return impl;
     }
 
     ast::StmtPtr Parser::statement()
@@ -265,9 +383,28 @@ namespace parser
 
     ast::StmtPtr Parser::importStmt()
     {
-        auto module = consume(lexer::TokenType::IDENTIFIER, "Expected module name");
-        consume(lexer::TokenType::SEMI_COLON, "Expected ';' after import");
-        return std::make_shared<ast::ImportStmt>(module, module.value);
+        lexer::Token tok = peek();
+        std::string path;
+        if (match(lexer::TokenType::STRING))
+        {
+            // import "relative/or/std/path"
+            path = previous().value;
+            if (path.size() >= 2 && (path.front() == '"' || path.front() == '\''))
+                path = path.substr(1, path.size() - 2);
+        }
+        else
+        {
+            // import a.b.c  ->  a/b/c
+            auto first = consume(lexer::TokenType::IDENTIFIER, "Expected module name");
+            path = first.value;
+            while (match(lexer::TokenType::DOT))
+            {
+                auto part = consume(lexer::TokenType::IDENTIFIER, "Expected name after '.'");
+                path += "/" + part.value;
+            }
+        }
+        match(lexer::TokenType::SEMI_COLON); // optional ';'
+        return std::make_shared<ast::ImportStmt>(tok, path);
     }
 
     ast::StmtPtr Parser::matchStmt()
@@ -324,6 +461,11 @@ namespace parser
             {
                 return std::make_shared<ast::SetExpr>(
                     equals, get->object, get->name, value);
+            }
+            else if (std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+            {
+                // arr[i] = value -> AssignExpr with the IndexExpr as target.
+                return std::make_shared<ast::AssignExpr>(equals, expr, value);
             }
 
             errorHandler.reportError(error::ErrorCode::S005_INVALID_ASSIGNMENT_TARGET,
@@ -429,9 +571,12 @@ namespace parser
         {
             return deleteExpr();
         }
-        if (match(lexer::TokenType::CHANNEL_RECEIVE))
+        // A `<-` (or `-<`) in prefix position is a channel receive: `<-ch`.
+        if (match(lexer::TokenType::CHANNEL_RECEIVE) || match(lexer::TokenType::CHANNEL_SEND))
         {
-            return channelReceiveExpr();
+            lexer::Token op = previous();
+            auto ch = unary();
+            return std::make_shared<ast::ChannelReceiveExpr>(op, ch);
         }
         return call();
     }
@@ -458,6 +603,12 @@ namespace parser
             {
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
                 expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+            }
+            else if (match(lexer::TokenType::LEFT_BRACKET))
+            {
+                auto index = expression();
+                auto bracket = consume(lexer::TokenType::RIGHT_BRACKET, "Expected ']' after index");
+                expr = std::make_shared<ast::IndexExpr>(bracket, expr, index);
             }
             else if (match(lexer::TokenType::CHANNEL_SEND))
             {
@@ -503,6 +654,21 @@ namespace parser
         if (match(lexer::TokenType::IDENTIFIER))
         {
             return std::make_shared<ast::VariableExpr>(previous(), previous().value);
+        }
+        if (match(lexer::TokenType::CHANNEL))
+        {
+            // channel<T>() or channel() -> a new channel handle.
+            lexer::Token tok = previous();
+            if (match(lexer::TokenType::LESS))
+            {
+                parseType();
+                consume(lexer::TokenType::GREATER, "Expected '>' after channel element type");
+            }
+            consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after channel");
+            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after channel(");
+            return std::make_shared<ast::CallExpr>(
+                tok, std::make_shared<ast::VariableExpr>(tok, "__chan_new"),
+                std::vector<ast::ExprPtr>{});
         }
         if (match(lexer::TokenType::LEFT_PAREN))
         {
@@ -563,7 +729,10 @@ namespace parser
 
     ast::TypePtr Parser::parseType()
     {
-        auto token = consume(lexer::TokenType::IDENTIFIER, "Expected type name");
+        // Accept the `channel` keyword as a type name (channel<T>).
+        lexer::Token token = (check(lexer::TokenType::CHANNEL))
+                                 ? advance()
+                                 : consume(lexer::TokenType::IDENTIFIER, "Expected type name");
         if (match(lexer::TokenType::LESS))
         {
             std::vector<ast::TypePtr> typeArgs;
@@ -920,14 +1089,9 @@ namespace parser
     ast::StmtPtr Parser::goStmt()
     {
         auto keyword = previous();
-        consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after 'go'");
-        
-        // Parse the function call or expression to be executed in goroutine
+        // Accept both `go f(args);` and `go (f(args));`.
         auto expr = expression();
-        
-        consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after goroutine expression");
         consume(lexer::TokenType::SEMI_COLON, "Expected ';' after goroutine statement");
-        
         return std::make_shared<ast::GoStmt>(keyword, expr);
     }
 

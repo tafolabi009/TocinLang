@@ -1,0 +1,6 @@
+// expect: 5
+def main() {
+    let nums = [1, 2, 3];
+    nums[0] = nums[1] + nums[2];
+    return nums[0];
+}
