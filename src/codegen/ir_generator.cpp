@@ -3598,14 +3598,75 @@ void IRGenerator::visitImportStmt(ast::ImportStmt *stmt)
 
 void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
 {
-    // Basic match statement implementation
-    if (stmt->value) stmt->value->accept(*this);
-    
-    // For now, just visit the first case
-    if (!stmt->cases.empty() && stmt->cases[0].second)
+    if (!stmt->value)
+        return;
+    stmt->value->accept(*this);
+    llvm::Value *matchVal = lastValue;
+    if (!matchVal)
+        return;
+
+    llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *mergeBlock = llvm::BasicBlock::Create(context, "matchcont");
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+
+    for (size_t i = 0; i < stmt->cases.size(); ++i)
     {
-        stmt->cases[0].second->accept(*this);
+        // Evaluate this case's pattern and compare for equality with the value.
+        stmt->cases[i].first->accept(*this);
+        llvm::Value *pat = lastValue;
+        if (!pat)
+            continue;
+
+        llvm::Value *eq;
+        if (matchVal->getType()->isIntegerTy() && pat->getType()->isIntegerTy())
+        {
+            if (pat->getType() != matchVal->getType())
+                pat = builder.CreateIntCast(pat, matchVal->getType(), true, "patcast");
+            eq = builder.CreateICmpEQ(matchVal, pat, "matcheq");
+        }
+        else if (matchVal->getType()->isFloatingPointTy() && pat->getType()->isFloatingPointTy())
+        {
+            eq = builder.CreateFCmpOEQ(matchVal, pat, "matcheq");
+        }
+        else
+        {
+            // Fallback: compare as raw addresses/values.
+            llvm::Value *lv = matchVal->getType()->isPointerTy()
+                                  ? builder.CreatePtrToInt(matchVal, i64)
+                                  : matchVal;
+            llvm::Value *rv = pat->getType()->isPointerTy()
+                                  ? builder.CreatePtrToInt(pat, i64)
+                                  : pat;
+            eq = builder.CreateICmpEQ(lv, rv, "matcheq");
+        }
+
+        llvm::BasicBlock *caseBlock = llvm::BasicBlock::Create(context, "case", function);
+        llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context, "casenext", function);
+        builder.CreateCondBr(eq, caseBlock, nextBlock);
+
+        builder.SetInsertPoint(caseBlock);
+        createEnvironment();
+        if (stmt->cases[i].second)
+            stmt->cases[i].second->accept(*this);
+        restoreEnvironment();
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(mergeBlock);
+
+        builder.SetInsertPoint(nextBlock);
     }
+
+    // Default case runs on the fall-through of all case comparisons.
+    if (stmt->defaultCase)
+    {
+        createEnvironment();
+        stmt->defaultCase->accept(*this);
+        restoreEnvironment();
+    }
+    if (!builder.GetInsertBlock()->getTerminator())
+        builder.CreateBr(mergeBlock);
+
+    mergeBlock->insertInto(function);
+    builder.SetInsertPoint(mergeBlock);
 }
 
 void IRGenerator::visitNewExpr(ast::NewExpr *expr)
