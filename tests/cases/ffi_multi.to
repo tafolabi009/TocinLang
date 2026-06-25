@@ -1,0 +1,9 @@
+// expect: 42
+// Two extern calls in two typed locals (regression for the initializer fix).
+extern def labs(x: int) -> int;
+extern def atoi(s: string) -> int;
+def main() -> int {
+    let a: int = labs(-10);
+    let b: int = atoi("32");
+    return a + b;
+}

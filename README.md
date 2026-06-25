@@ -42,7 +42,8 @@ clear what is implemented versus planned.
 - **Macros** — function-like `macro name(params) { body }` expanded at the token
   level before parsing; invoked as `name!(args)` with precedence-safe, composable
   expansion.
-- **C FFI** — call C library functions via `extern def name(...) -> T;`.
+- **C FFI** — call C library functions via `extern def name(...) -> T;`, resolved
+  by the JIT and the native linker ([docs/ffi.md](docs/ffi.md)).
 - **Strings** — string literals and concatenation with `+`.
 - **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.

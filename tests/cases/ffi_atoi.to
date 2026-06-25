@@ -1,0 +1,3 @@
+// expect: 32
+extern def atoi(s: string) -> int;
+def main() -> int { return atoi("32"); }
