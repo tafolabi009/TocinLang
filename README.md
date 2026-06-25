@@ -30,7 +30,9 @@ clear what is implemented versus planned.
   mutation, and method calls.
 - **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with
   per-type method dispatch.
-- **Generics** — `def f<T>(...)` monomorphized per concrete type at the call site.
+- **Generics** — `def f<T>(...)` functions and `class C<T>` classes, both
+  monomorphized per concrete type (type arguments inferred at the call/constructor
+  site).
 - **Arrays** — array literals, indexing (read/write), `len`, iteration, and arrays
   as reference-typed function parameters.
 - **Concurrency** — `go f(args)` goroutines (real OS threads) and typed `channel<T>`
@@ -163,6 +165,24 @@ def main() {
 }
 ```
 
+Generic classes (`class C<T>`), monomorphized per type argument:
+
+```tocin
+class Box<T> {
+    value: T;
+    def get(self) -> T { return self.value; }
+    def set(self, v: T) { self.value = v; }
+}
+
+def main() {
+    let bi = Box(42);                     // Box<int>
+    bi.set(100);
+    let bf = Box(1.5);                    // Box<float> — a separate instantiation
+    println("{} {}", bi.get(), bf.get()); // 100 1.5
+    return bi.get();
+}
+```
+
 Goroutines and channels:
 
 ```tocin
@@ -261,8 +281,9 @@ bash scripts/run_to_tests.sh                      # .to integration programs
 These features are planned or partially scaffolded but **not yet fully working
 end-to-end**. They are listed honestly so expectations match reality:
 
-- **Generic classes** — generic *functions* are monomorphized today; generic
-  `class C<T>` instantiation is still pending (generic free functions work).
+- **Explicit generic type arguments** — generic functions and classes infer their
+  type arguments from the call/constructor today; turbofish-style annotations
+  (`Box<int>(...)`) and generic types in parameter/field signatures are pending.
 - **LINQ-style collections** — `where` / `select` / `aggregate` over collections.
 - **Pattern matching destructuring** — `match` works on values today; binding
   sub-patterns (e.g. `case Some(x)`) is pending.

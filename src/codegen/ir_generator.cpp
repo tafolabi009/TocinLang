@@ -995,6 +995,75 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         }
     }
 
+    // Generic constructor call: Box(args) infers the type arguments from the
+    // argument types, monomorphizes the class, and constructs an instance.
+    if (auto ctorName = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+    {
+        auto git = genericClasses.find(ctorName->name);
+        if (git != genericClasses.end())
+        {
+            ast::ClassStmt *tmpl = git->second;
+
+            std::vector<llvm::Value *> argVals;
+            for (const auto &a : expr->arguments)
+            {
+                a->accept(*this);
+                if (!lastValue) return;
+                argVals.push_back(lastValue);
+            }
+
+            // Infer bindings by matching each field's declared type-parameter
+            // name against the corresponding argument's concrete type.
+            std::set<std::string> tparams;
+            for (const auto &tp : tmpl->typeParameters)
+                tparams.insert(tp.getName());
+            std::map<std::string, llvm::Type *> bindings;
+            size_t fi = 0;
+            for (const auto &fieldStmt : tmpl->fields)
+            {
+                auto var = std::dynamic_pointer_cast<ast::VariableStmt>(fieldStmt);
+                if (!var) continue;
+                std::string ftName = var->type ? var->type->toString() : "";
+                if (tparams.count(ftName) && fi < argVals.size() && !bindings.count(ftName))
+                    bindings[ftName] = argVals[fi]->getType();
+                ++fi;
+            }
+            for (const auto &tp : tmpl->typeParameters)
+                if (!bindings.count(tp.getName()))
+                    bindings[tp.getName()] = llvm::Type::getInt64Ty(context);
+
+            std::string mangled = instantiateGenericClass(tmpl, bindings);
+            const ClassInfo &ci = classTypes[mangled];
+            llvm::StructType *st = ci.classType;
+
+            llvm::Function *mallocFn = stdLibFunctions["malloc"];
+            llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+            llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn,
+                                                  {size}, ctorName->name + ".obj");
+            for (size_t i = 0; i < argVals.size() && i < ci.memberNames.size(); ++i)
+            {
+                llvm::Value *fieldVal = argVals[i];
+                llvm::Type *fieldTy = st->getStructElementType(i);
+                if (fieldVal->getType() != fieldTy)
+                {
+                    if (fieldVal->getType()->isIntegerTy() && fieldTy->isIntegerTy())
+                        fieldVal = builder.CreateIntCast(fieldVal, fieldTy, true, "fcast");
+                    else if (fieldVal->getType()->isFloatingPointTy() && fieldTy->isFloatingPointTy())
+                        fieldVal = builder.CreateFPCast(fieldVal, fieldTy, "fcast");
+                }
+                std::vector<llvm::Value *> idx = {
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (unsigned)i)};
+                llvm::Value *fp = builder.CreateGEP(st, obj, idx, "init." + ci.memberNames[i]);
+                builder.CreateStore(fieldVal, fp);
+            }
+            lastValue = obj;
+            lastExprClassName = mangled;
+            genericCtorClass[expr] = mangled;
+            return;
+        }
+    }
+
     // Method call: receiver.method(args) -> ClassName_method(receiver, args).
     if (auto methodCallee = std::dynamic_pointer_cast<ast::GetExpr>(expr->callee))
     {
@@ -2230,6 +2299,10 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
     }
     if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(expr))
     {
+        // Generic constructor call resolved earlier to a mangled class name.
+        auto gc = genericCtorClass.find(call.get());
+        if (gc != genericCtorClass.end())
+            return gc->second;
         // Constructor call: ClassName(...)
         if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
             if (classTypes.count(callee->name))
@@ -2398,6 +2471,58 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
     return function;
+}
+
+std::string IRGenerator::instantiateGenericClass(ast::ClassStmt *stmt,
+                                                 const std::map<std::string, llvm::Type *> &bindings)
+{
+    // Mangle the concrete class name from its type arguments (e.g. Box$i64).
+    std::string mangled = stmt->name;
+    for (const auto &tp : stmt->typeParameters)
+    {
+        auto it = bindings.find(tp.getName());
+        mangled += "$" + (it != bindings.end() ? llvmTypeName(it->second) : "t");
+    }
+    if (classTypes.count(mangled))
+        return mangled; // already instantiated
+
+    // Bind type parameters while we build the struct and method signatures.
+    auto savedBindings = typeBindings;
+    typeBindings = bindings;
+
+    // Build the concrete struct from the fields (type params now resolved).
+    ClassInfo info;
+    std::vector<llvm::Type *> fieldTypes;
+    for (const auto &fieldStmt : stmt->fields)
+    {
+        auto var = std::dynamic_pointer_cast<ast::VariableStmt>(fieldStmt);
+        if (!var)
+            continue;
+        llvm::Type *ft = var->type ? getLLVMType(var->type) : llvm::Type::getInt64Ty(context);
+        info.memberNames.push_back(var->name);
+        info.memberTypes[var->name] = ft;
+        fieldTypes.push_back(ft);
+    }
+    llvm::StructType *structType = llvm::StructType::getTypeByName(context, mangled);
+    if (!structType)
+        structType = llvm::StructType::create(context, fieldTypes, mangled);
+    else
+        structType->setBody(fieldTypes);
+    info.classType = structType;
+    info.baseClass = nullptr;
+    classTypes[mangled] = info; // register before methods so they can reference it
+
+    // Declare all method prototypes first (so methods can call each other),
+    // then generate their bodies — all under the mangled class name.
+    for (const auto &methodStmt : stmt->methods)
+        if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(methodStmt))
+            declareMethodProto(mangled, structType, method.get());
+    for (const auto &methodStmt : stmt->methods)
+        if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(methodStmt))
+            generateMethod(mangled, structType, method.get());
+
+    typeBindings = savedBindings;
+    return mangled;
 }
 
 void IRGenerator::visitEnumStmt(ast::EnumStmt *stmt)
@@ -3292,7 +3417,12 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     for (auto &s : stmts)
     {
         if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
-            registerClassType(cls.get());
+        {
+            if (cls->isGeneric())
+                genericClasses[cls->name] = cls.get(); // instantiated lazily per type argument
+            else
+                registerClassType(cls.get());
+        }
         else if (auto en = std::dynamic_pointer_cast<ast::EnumStmt>(s))
             visitEnumStmt(en.get());
     }
