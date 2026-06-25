@@ -1,0 +1,27 @@
+// Low-level / systems programming: raw memory + inline assembly.
+// Build native:  tocin systems_lowlevel.to -o sys && ./sys
+// (Inline asm requires the native path, not --run.)
+
+// Pack two 32-bit-ish fields into a raw byte buffer (a serialization record).
+def writeRecord(buf: int, id: int, flags: int) {
+    storeInt(buf, 0, id);          // bytes 0..7
+    storeByte(buf, 8, flags);      // byte 8
+}
+def readId(buf: int) -> int { return loadInt(buf, 0); }
+def readFlags(buf: int) -> int { return loadByte(buf, 8); }
+
+def main() -> int {
+    let rec = alloc(16);
+    memset(rec, 0, 16);
+    writeRecord(rec, 0xCAFE, 3);
+    println("id={} flags={}", readId(rec), readFlags(rec));   // 51966 3
+
+    // Copy the record (e.g. into a write buffer).
+    let out = alloc(16);
+    memcpy(out, rec, 16);
+    println("copied id={}", readId(out));
+
+    // Inline assembly for CPU-level control (native build only).
+    asm("nop");
+    return readFlags(rec);   // 3
+}

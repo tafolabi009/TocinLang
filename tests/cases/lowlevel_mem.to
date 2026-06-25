@@ -1,0 +1,13 @@
+// expect: 66
+def main() -> int {
+    let buf = alloc(64);
+    storeByte(buf, 0, 65);
+    storeByte(buf, 1, 66);
+    storeInt(buf, 8, 123456789);
+    let dst = alloc(16);
+    memset(dst, 0, 16);
+    memcpy(dst, buf, 8);
+    if loadInt(buf, 8) != 123456789 { return 1; }
+    if loadByte(dst, 0) != 65 { return 2; }
+    return loadByte(ptrAdd(buf, 1), 0);  // 66
+}
