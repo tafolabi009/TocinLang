@@ -7,6 +7,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
@@ -1366,6 +1367,65 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 lastValue = builder.CreateCall(rt("__tocin_append_file", i64b, {ptrb, ptrb}), {p, c}, "apf"); return; }
             if (funcName == "readLine" && na == 0) {
                 lastValue = builder.CreateCall(rt("__tocin_read_line", ptrb, {}), {}, "rdl"); return; }
+
+            // ---- low-level / systems: raw memory ----
+            llvm::Type *i8b = llvm::Type::getInt8Ty(context);
+            llvm::Type *i32b = llvm::Type::getInt32Ty(context);
+            if (funcName == "alloc" && na == 1) {       // raw heap buffer (GC-managed)
+                auto n = slot(0); if (!n) return;
+                lastValue = builder.CreateCall(rt("__tocin_alloc", ptrb, {i64b}), {n}, "rawbuf"); return; }
+            if (funcName == "memcpy" && na == 3) {
+                auto d = pptr(0); auto s = pptr(1); auto n = slot(2); if (!d || !s || !n) return;
+                builder.CreateCall(rt("memcpy", ptrb, {ptrb, ptrb, i64b}), {d, s, n});
+                lastValue = d; return; }
+            if (funcName == "memset" && na == 3) {
+                auto d = pptr(0); auto v = slot(1); auto n = slot(2); if (!d || !n) return;
+                llvm::Value *b = builder.CreateTrunc(v, i32b, "byte");
+                builder.CreateCall(rt("memset", ptrb, {ptrb, i32b, i64b}), {d, b, n});
+                lastValue = d; return; }
+            if (funcName == "ptrAdd" && na == 2) {      // pointer + byte offset
+                auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
+                lastValue = builder.CreateGEP(i8b, p, off, "ptradd"); return; }
+            if (funcName == "loadByte" && na == 2) {    // *(u8*)(p+off) zero-extended
+                auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
+                llvm::Value *g = builder.CreateGEP(i8b, p, off, "lb.p");
+                lastValue = builder.CreateZExt(builder.CreateLoad(i8b, g, "lb"), i64b, "lb64"); return; }
+            if (funcName == "storeByte" && na == 3) {   // *(u8*)(p+off) = v
+                auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
+                llvm::Value *g = builder.CreateGEP(i8b, p, off, "sb.p");
+                builder.CreateStore(builder.CreateTrunc(v, i8b, "sb.v"), g);
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "loadInt" && na == 2) {     // *(i64*)(p+off)
+                auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
+                llvm::Value *g = builder.CreateGEP(i8b, p, off, "li.p");
+                lastValue = builder.CreateLoad(i64b, g, "li"); return; }
+            if (funcName == "storeInt" && na == 3) {    // *(i64*)(p+off) = v
+                auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
+                llvm::Value *g = builder.CreateGEP(i8b, p, off, "si.p");
+                builder.CreateStore(v, g);
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
+            // ---- inline assembly (OS/kernel) ----
+            // asm("instructions") emits raw side-effecting inline assembly with
+            // no operands/clobbers (e.g. "cli", "hlt", "nop", "sti"). The
+            // argument must be a string literal (the template is needed at
+            // compile time, not as a runtime pointer).
+            if (funcName == "asm" && na == 1) {
+                auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[0]);
+                if (!lit || lit->literalType != ast::LiteralExpr::LiteralType::STRING) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asm(...) requires a string-literal instruction template",
+                        "", 0, 0, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
+                auto *fnty = llvm::FunctionType::get(voidb, false);
+                llvm::InlineAsm *ia = llvm::InlineAsm::get(
+                    fnty, lit->value, /*constraints=*/"",
+                    /*hasSideEffects=*/true, /*isAlignStack=*/false,
+                    llvm::InlineAsm::AD_ATT);
+                builder.CreateCall(fnty, ia, {});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return;
+            }
         }
 
         // Math standard library: unary libm functions (double -> double).
