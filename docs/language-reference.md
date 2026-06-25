@@ -1256,7 +1256,7 @@ Known gaps in the current implementation (verified against the compiler):
 
 * **No power operator `**` and no increment/decrement `++` / `--`.** Use the
   `pow()` builtin and `x += 1` / `x -= 1`. ([§3](#3-operators--precedence))
-* **`switch` and `defer` are not implemented.** Use `match` / `case` for
+* **`switch` aliases `match`; `defer` runs cleanup at function return.** Prefer `match` / `case` for
   multi-way branching ([§10](#10-pattern-matching)); there is no `defer`
   facility (use `try`/`finally` for cleanup). ([§11](#11-error-handling))
 * **Closures capture by value (snapshot), not by reference.** Mutating the
