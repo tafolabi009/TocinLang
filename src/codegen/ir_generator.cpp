@@ -579,7 +579,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
         stmt->initializer->accept(*this);
         if (!lastValue)
             return;
-        initVal = lastValue;
+        initVal = wrapIfRawFunction(lastValue); // `let f = someFunc;` -> closure
         if (!varType)
             varType = initVal->getType();
     }
@@ -639,6 +639,16 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
         auto it = varFuncSig.find(v->name);
         if (it != varFuncSig.end())
             varFuncSig[stmt->name] = it->second;
+    }
+    else if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+    {
+        // `let f = makeAdder(..)` — f's signature is makeAdder's return type.
+        if (auto cv = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            auto it = funcReturnFnType.find(cv->name);
+            if (it != funcReturnFnType.end())
+                varFuncSig[stmt->name] = it->second;
+        }
     }
 
     // Track string-typed locals so == / != compare by value, not pointer.
@@ -914,6 +924,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
         stmt->value->accept(*this);
         if (!lastValue)
             return;
+        lastValue = wrapIfRawFunction(lastValue); // `return someFunc;` -> closure
 
         // Coerce the value to the function's return type when needed.
         if (lastValue->getType() != returnType)
@@ -1537,15 +1548,13 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         }
     }
 
-    // Ensure callee is a function (direct) or a function-pointer value (indirect).
+    // Ensure callee is a function (direct) or a closure value (indirect).
+    bool isClosure = callee->getType()->isPointerTy() && !llvm::isa<llvm::Function>(callee);
     llvm::FunctionType *funcType = nullptr;
-    if (callee->getType()->isPointerTy())
-    {
-        if (auto func = llvm::dyn_cast<llvm::Function>(callee))
-            funcType = func->getFunctionType();           // direct / named function value
-        else
-            funcType = recoverCalleeFnType(expr->callee); // indirect: function-pointer value
-    }
+    if (auto func = llvm::dyn_cast<llvm::Function>(callee))
+        funcType = func->getFunctionType();           // direct / named function value
+    else if (callee->getType()->isPointerTy())
+        funcType = recoverCalleeFnType(expr->callee); // closure value: declared (params)->ret
     if (!funcType)
     {
         errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
@@ -1555,17 +1564,11 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         return;
     }
 
-    // Evaluate arguments, coercing each to the callee's declared parameter type.
-    std::vector<llvm::Value *> args;
-    for (size_t i = 0; i < expr->arguments.size(); ++i)
-    {
-        expr->arguments[i]->accept(*this);
-        if (!lastValue)
-            return;
-        llvm::Value *v = lastValue;
-        if (i < funcType->getNumParams() && v->getType() != funcType->getParamType(i))
+    // Coerce an evaluated argument to a declared parameter type.
+    auto coerceArg = [&](llvm::Value *v, llvm::Type *pt) -> llvm::Value * {
+        v = wrapIfRawFunction(v); // a bare function passed by value -> closure
+        if (pt && v->getType() != pt)
         {
-            llvm::Type *pt = funcType->getParamType(i);
             if (v->getType()->isIntegerTy() && pt->isIntegerTy())
                 v = builder.CreateIntCast(v, pt, true, "argcast");
             else if (v->getType()->isFloatingPointTy() && pt->isFloatingPointTy())
@@ -1573,10 +1576,45 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             else if (v->getType()->isPointerTy() && pt->isPointerTy())
                 v = builder.CreateBitCast(v, pt, "argcast");
         }
-        args.push_back(v);
+        return v;
+    };
+
+    if (isClosure)
+    {
+        // Closure ABI: fn lives at offset 0; the closure itself is the env arg.
+        llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+        llvm::Value *fnPtr = builder.CreateLoad(ptrTy, callee, "clo.fn");
+        std::vector<llvm::Type *> cps;
+        cps.push_back(ptrTy);
+        for (auto *p : funcType->params())
+            cps.push_back(p);
+        llvm::FunctionType *cloType =
+            llvm::FunctionType::get(funcType->getReturnType(), cps, false);
+
+        std::vector<llvm::Value *> args;
+        args.push_back(callee); // env
+        for (size_t i = 0; i < expr->arguments.size(); ++i)
+        {
+            expr->arguments[i]->accept(*this);
+            if (!lastValue)
+                return;
+            llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+            args.push_back(coerceArg(lastValue, pt));
+        }
+        lastValue = builder.CreateCall(cloType, fnPtr, args);
+        return;
     }
 
-    // Create the call instruction
+    // Direct call.
+    std::vector<llvm::Value *> args;
+    for (size_t i = 0; i < expr->arguments.size(); ++i)
+    {
+        expr->arguments[i]->accept(*this);
+        if (!lastValue)
+            return;
+        llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+        args.push_back(coerceArg(lastValue, pt));
+    }
     lastValue = builder.CreateCall(funcType, callee, args);
 }
 
@@ -2049,116 +2087,252 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     }
 }
 
+// --- Free-variable analysis for closure capture --------------------------
+// Collect every identifier referenced (`used`) and every name bound locally
+// (`bound`) within an expression / statement subtree. The capture set is then
+// `used - bound - params`, intersected with the enclosing scope by the caller.
+namespace
+{
+    void collectStmtNames(const ast::StmtPtr &stmt,
+                          std::set<std::string> &used,
+                          std::set<std::string> &bound);
+
+    void collectExprNames(const ast::ExprPtr &expr,
+                          std::set<std::string> &used,
+                          std::set<std::string> &bound)
+    {
+        if (!expr)
+            return;
+        if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+            used.insert(v->name);
+        else if (auto b = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+        {
+            collectExprNames(b->left, used, bound);
+            collectExprNames(b->right, used, bound);
+        }
+        else if (auto u = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+            collectExprNames(u->right, used, bound);
+        else if (auto g = std::dynamic_pointer_cast<ast::GroupingExpr>(expr))
+            collectExprNames(g->expression, used, bound);
+        else if (auto c = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+        {
+            collectExprNames(c->callee, used, bound);
+            for (auto &a : c->arguments)
+                collectExprNames(a, used, bound);
+        }
+        else if (auto gx = std::dynamic_pointer_cast<ast::GetExpr>(expr))
+            collectExprNames(gx->object, used, bound);
+        else if (auto sx = std::dynamic_pointer_cast<ast::SetExpr>(expr))
+        {
+            collectExprNames(sx->object, used, bound);
+            collectExprNames(sx->value, used, bound);
+        }
+        else if (auto ix = std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+        {
+            collectExprNames(ix->object, used, bound);
+            collectExprNames(ix->index, used, bound);
+        }
+        else if (auto ax = std::dynamic_pointer_cast<ast::AssignExpr>(expr))
+        {
+            if (!ax->name.empty())
+                used.insert(ax->name);
+            collectExprNames(ax->target, used, bound);
+            collectExprNames(ax->value, used, bound);
+        }
+        else if (auto lx = std::dynamic_pointer_cast<ast::ListExpr>(expr))
+        {
+            for (auto &e : lx->elements)
+                collectExprNames(e, used, bound);
+        }
+        else if (auto aw = std::dynamic_pointer_cast<ast::AwaitExpr>(expr))
+            collectExprNames(aw->expression, used, bound);
+        else if (auto si = std::dynamic_pointer_cast<ast::StringInterpolationExpr>(expr))
+        {
+            for (auto &e : si->getExpressions())
+                collectExprNames(e, used, bound);
+        }
+        else if (auto nested = std::dynamic_pointer_cast<ast::LambdaExpr>(expr))
+        {
+            // A nested lambda's own params are bound within it; its free vars
+            // are still free here (and may need capturing transitively).
+            std::set<std::string> innerBound = bound;
+            for (auto &p : nested->parameters)
+                innerBound.insert(p.name);
+            collectExprNames(nested->body, used, innerBound);
+        }
+    }
+
+    void collectStmtNames(const ast::StmtPtr &stmt,
+                          std::set<std::string> &used,
+                          std::set<std::string> &bound)
+    {
+        if (!stmt)
+            return;
+        if (auto es = std::dynamic_pointer_cast<ast::ExpressionStmt>(stmt))
+            collectExprNames(es->expression, used, bound);
+        else if (auto vs = std::dynamic_pointer_cast<ast::VariableStmt>(stmt))
+        {
+            collectExprNames(vs->initializer, used, bound);
+            bound.insert(vs->name);
+        }
+        else if (auto bs = std::dynamic_pointer_cast<ast::BlockStmt>(stmt))
+        {
+            for (auto &s : bs->statements)
+                collectStmtNames(s, used, bound);
+        }
+        else if (auto is = std::dynamic_pointer_cast<ast::IfStmt>(stmt))
+        {
+            collectExprNames(is->condition, used, bound);
+            collectStmtNames(is->thenBranch, used, bound);
+            for (auto &eb : is->elifBranches)
+            {
+                collectExprNames(eb.first, used, bound);
+                collectStmtNames(eb.second, used, bound);
+            }
+            collectStmtNames(is->elseBranch, used, bound);
+        }
+        else if (auto ws = std::dynamic_pointer_cast<ast::WhileStmt>(stmt))
+        {
+            collectExprNames(ws->condition, used, bound);
+            collectStmtNames(ws->body, used, bound);
+        }
+        else if (auto fs = std::dynamic_pointer_cast<ast::ForStmt>(stmt))
+        {
+            collectExprNames(fs->iterable, used, bound);
+            bound.insert(fs->variable);
+            collectStmtNames(fs->body, used, bound);
+        }
+        else if (auto rs = std::dynamic_pointer_cast<ast::ReturnStmt>(stmt))
+            collectExprNames(rs->value, used, bound);
+    }
+} // namespace
+
 void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
 {
-    // Get return type
+    llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+
+    // Return type.
     llvm::Type *returnType = getLLVMType(expr->returnType);
     if (!returnType)
         return;
 
-    // Get parameter types
-    std::vector<llvm::Type *> paramTypes;
-    for (const auto &param : expr->parameters) // Changed from params to parameters
+    // Declared parameter types.
+    std::vector<llvm::Type *> declParamTypes;
+    for (const auto &param : expr->parameters)
     {
         llvm::Type *paramType = getLLVMType(param.type);
         if (!paramType)
             return;
-
-        paramTypes.push_back(paramType);
+        declParamTypes.push_back(paramType);
     }
 
-    // Create function type
-    llvm::FunctionType *functionType = llvm::FunctionType::get(returnType, paramTypes, false);
+    // --- Determine captured variables --------------------------------------
+    // Free identifiers referenced in the body that resolve to a variable in the
+    // enclosing scope (and are not parameters or locally bound) are captured by
+    // value into the closure environment.
+    std::set<std::string> used, bound;
+    for (auto &p : expr->parameters)
+        bound.insert(p.name);
+    collectExprNames(expr->body, used, bound);
 
-    // Create unique name for the lambda
+    std::vector<std::string> captureNames;
+    std::vector<llvm::Value *> captureVals; // loaded in the *enclosing* scope
+    std::vector<llvm::Type *> captureTypes;
+    for (const auto &name : used)
+    {
+        if (bound.count(name))
+            continue;
+        llvm::AllocaInst *slot = lookupVariable(name);
+        if (!slot)
+            continue; // not a local (e.g. a global function called inside)
+        captureNames.push_back(name);
+        captureTypes.push_back(slot->getAllocatedType());
+        captureVals.push_back(
+            builder.CreateLoad(slot->getAllocatedType(), slot, name + ".cap"));
+    }
+
+    // --- Build the lambda function with the env-first ABI ------------------
+    std::vector<llvm::Type *> fnParamTypes;
+    fnParamTypes.push_back(ptrTy); // hidden environment pointer
+    for (auto *t : declParamTypes)
+        fnParamTypes.push_back(t);
+    llvm::FunctionType *functionType =
+        llvm::FunctionType::get(returnType, fnParamTypes, false);
+
     static int lambdaCounter = 0;
     std::string lambdaName = "lambda_" + std::to_string(lambdaCounter++);
-
-    // Create function
     llvm::Function *function = llvm::Function::Create(
         functionType, llvm::Function::InternalLinkage, lambdaName, module.get());
 
-    // Set parameter names
-    unsigned idx = 0;
-    for (auto &param : function->args())
-    {
-        param.setName(expr->parameters[idx++].name); // Changed from params to parameters, removed .lexeme
-    }
-
-    // Create basic block
     llvm::BasicBlock *block = llvm::BasicBlock::Create(context, "entry", function);
-
-    // Save current insert point
     llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
     llvm::Function *savedFunction = currentFunction;
+    auto savedNamedValues = namedValues;
+    auto savedVarClasses = varClasses;
+    auto savedVarArrayElem = varArrayElem;
+    auto savedVarFuncSig = varFuncSig;
+    auto savedVarIsString = varIsString;
 
-    // Set new insert point
     builder.SetInsertPoint(block);
     currentFunction = function;
+    // Inside the lambda only params + captures are in scope.
+    namedValues.clear();
+    varFuncSig.clear();
+    varIsString.clear();
 
-    // Save previous variables
-    std::map<std::string, llvm::AllocaInst *> savedNamedValues(namedValues);
-
-    // Create allocas for parameters
-    idx = 0;
-    for (auto &param : function->args())
+    // arg 0 is the environment; load each captured value back out of it.
+    llvm::Argument *envArg = function->getArg(0);
+    envArg->setName("env");
+    for (size_t i = 0; i < captureNames.size(); ++i)
     {
-        llvm::AllocaInst *alloca = createEntryBlockAlloca(
-            function, param.getName().str(), param.getType());
-
-        // Store the parameter value
-        builder.CreateStore(&param, alloca);
-
-        // Add to symbol table
-        namedValues[param.getName().str()] = alloca;
-
-        idx++;
+        // Captures live at offset 8*(i+1) (offset 0 holds the fn pointer).
+        llvm::Value *off = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 8 * (i + 1));
+        llvm::Value *p = builder.CreateGEP(llvm::Type::getInt8Ty(context), envArg, off, captureNames[i] + ".slot");
+        llvm::Value *val = builder.CreateLoad(captureTypes[i], p, captureNames[i]);
+        llvm::AllocaInst *a = createEntryBlockAlloca(function, captureNames[i], captureTypes[i]);
+        builder.CreateStore(val, a);
+        namedValues[captureNames[i]] = a;
     }
 
-    // Codegen function body
+    // Bind declared parameters (args 1..N).
+    for (size_t i = 0; i < expr->parameters.size(); ++i)
+    {
+        llvm::Argument *arg = function->getArg(i + 1);
+        arg->setName(expr->parameters[i].name);
+        llvm::AllocaInst *alloca = createEntryBlockAlloca(
+            function, expr->parameters[i].name, arg->getType());
+        builder.CreateStore(arg, alloca);
+        namedValues[expr->parameters[i].name] = alloca;
+        recordArrayParam(expr->parameters[i].name, expr->parameters[i].type);
+    }
+
+    // Codegen body.
     expr->body->accept(*this);
 
-    // Add implicit return if needed
+    // Implicit return.
     if (!builder.GetInsertBlock()->getTerminator())
     {
         if (returnType->isVoidTy())
-        {
             builder.CreateRetVoid();
-        }
         else if (lastValue && lastValue->getType() == returnType)
-        {
-            // Use the last expression's value as the return value
             builder.CreateRet(lastValue);
-        }
+        else if (returnType->isIntegerTy())
+            builder.CreateRet(llvm::ConstantInt::get(returnType, 0));
+        else if (returnType->isFloatTy() || returnType->isDoubleTy())
+            builder.CreateRet(llvm::ConstantFP::get(returnType, 0.0));
+        else if (returnType->isPointerTy())
+            builder.CreateRet(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(returnType)));
         else
         {
-            // Insert a reasonable default return value
-            if (returnType->isIntegerTy())
-            {
-                builder.CreateRet(llvm::ConstantInt::get(returnType, 0));
-            }
-            else if (returnType->isFloatTy() || returnType->isDoubleTy())
-            {
-                builder.CreateRet(llvm::ConstantFP::get(returnType, 0.0));
-            }
-            else if (returnType->isPointerTy())
-            {
-                builder.CreateRet(llvm::ConstantPointerNull::get(
-                    llvm::cast<llvm::PointerType>(returnType)));
-            }
-            else
-            {
-                errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                         "Cannot generate default return value for lambda",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
-                function->eraseFromParent();
-                lastValue = nullptr;
-                return;
-            }
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Cannot generate default return value for lambda",
+                                     "", 0, 0, error::ErrorSeverity::ERROR);
+            function->eraseFromParent();
+            lastValue = nullptr;
+            return;
         }
     }
 
-    // Verify the function
     if (llvm::verifyFunction(*function, &llvm::errs()))
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
@@ -2169,15 +2343,18 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         return;
     }
 
-    // Restore previous state
+    // Restore the enclosing scope.
     namedValues = savedNamedValues;
+    varClasses = savedVarClasses;
+    varArrayElem = savedVarArrayElem;
+    varFuncSig = savedVarFuncSig;
+    varIsString = savedVarIsString;
     currentFunction = savedFunction;
-
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
 
-    // Return the function as a value
-    lastValue = function;
+    // Box the function + captured values into a heap closure object.
+    lastValue = makeClosure(function, captureVals);
 }
 
 void IRGenerator::visitListExpr(ast::ListExpr *expr)
@@ -2624,6 +2801,76 @@ void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &
     // Record string parameters so == / != compare by value.
     if (type && type->toString() == "string")
         varIsString.insert(name);
+}
+
+llvm::Value *IRGenerator::makeClosure(llvm::Function *fn,
+                                      const std::vector<llvm::Value *> &caps)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    // Layout: [ ptr fn ][ cap0 ][ cap1 ]...  one 8-byte slot each.
+    llvm::Value *size = llvm::ConstantInt::get(i64, 8 * (1 + caps.size()));
+    llvm::Function *mallocF = getStdLibFunction("malloc");
+    llvm::Value *mem = builder.CreateCall(mallocF->getFunctionType(), mallocF, {size}, "closure");
+    builder.CreateStore(fn, mem); // fn pointer at offset 0
+    for (size_t i = 0; i < caps.size(); ++i)
+    {
+        llvm::Value *off = llvm::ConstantInt::get(i64, 8 * (i + 1));
+        llvm::Value *slot = builder.CreateGEP(i8, mem, off, "cap.slot");
+        builder.CreateStore(caps[i], slot);
+    }
+    return mem;
+}
+
+llvm::Function *IRGenerator::getOrCreateThunk(llvm::Function *target)
+{
+    auto it = thunks.find(target);
+    if (it != thunks.end())
+        return it->second;
+
+    llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+    llvm::FunctionType *tft = target->getFunctionType();
+    // Thunk signature: (ptr env, <target params...>) -> target ret.
+    std::vector<llvm::Type *> ps;
+    ps.push_back(ptrTy);
+    for (auto *p : tft->params())
+        ps.push_back(p);
+    llvm::FunctionType *thunkType =
+        llvm::FunctionType::get(tft->getReturnType(), ps, false);
+    llvm::Function *thunk = llvm::Function::Create(
+        thunkType, llvm::Function::InternalLinkage,
+        target->getName() + "$thunk", module.get());
+
+    // Save/restore the builder state — thunks are emitted lazily mid-codegen.
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    llvm::Function *savedFunction = currentFunction;
+    llvm::BasicBlock *entry = llvm::BasicBlock::Create(context, "entry", thunk);
+    builder.SetInsertPoint(entry);
+    currentFunction = thunk;
+
+    std::vector<llvm::Value *> callArgs;
+    for (unsigned i = 1; i < thunk->arg_size(); ++i) // skip env (arg 0)
+        callArgs.push_back(thunk->getArg(i));
+    llvm::Value *r = builder.CreateCall(tft, target, callArgs);
+    if (tft->getReturnType()->isVoidTy())
+        builder.CreateRetVoid();
+    else
+        builder.CreateRet(r);
+
+    currentFunction = savedFunction;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
+
+    thunks[target] = thunk;
+    return thunk;
+}
+
+llvm::Value *IRGenerator::wrapIfRawFunction(llvm::Value *v)
+{
+    // A bare top-level function used as a value becomes a closure {thunk}.
+    if (auto fn = llvm::dyn_cast_or_null<llvm::Function>(v))
+        return makeClosure(getOrCreateThunk(fn), {});
+    return v;
 }
 
 bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
@@ -3817,6 +4064,10 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
                 genericFunctions[fn->name] = fn.get();  // record template for lazy instantiation
             else
                 declareFunctionProto(fn.get());
+            // Record a function-typed return so callers can recover the
+            // signature of a closure produced by calling this function.
+            if (auto rft = std::dynamic_pointer_cast<ast::FunctionType>(fn->returnType))
+                funcReturnFnType[fn->name] = rft;
         }
         else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
         {

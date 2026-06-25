@@ -1,0 +1,7 @@
+// expect: 123
+def apply(f: (int) -> int, x: int) -> int { return f(x); }
+def main() {
+    let a = 100;
+    let b = 20;
+    return apply(lambda (x: int) -> int x + a + b, 3);  // 3 + 100 + 20
+}

@@ -1,0 +1,10 @@
+// expect: 28
+def makeAdder(n: int) -> (int) -> int {
+    return lambda (x: int) -> int x + n;
+}
+def main() {
+    let add10 = makeAdder(10);
+    let add100 = makeAdder(100);
+    // 17 + 11 = 28; independent captured state per closure
+    return add10(7) + add10(1);
+}
