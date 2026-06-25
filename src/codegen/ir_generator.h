@@ -157,6 +157,9 @@ namespace codegen
 
         // Symbol tables
         std::map<std::string, llvm::AllocaInst *> namedValues;                     // Variable symbol table
+        std::map<std::string, std::string> varClasses;                            // Variable name -> class name
+        std::string currentClassName;                                              // Enclosing class while generating a method
+        std::string lastExprClassName;                                             // Class name of the most recent expression value
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
         std::map<std::string, llvm::Function *> classMethods;                      // Class method table
@@ -167,6 +170,12 @@ namespace codegen
         llvm::AllocaInst *createEntryBlockAlloca(llvm::Function *function, const std::string &name, llvm::Type *type);
         llvm::Type *getLLVMType(ast::TypePtr type);
         llvm::FunctionType *getLLVMFunctionType(ast::TypePtr returnType, const std::vector<ast::Parameter> &params);
+
+        // Lightweight, non-emitting type inference used to determine a
+        // function's return type when it is not explicitly annotated.
+        llvm::Type *inferExprType(const ast::ExprPtr &expr,
+                                  const std::map<std::string, llvm::Type *> &localTypes);
+        llvm::Type *inferFunctionReturnType(ast::FunctionStmt *stmt);
         void declareStdLibFunctions();
         llvm::Function *getStdLibFunction(const std::string &name);
         llvm::Type *createOpaquePtr(llvm::Type *elementType);
@@ -210,6 +219,15 @@ namespace codegen
         // Main function creation
         void createMainFunction();
 
+        // Two-pass codegen: forward-declare prototypes/types so order of
+        // top-level declarations does not matter (mutual recursion, etc.).
+        void predeclareTopLevel(ast::StmtPtr ast);
+        llvm::Function *declareFunctionProto(ast::FunctionStmt *stmt);
+        void registerClassType(ast::ClassStmt *stmt);
+        llvm::Function *declareMethodProto(const std::string &className,
+                                           llvm::StructType *classType,
+                                           ast::FunctionStmt *method);
+
         // String handling
         llvm::Value *convertToString(llvm::Value *value);
         llvm::Value *concatenateStrings(const std::vector<llvm::Value *> &strings);
@@ -225,6 +243,10 @@ namespace codegen
 
         // Utility to infer type name from a value (for opaque pointers)
         std::string inferTypeNameFromValue(llvm::Value *value);
+
+        // Determine the class name of an expression (self, local variables of
+        // class type, and constructor calls), used for field/method resolution.
+        std::string getExprClassName(const ast::ExprPtr &expr);
     };
 
     // Pattern visitor for match statements

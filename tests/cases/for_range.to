@@ -1,0 +1,2 @@
+// expect: 45
+def main() { let s = 0; for i in 0..10 { s = s + i; } return s; }

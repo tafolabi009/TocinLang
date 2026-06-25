@@ -1,0 +1,2 @@
+// expect: 15
+def main() { let i = 1; let s = 0; while i <= 5 { s = s + i; i = i + 1; } return s; }

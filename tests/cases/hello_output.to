@@ -1,0 +1,2 @@
+// expect-output: Hello from Tocin!
+def main() { println("Hello from Tocin!"); return 0; }

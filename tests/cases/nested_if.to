@@ -1,0 +1,2 @@
+// expect: 6
+def main() { let a = 5; if a > 0 { if a > 3 { return 6; } } return 0; }

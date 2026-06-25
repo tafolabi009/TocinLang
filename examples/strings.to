@@ -1,0 +1,12 @@
+// String concatenation and formatted printing.
+//   tocin examples/strings.to --run
+def greet(name: string) -> string {
+    return "Hello, " + name + "!";
+}
+
+def main() {
+    println(greet("Tocin"));
+    let parts = "a" + "b" + "c";
+    println("joined = {}", parts);
+    return 0;
+}

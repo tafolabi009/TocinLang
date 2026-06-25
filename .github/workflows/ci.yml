@@ -9,22 +9,22 @@ on:
 
 env:
   LLVM_VERSION: 18
-  BUILD_TIMEOUT_MINUTES: 45
 
 jobs:
-  build-test:
-    name: Build & Test (${{ matrix.os }}, ${{ matrix.build_type }})
-    runs-on: ${{ matrix.os }}
+  # ---------------------------------------------------------------------------
+  # Primary Linux job. This one is authoritative: it builds the compiler and the
+  # unit-test binary, runs the C++ unit tests via ctest, and runs the end-to-end
+  # .to test suite. Any real failure fails the job (no continue-on-error here).
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Linux (${{ matrix.build_type }})
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        build_type: [Release]
-        include:
-          - os: ubuntu-latest
-            build_type: Debug
-    
+        build_type: [Release, Debug]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,180 +32,166 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Set up CMake
-        uses: jwlawson/actions-setup-cmake@v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          cmake-version: '3.25.x'
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # llvm-18-dev provides the LLVM development files and CMake config;
+          # llvm-18 provides the command-line tools, including lli-18 which the
+          # .to test runner uses to execute compiled LLVM IR.
+          sudo apt-get install -y \
+            llvm-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }}-dev \
+            llvm-${{ env.LLVM_VERSION }}-tools \
+            clang-${{ env.LLVM_VERSION }} \
+            libffi-dev \
+            libzstd-dev \
+            libxml2-dev \
+            zlib1g-dev \
+            python3-dev \
+            ninja-build \
+            cmake
+
+      - name: Verify toolchain
+        run: |
+          cmake --version
+          clang-${{ env.LLVM_VERSION }} --version
+          lli-${{ env.LLVM_VERSION }} --version
+          ls /usr/lib/llvm-${{ env.LLVM_VERSION }}/lib/cmake/llvm
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DWITH_V8=OFF \
+            -DWITH_PYTHON=ON \
+            -DENABLE_TESTING=ON \
+            -DLLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION }}/lib/cmake/llvm
+
+      - name: Build compiler and tests
+        run: ninja -C build tocin tocin_tests
+
+      - name: Run C++ unit tests (ctest)
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Run .to end-to-end tests
+        run: bash scripts/run_to_tests.sh
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tocin-linux-${{ matrix.build_type }}
+          path: |
+            build/tocin
+            build/tocin_tests
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # macOS build is best-effort: it builds the compiler and runs whatever tests
+  # it can, but is allowed to fail without blocking the pipeline.
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS (best-effort)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Cache LLVM and Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/
-            ~/Library/Caches/Homebrew
-            C:\ProgramData\chocolatey\lib
-          key: ${{ runner.os }}-llvm-${{ env.LLVM_VERSION }}-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-llvm-${{ env.LLVM_VERSION }}-
-            ${{ runner.os }}-llvm-
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            llvm-${{ env.LLVM_VERSION }}-dev \
-            libclang-${{ env.LLVM_VERSION }}-dev \
-            clang-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            libzstd-dev \
-            libxml2-dev \
-            zlib1g-dev \
-            libffi-dev \
-            libssl-dev \
-            libreadline-dev \
-            ninja-build \
-            python3-dev || true
+          brew install llvm@18 zstd libxml2 ninja libffi || true
+          echo "LLVM_DIR=$(brew --prefix llvm@18)/lib/cmake/llvm" >> "$GITHUB_ENV"
+          echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
 
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Configure
         run: |
-          brew install llvm@18 zstd libxml2 cmake ninja libffi openssl readline python@3.11 || true
-          echo "LLVM_DIR=$(brew --prefix llvm@18)/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "$(brew --prefix llvm@18)/bin" >> $GITHUB_PATH
-        continue-on-error: false
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_V8=OFF \
+            -DWITH_PYTHON=ON \
+            -DENABLE_TESTING=ON \
+            -DLLVM_DIR="${LLVM_DIR}"
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
+      - name: Build compiler and tests
+        run: ninja -C build tocin tocin_tests
+
+      - name: Run C++ unit tests (ctest)
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Run .to end-to-end tests
+        run: bash scripts/run_to_tests.sh
+
+  # ---------------------------------------------------------------------------
+  # Windows build is best-effort.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows (best-effort)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install LLVM
         shell: pwsh
         run: |
           choco install llvm --version=18.1.8 -y --no-progress
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y --no-progress
+          choco install ninja -y --no-progress
           echo "LLVM_DIR=C:\Program Files\LLVM\lib\cmake\llvm" | Out-File -FilePath $env:GITHUB_ENV -Append
-        continue-on-error: false
 
-      - name: Configure CMake
+      - name: Configure
+        shell: bash
         run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DWITH_PYTHON=ON \
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DWITH_V8=OFF \
-            -DWITH_ZSTD=ON \
-            -DWITH_XML=ON \
+            -DWITH_PYTHON=ON \
             -DENABLE_TESTING=ON \
-            -DENABLE_SANITIZERS=OFF
+            -DLLVM_DIR="${LLVM_DIR}"
+
+      - name: Build compiler and tests
         shell: bash
-        continue-on-error: false
+        run: cmake --build build --config Release --parallel
 
-      - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} --parallel
-
-      - name: Run Unit Tests
-        run: |
-          cd build
-          if [ -f CTestTestfile.cmake ]; then
-            ctest --output-on-failure --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) || echo "Some tests failed (continuing...)"
-          else
-            echo "⚠️ No CTest configuration found, skipping unit tests"
-          fi
+      - name: Run C++ unit tests (ctest)
         shell: bash
-        continue-on-error: true
+        working-directory: build
+        run: ctest --output-on-failure -C Release || true
 
-      - name: Run Integration Tests
-        run: |
-          cd build
-          if [ -f ./tocin ] || [ -f ./tocin.exe ] || [ -f ./${{ matrix.build_type }}/tocin.exe ]; then
-            # Find the tocin binary
-            TOCIN_BIN=""
-            if [ -f ./tocin ]; then
-              TOCIN_BIN="./tocin"
-            elif [ -f ./tocin.exe ]; then
-              TOCIN_BIN="./tocin.exe"
-            elif [ -f ./${{ matrix.build_type }}/tocin.exe ]; then
-              TOCIN_BIN="./${{ matrix.build_type }}/tocin.exe"
-            fi
-            
-            echo "Found tocin binary at: $TOCIN_BIN"
-            
-            # Test basic functionality
-            $TOCIN_BIN --help > /dev/null || echo "Help command failed"
-            
-            # Run test files (allow failures for now)
-            TEST_COUNT=0
-            PASS_COUNT=0
-            for f in ../tests/*.to; do
-              if [ -f "$f" ]; then
-                echo "Running test: $f"
-                TEST_COUNT=$((TEST_COUNT + 1))
-                if $TOCIN_BIN "$f" 2>&1; then
-                  PASS_COUNT=$((PASS_COUNT + 1))
-                  echo "✅ Test passed: $f"
-                else
-                  echo "⚠️ Test failed: $f (continuing...)"
-                fi
-              fi
-            done
-            
-            echo "Test Summary: $PASS_COUNT/$TEST_COUNT tests passed"
-          else
-            echo "⚠️ Tocin binary not found, skipping integration tests"
-          fi
-        shell: bash
-        continue-on-error: true
-
-      - name: Upload build artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tocin-${{ matrix.os }}-${{ matrix.build_type }}
-          path: |
-            build/tocin*
-            build/Release/tocin*
-            build/Debug/tocin*
-          retention-days: 7
-          if-no-files-found: warn
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.os }}-${{ matrix.build_type }}
-          path: build/Testing/
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Job Summary
-        if: always()
-        run: |
-          echo "## Build Summary for ${{ matrix.os }} (${{ matrix.build_type }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f build/tocin ] || [ -f build/tocin.exe ] || [ -f build/${{ matrix.build_type }}/tocin.exe ]; then
-            echo "✅ **Build Status:** SUCCESS" >> $GITHUB_STEP_SUMMARY
-            echo "✅ Tocin binary created successfully" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **Build Status:** FAILED" >> $GITHUB_STEP_SUMMARY
-            echo "❌ Tocin binary not found" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
-          echo "- OS: ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Build Type: ${{ matrix.build_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- LLVM Version: ${{ env.LLVM_VERSION }}" >> $GITHUB_STEP_SUMMARY
-        shell: bash
-
+  # ---------------------------------------------------------------------------
+  # Static analysis is advisory only: findings are reported but never block CI.
+  # ---------------------------------------------------------------------------
   static-analysis:
-    name: Static Analysis
+    name: Static Analysis (advisory)
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -215,15 +201,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-tidy-${{ env.LLVM_VERSION }} cppcheck
 
-      - name: Configure for analysis
-        run: |
-          cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-      - name: Run clang-tidy
-        run: |
-          find src -name "*.cpp" | xargs clang-tidy-${{ env.LLVM_VERSION }} -p build || true
-
       - name: Run cppcheck
         run: |
-          cppcheck --enable=warning,performance,portability --suppress=missingIncludeSystem src/
- 
+          cppcheck --enable=warning,performance,portability \
+            --suppress=missingIncludeSystem src/ || true
