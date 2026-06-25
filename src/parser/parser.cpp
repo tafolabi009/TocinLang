@@ -57,6 +57,12 @@ namespace parser
             {
                 return functionDeclaration();
             }
+            if (match(lexer::TokenType::EXTERN))
+            {
+                // extern def f(params) -> T;  -> external (C) function declaration.
+                consume(lexer::TokenType::DEF, "Expected 'def' after 'extern'");
+                return methodDeclaration(/*allowNoBody=*/true);
+            }
             if (match(lexer::TokenType::CLASS) || match(lexer::TokenType::STRUCT))
             {
                 return classDeclaration();
