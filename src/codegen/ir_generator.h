@@ -219,6 +219,15 @@ namespace codegen
         // Main function creation
         void createMainFunction();
 
+        // Two-pass codegen: forward-declare prototypes/types so order of
+        // top-level declarations does not matter (mutual recursion, etc.).
+        void predeclareTopLevel(ast::StmtPtr ast);
+        llvm::Function *declareFunctionProto(ast::FunctionStmt *stmt);
+        void registerClassType(ast::ClassStmt *stmt);
+        llvm::Function *declareMethodProto(const std::string &className,
+                                           llvm::StructType *classType,
+                                           ast::FunctionStmt *method);
+
         // String handling
         llvm::Value *convertToString(llvm::Value *value);
         llvm::Value *concatenateStrings(const std::vector<llvm::Value *> &strings);
