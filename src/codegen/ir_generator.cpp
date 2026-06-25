@@ -953,6 +953,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             if (returnType->isVoidTy())
             {
                 // Function returns void; discard the value.
+                runPendingFinally();
                 builder.CreateRetVoid();
                 return;
             }
@@ -985,8 +986,11 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             }
         }
 
-        // Create return instruction
-        builder.CreateRet(lastValue);
+        // Run any pending finally blocks, then return. Save the value first:
+        // the finally block emission may overwrite lastValue.
+        llvm::Value *retVal = lastValue;
+        runPendingFinally();
+        builder.CreateRet(retVal);
     }
     else
     {
@@ -998,6 +1002,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
                                      "", 0, 0, error::ErrorSeverity::ERROR);
             return;
         }
+        runPendingFinally();
 
         builder.CreateRetVoid();
     }
@@ -2893,6 +2898,34 @@ llvm::Value *IRGenerator::wrapIfRawFunction(llvm::Value *v)
     return v;
 }
 
+void IRGenerator::runPendingFinally()
+{
+    if (finallyStack.empty())
+        return;
+    // Emit each pending cleanup inline, innermost first. Clear the stack for
+    // the duration so a `return` inside a finally does not re-run it.
+    auto pending = finallyStack;
+    finallyStack.clear();
+    llvm::Value *savedLast = lastValue;
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it)
+    {
+        if (builder.GetInsertBlock()->getTerminator())
+            break;
+        // Pop the still-active exception handler for this try, if any.
+        if (it->popHandler)
+            if (llvm::Function *popF = module->getFunction("__tocin_try_pop"))
+                builder.CreateCall(popF, {});
+        if (it->block)
+        {
+            createEnvironment();
+            it->block->accept(*this);
+            restoreEnvironment();
+        }
+    }
+    lastValue = savedLast;
+    finallyStack = pending;
+}
+
 bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
 {
     if (!expr)
@@ -3256,8 +3289,12 @@ void IRGenerator::visitTryStmt(ast::TryStmt *stmt)
     // --- try body (setjmp returned 0) ---
     builder.SetInsertPoint(tryBB);
     createEnvironment();
+    // While generating the try body, an early `return` must pop this handler
+    // and run finally first.
+    finallyStack.push_back({stmt->finallyBlock, true});
     if (stmt->tryBlock)
         stmt->tryBlock->accept(*this);
+    finallyStack.pop_back();
     restoreEnvironment();
     if (!builder.GetInsertBlock()->getTerminator())
     {
@@ -3280,7 +3317,11 @@ void IRGenerator::visitTryStmt(ast::TryStmt *stmt)
             builder.CreateStore(exc, slot);
             namedValues[stmt->catchVar] = slot;
         }
+        // The handler was already popped when the exception unwound here, so an
+        // early `return` from the catch only needs to run finally.
+        finallyStack.push_back({stmt->finallyBlock, false});
         stmt->catchBlock->accept(*this);
+        finallyStack.pop_back();
         restoreEnvironment();
         namedValues = savedNamed;
         if (!builder.GetInsertBlock()->getTerminator())
