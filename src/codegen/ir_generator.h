@@ -256,6 +256,10 @@ namespace codegen
         // Determine the element LLVM type of an array-valued expression.
         llvm::Type *getArrayElemType(const ast::ExprPtr &expr);
 
+        // If a parameter is typed list<T>/array<T>, remember its element type
+        // so indexing the parameter inside the function uses the right type.
+        void recordArrayParam(const std::string &name, const ast::TypePtr &type);
+
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,
                                             const std::map<std::string, llvm::Type *> &bindings);

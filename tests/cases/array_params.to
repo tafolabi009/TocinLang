@@ -1,0 +1,10 @@
+// expect: 31
+def listSum(xs: list<int>) -> int {
+    let s = 0;
+    for i in 0..len(xs) { s = s + xs[i]; }
+    return s;
+}
+def main() {
+    let a = [3, 1, 4, 1, 5, 9, 2, 6];
+    return listSum(a);
+}

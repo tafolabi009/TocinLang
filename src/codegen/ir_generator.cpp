@@ -285,31 +285,16 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         std::string baseName = genericType->name;
         const auto &typeArgs = genericType->typeArguments;
 
-        // Channels are opaque runtime handles.
-        if (baseName == "channel" || baseName == "Channel" || baseName == "chan")
+        // Channels, lists and arrays are opaque heap handles (pointers).
+        // Arrays use the flat [i64 length][elems...] layout produced by
+        // visitListExpr, so a list/array value is just a pointer.
+        if (baseName == "channel" || baseName == "Channel" || baseName == "chan" ||
+            baseName == "list" || baseName == "array" || baseName == "List" ||
+            baseName == "Array")
             return llvm::PointerType::get(context, 0);
 
-        if (baseName == "list")
+        if (false)
         {
-            // list<T> is represented as { int64 length, T* data }
-            if (!typeArgs.empty())
-            {
-                llvm::Type *elementType = getLLVMType(typeArgs[0]);
-                std::vector<llvm::Type *> fields = {
-                    llvm::Type::getInt64Ty(context),
-                    llvm::PointerType::get(context, 0) // opaque pointer for data array
-                };
-
-                // Create or get a struct type for this list
-                std::string mangledName = mangleGenericName("list", typeArgs);
-                llvm::StructType *listType = llvm::StructType::getTypeByName(context, mangledName);
-                if (!listType)
-                {
-                    listType = llvm::StructType::create(context, fields, mangledName);
-                }
-
-                return listType;
-            }
         }
         else if (baseName == "dict")
         {
@@ -837,6 +822,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
                 arg.getType(), nullptr, stmt->parameters[idx].name);
             builder.CreateStore(&arg, alloca);
             namedValues[stmt->parameters[idx].name] = alloca;
+            recordArrayParam(stmt->parameters[idx].name, stmt->parameters[idx].type);
         }
         idx++;
     }
@@ -2255,6 +2241,16 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
     return "";
 }
 
+void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &type)
+{
+    if (auto g = std::dynamic_pointer_cast<ast::GenericType>(type))
+    {
+        if ((g->name == "list" || g->name == "array" || g->name == "List" || g->name == "Array") &&
+            !g->typeArguments.empty())
+            varArrayElem[name] = getLLVMType(g->typeArguments[0]);
+    }
+}
+
 llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
 {
     if (!expr)
@@ -2365,6 +2361,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
         llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
         builder.CreateStore(&arg, alloca);
         namedValues[pname] = alloca;
+        recordArrayParam(pname, stmt->parameters[i].type);
         ++i;
     }
     if (stmt->body)
@@ -2451,6 +2448,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
         llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
         builder.CreateStore(&arg, alloca);
         namedValues[pname] = alloca;
+        recordArrayParam(pname, method->parameters[ai].type);
         if (pname == "self")
             varClasses["self"] = className;
         ++ai;
