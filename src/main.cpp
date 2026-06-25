@@ -24,6 +24,13 @@
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Passes/PassBuilder.h>
+// JIT execution (ORCv2) and native object emission
+#include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Support/CodeGen.h>
+#include <cstdlib>
 
 // Conditionally include Python
 #ifdef WITH_PYTHON
@@ -123,13 +130,18 @@ public:
         bool enableWASM;
         std::string target;
         bool enablePackageManager;
+        bool run; // JIT-execute the program in-process (--jit / --run)
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
               enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
               enableMacros(true), enableAsync(true), enableDebugger(false),
-              enableWASM(false), target("native"), enablePackageManager(true) {}
+              enableWASM(false), target("native"), enablePackageManager(true), run(false) {}
     };
+
+    // Exit code produced by the most recent JIT execution (--run).
+    int programExitCode = 0;
+    int getProgramExitCode() const { return programExitCode; }
 
     bool compile(const std::string &source, const std::string &filename,
                  const CompilationOptions &options = CompilationOptions())
@@ -179,14 +191,15 @@ public:
         }
     }
 
-    bool compileToNative(ast::StmtPtr program, const std::string& filename, 
+    bool compileToNative(ast::StmtPtr program, const std::string& filename,
                         const CompilationOptions& options)
     {
-        // IR generation
-        llvm::LLVMContext context;
-        auto module = std::make_unique<llvm::Module>(filename, context);
+        // IR generation. The context is heap-allocated so it can be handed to
+        // the JIT (which needs to own the context alongside the module).
+        auto context = std::make_unique<llvm::LLVMContext>();
+        auto module = std::make_unique<llvm::Module>(filename, *context);
 
-        codegen::IRGenerator generator(context, std::move(module), errorHandler);
+        codegen::IRGenerator generator(*context, std::move(module), errorHandler);
 
         // Generate LLVM IR from the AST
         auto generatedModule = generator.generate(program);
@@ -221,29 +234,172 @@ public:
             std::cout << irOutput << std::endl;
         }
 
-        // Write output if specified
+        // JIT execution takes precedence: run the program in-process.
+        if (options.run)
+        {
+            return runJIT(std::move(context), std::move(generatedModule), filename);
+        }
+
+        // Write output if specified.
         if (!options.outputFile.empty())
         {
-            std::string outputPath = options.outputFile;
-            if (outputPath.find('.') == std::string::npos)
-            {
-                outputPath += ".ll";
-            }
+            const std::string& outputPath = options.outputFile;
+            auto endsWith = [](const std::string& s, const std::string& suffix) {
+                return s.size() >= suffix.size() &&
+                       s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+            };
 
-            std::error_code EC;
-            llvm::raw_fd_ostream outputFile(outputPath, EC);
-            if (EC)
+            if (endsWith(outputPath, ".ll"))
             {
-                errorHandler.reportError(error::ErrorCode::I003_READ_ERROR,
-                                         "Could not open output file: " + EC.message(),
-                                         filename, 0, 0);
-                return false;
+                std::error_code EC;
+                llvm::raw_fd_ostream out(outputPath, EC);
+                if (EC)
+                {
+                    errorHandler.reportError(error::ErrorCode::I003_READ_ERROR,
+                                             "Could not open output file: " + EC.message(),
+                                             filename, 0, 0);
+                    return false;
+                }
+                out << *generatedModule;
             }
-
-            outputFile << *generatedModule;
+            else if (endsWith(outputPath, ".s"))
+            {
+                if (!emitObjectFile(*generatedModule, outputPath, /*asAssembly=*/true))
+                    return false;
+            }
+            else if (endsWith(outputPath, ".o"))
+            {
+                if (!emitObjectFile(*generatedModule, outputPath, /*asAssembly=*/false))
+                    return false;
+            }
+            else
+            {
+                // Produce a native executable: emit a temporary object file
+                // and link it with the system C toolchain.
+                std::string objPath = outputPath + ".o";
+                if (!emitObjectFile(*generatedModule, objPath, false))
+                    return false;
+                if (!linkExecutable(objPath, outputPath))
+                    return false;
+                std::remove(objPath.c_str());
+            }
         }
 
         return !errorHandler.hasFatalErrors();
+    }
+
+    /**
+     * @brief JIT-compile and execute the module's main() in-process.
+     */
+    bool runJIT(std::unique_ptr<llvm::LLVMContext> context,
+                std::unique_ptr<llvm::Module> module,
+                const std::string& filename)
+    {
+        auto jitOrErr = llvm::orc::LLJITBuilder().create();
+        if (!jitOrErr)
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Failed to create JIT: " +
+                                         llvm::toString(jitOrErr.takeError()),
+                                     filename, 0, 0);
+            return false;
+        }
+        auto jit = std::move(*jitOrErr);
+
+        // Resolve external symbols (printf, malloc, ...) from this process.
+        if (auto gen = llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+                jit->getDataLayout().getGlobalPrefix()))
+        {
+            jit->getMainJITDylib().addGenerator(std::move(*gen));
+        }
+
+        if (auto err = jit->addIRModule(
+                llvm::orc::ThreadSafeModule(std::move(module), std::move(context))))
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Failed to add module to JIT: " +
+                                         llvm::toString(std::move(err)),
+                                     filename, 0, 0);
+            return false;
+        }
+
+        auto mainSym = jit->lookup("main");
+        if (!mainSym)
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "No 'main' function to execute: " +
+                                         llvm::toString(mainSym.takeError()),
+                                     filename, 0, 0);
+            return false;
+        }
+
+        auto* mainFn = mainSym->toPtr<int64_t (*)()>();
+        programExitCode = static_cast<int>(mainFn());
+        return true;
+    }
+
+    /**
+     * @brief Emit a native object (or assembly) file from the module.
+     */
+    bool emitObjectFile(llvm::Module& module, const std::string& outputPath, bool asAssembly)
+    {
+        std::string triple = llvm::sys::getDefaultTargetTriple();
+        module.setTargetTriple(triple);
+
+        std::string error;
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);
+        if (!target)
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Failed to look up target: " + error, "", 0, 0);
+            return false;
+        }
+
+        llvm::TargetOptions opt;
+        auto targetMachine = target->createTargetMachine(
+            triple, "generic", "", opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+        module.setDataLayout(targetMachine->createDataLayout());
+
+        std::error_code EC;
+        llvm::raw_fd_ostream dest(outputPath, EC, llvm::sys::fs::OF_None);
+        if (EC)
+        {
+            errorHandler.reportError(error::ErrorCode::I003_READ_ERROR,
+                                     "Could not open output file: " + EC.message(), "", 0, 0);
+            return false;
+        }
+
+        llvm::legacy::PassManager pass;
+        auto fileType = asAssembly ? llvm::CodeGenFileType::AssemblyFile
+                                   : llvm::CodeGenFileType::ObjectFile;
+        if (targetMachine->addPassesToEmitFile(pass, dest, nullptr, fileType))
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Target machine cannot emit this file type", "", 0, 0);
+            return false;
+        }
+        pass.run(module);
+        dest.flush();
+        return true;
+    }
+
+    /**
+     * @brief Link an object file into a native executable using the system C toolchain.
+     */
+    bool linkExecutable(const std::string& objPath, const std::string& exePath)
+    {
+        std::string cc = std::getenv("CC") ? std::getenv("CC") : "cc";
+        std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\" -lm -lpthread";
+        int rc = std::system(cmd.c_str());
+        if (rc != 0)
+        {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Linker failed (exit " + std::to_string(rc) +
+                                         "): " + cmd,
+                                     "", 0, 0);
+            return false;
+        }
+        return true;
     }
 
     bool compileToWASM(ast::StmtPtr program, const std::string& filename,
@@ -452,8 +608,11 @@ void displayUsage()
               << "Options:\n"
               << "  --help                 Display this help message\n"
               << "  --dump-ir              Dump LLVM IR to stdout\n"
+              << "  --jit, --run           JIT-compile and run the program immediately\n"
               << "  -O0, -O1, -O2, -O3     Set optimization level (default: -O2)\n"
-              << "  -o <file>              Write output to <file>\n"
+              << "  -o <file>              Write output to <file>. Extension selects format:\n"
+              << "                           .ll = LLVM IR, .s = assembly, .o = object,\n"
+              << "                           anything else = native executable\n"
               << "  --target <target>      Set compilation target (native, wasm)\n"
               << "  --no-ffi               Disable FFI support\n"
               << "  --no-concurrency       Disable concurrency features\n"
@@ -642,6 +801,10 @@ int main(int argc, char *argv[])
         {
             options.dumpIR = true;
         }
+        else if (arg == "--jit" || arg == "--run")
+        {
+            options.run = true;
+        }
         else if (arg == "-O0")
         {
             options.optimize = true;
@@ -749,6 +912,12 @@ int main(int argc, char *argv[])
 #ifdef WITH_PYTHON
     Py_Finalize();
 #endif
+
+    // When JIT-executing, propagate the program's exit code.
+    if (options.run)
+    {
+        return compiler.getProgramExitCode();
+    }
 
     return 0;
 }
