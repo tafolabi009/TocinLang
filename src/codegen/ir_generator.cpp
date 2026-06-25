@@ -1086,6 +1086,23 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     {
         std::string funcName = varExpr->name;
 
+        // Option/Result constructors. Some(x)/Ok(v) are tag 1; Err(e) is tag 0.
+        // None is the nil literal (a null pointer), handled in visitLiteralExpr.
+        if ((funcName == "Some" || funcName == "Ok") && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            lastValue = makeOptRes(1, lastValue);
+            return;
+        }
+        if (funcName == "Err" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            lastValue = makeOptRes(0, lastValue);
+            return;
+        }
+
         // len(arr) reads the length stored in the array header (offset 0).
         if (funcName == "len" && expr->arguments.size() == 1)
         {
@@ -2349,6 +2366,46 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
             return getExprClassName(un->right);
     }
     return "";
+}
+
+llvm::StructType *IRGenerator::getOptResType()
+{
+    if (!optResTy)
+    {
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        optResTy = llvm::StructType::create(context, {i64, i64}, "tocin.optres");
+    }
+    return optResTy;
+}
+
+llvm::Value *IRGenerator::normalizeToSlot(llvm::Value *v)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    if (v->getType()->isPointerTy())
+        return builder.CreatePtrToInt(v, i64, "slot");
+    if (v->getType()->isDoubleTy())
+        return builder.CreateBitCast(v, i64, "slot");
+    if (v->getType()->isIntegerTy() && v->getType() != i64)
+        return builder.CreateSExt(v, i64, "slot");
+    return v;
+}
+
+// Allocate a { tag, payload } Option/Result object on the heap.
+llvm::Value *IRGenerator::makeOptRes(int64_t tag, llvm::Value *payload)
+{
+    llvm::StructType *st = getOptResType();
+    llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Function *mallocFn = stdLibFunctions["malloc"];
+    llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+    llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {size}, "optres");
+    llvm::Value *tagP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "tagp");
+    builder.CreateStore(llvm::ConstantInt::get(i64, tag), tagP);
+    llvm::Value *payP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "payp");
+    builder.CreateStore(payload ? normalizeToSlot(payload) : llvm::ConstantInt::get(i64, 0), payP);
+    return obj;
 }
 
 void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &type)
@@ -4333,7 +4390,69 @@ void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
 
     for (size_t i = 0; i < stmt->cases.size(); ++i)
     {
-        // Evaluate this case's pattern and compare for equality with the value.
+        std::string ctor = i < stmt->caseCtor.size() ? stmt->caseCtor[i] : "";
+
+        // ---- Option/Result constructor pattern (Some/Ok/Err/None) ----
+        if (!ctor.empty())
+        {
+            llvm::StructType *st = getOptResType();
+            llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *mvPtr = matchVal->getType()->isPointerTy()
+                                     ? matchVal
+                                     : builder.CreateIntToPtr(matchVal, ptrTy, "mv.ptr");
+            llvm::Value *nullp = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(mvPtr->getType()));
+
+            llvm::BasicBlock *caseBlock = llvm::BasicBlock::Create(context, "case", function);
+            llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context, "casenext", function);
+
+            if (ctor == "None")
+            {
+                // None is the null pointer.
+                builder.CreateCondBr(builder.CreateICmpEQ(mvPtr, nullp, "is.none"),
+                                     caseBlock, nextBlock);
+            }
+            else
+            {
+                // Some/Ok/Err are non-null; distinguish by tag (Some/Ok=1, Err=0).
+                int64_t wantTag = (ctor == "Some" || ctor == "Ok") ? 1 : 0;
+                llvm::BasicBlock *tagBlock = llvm::BasicBlock::Create(context, "casetag", function);
+                builder.CreateCondBr(builder.CreateICmpNE(mvPtr, nullp, "nonnull"),
+                                     tagBlock, nextBlock);
+                builder.SetInsertPoint(tagBlock);
+                llvm::Value *tagP = builder.CreateGEP(st, mvPtr,
+                    {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "tagp");
+                llvm::Value *tag = builder.CreateLoad(i64, tagP, "tag");
+                builder.CreateCondBr(
+                    builder.CreateICmpEQ(tag, llvm::ConstantInt::get(i64, wantTag), "tagcmp"),
+                    caseBlock, nextBlock);
+            }
+
+            builder.SetInsertPoint(caseBlock);
+            auto savedNamed = namedValues;
+            createEnvironment();
+            std::string bind = i < stmt->caseBind.size() ? stmt->caseBind[i] : "";
+            if (!bind.empty() && ctor != "None")
+            {
+                llvm::Value *payP = builder.CreateGEP(st, mvPtr,
+                    {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "payp");
+                llvm::Value *pay = builder.CreateLoad(i64, payP, bind);
+                llvm::AllocaInst *slot = builder.CreateAlloca(i64, nullptr, bind);
+                builder.CreateStore(pay, slot);
+                namedValues[bind] = slot;
+            }
+            if (stmt->cases[i].second)
+                stmt->cases[i].second->accept(*this);
+            restoreEnvironment();
+            namedValues = savedNamed;
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(mergeBlock);
+
+            builder.SetInsertPoint(nextBlock);
+            continue;
+        }
+
+        // ---- Value-equality pattern (case 5:, case "x":) ----
         stmt->cases[i].first->accept(*this);
         llvm::Value *pat = lastValue;
         if (!pat)
