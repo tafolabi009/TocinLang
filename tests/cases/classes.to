@@ -1,0 +1,3 @@
+// expect: 7
+class Point { x: int; y: int; def sum(self) -> int { return self.x + self.y; } }
+def main() { let p = Point(3, 4); return p.sum(); }

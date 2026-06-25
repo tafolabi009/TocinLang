@@ -1,0 +1,3 @@
+// expect-output: Hello, Tocin!
+def greet(name: string) -> string { return "Hello, " + name + "!"; }
+def main() { println(greet("Tocin")); return 0; }

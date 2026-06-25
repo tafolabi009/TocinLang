@@ -1,0 +1,3 @@
+// expect: 9
+def square(n: int) { return n * n; }
+def main() { return square(3); }
