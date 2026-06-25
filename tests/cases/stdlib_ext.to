@@ -1,0 +1,14 @@
+// expect: 66
+def main() -> int {
+    if isDigit(53) != 1 { return 1; }      // '5'
+    if isAlpha(53) != 0 { return 2; }
+    if isSpace(32) != 1 { return 3; }
+    if isUpper(65) != 1 { return 4; }      // 'A'
+    if isLower(65) != 0 { return 5; }
+    if toUpperChar(97) != 65 { return 6; } // 'a'->'A'
+    if toLowerChar(65) != 97 { return 7; }
+    if floatToInt(9.8) != 9 { return 8; }
+    if absInt(0 - 50) != 50 { return 9; }
+    if strToInt(intToStr(123)) != 123 { return 10; }
+    return absInt(0 - 66);
+}

@@ -1430,6 +1430,72 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 builder.CreateCall(fnty, ia, {});
                 lastValue = llvm::ConstantInt::get(i64b, 0); return;
             }
+
+            // ---- character predicates & helpers (char code in/out, i64) ----
+            // Invaluable for lexers/parsers. All take and return i64.
+            auto ci = [&](int64_t v) { return llvm::ConstantInt::get(i64b, v); };
+            auto i1to64 = [&](llvm::Value *b) { return builder.CreateZExt(b, i64b, "b64"); };
+            auto inRange = [&](llvm::Value *c, int64_t lo, int64_t hi) {
+                return builder.CreateAnd(
+                    builder.CreateICmpSGE(c, ci(lo)),
+                    builder.CreateICmpSLE(c, ci(hi)));
+            };
+            if (funcName == "isDigit" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                lastValue = i1to64(inRange(c, 48, 57)); return; }
+            if (funcName == "isUpper" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                lastValue = i1to64(inRange(c, 65, 90)); return; }
+            if (funcName == "isLower" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                lastValue = i1to64(inRange(c, 97, 122)); return; }
+            if (funcName == "isAlpha" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                lastValue = i1to64(builder.CreateOr(inRange(c, 65, 90), inRange(c, 97, 122))); return; }
+            if (funcName == "isAlnum" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                llvm::Value *al = builder.CreateOr(inRange(c, 65, 90), inRange(c, 97, 122));
+                lastValue = i1to64(builder.CreateOr(al, inRange(c, 48, 57))); return; }
+            if (funcName == "isSpace" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                llvm::Value *sp = builder.CreateICmpEQ(c, ci(32));
+                sp = builder.CreateOr(sp, builder.CreateICmpEQ(c, ci(9)));   // tab
+                sp = builder.CreateOr(sp, builder.CreateICmpEQ(c, ci(10)));  // \n
+                sp = builder.CreateOr(sp, builder.CreateICmpEQ(c, ci(13)));  // \r
+                lastValue = i1to64(sp); return; }
+            if (funcName == "toUpperChar" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                llvm::Value *isL = inRange(c, 97, 122);
+                lastValue = builder.CreateSelect(isL, builder.CreateSub(c, ci(32)), c); return; }
+            if (funcName == "toLowerChar" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                llvm::Value *isU = inRange(c, 65, 90);
+                lastValue = builder.CreateSelect(isU, builder.CreateAdd(c, ci(32)), c); return; }
+
+            // ---- numeric conversions ----
+            if (funcName == "intToFloat" && na == 1) {
+                auto n = slot(0); if (!n) return;
+                lastValue = builder.CreateSIToFP(n, llvm::Type::getDoubleTy(context), "i2f"); return; }
+            if (funcName == "absInt" && na == 1) {
+                auto n = slot(0); if (!n) return;
+                llvm::Value *neg = builder.CreateSub(ci(0), n, "negv");
+                lastValue = builder.CreateSelect(builder.CreateICmpSLT(n, ci(0)), neg, n, "abs"); return; }
+            if (funcName == "floatToInt" && na == 1) {
+                expr->arguments[0]->accept(*this);
+                llvm::Value *f = lastValue; if (!f) return;
+                if (f->getType()->isIntegerTy()) { lastValue = f; return; }   // already int
+                lastValue = builder.CreateFPToSI(f, i64b, "f2i"); return; }
+            if (funcName == "floatToStr" && na == 1) {
+                expr->arguments[0]->accept(*this);
+                llvm::Value *f = lastValue; if (!f) return;
+                if (f->getType()->isIntegerTy())
+                    f = builder.CreateSIToFP(f, llvm::Type::getDoubleTy(context), "f");
+                lastValue = builder.CreateCall(
+                    rt("__tocin_float_to_str", ptrb, {llvm::Type::getDoubleTy(context)}), {f}, "ftos"); return; }
+            if (funcName == "strToFloat" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(
+                    rt("__tocin_str_to_float", llvm::Type::getDoubleTy(context), {ptrb}), {s}, "stof"); return; }
         }
 
         // Math standard library: unary libm functions (double -> double).
@@ -3052,7 +3118,7 @@ bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
             // Builtins whose return value is a freshly-allocated string.
             static const std::set<std::string> strFns = {
                 "substring", "intToStr", "charToStr", "readFile", "readLine",
-                "toUpper", "toLower"};
+                "toUpper", "toLower", "floatToStr"};
             return strFns.count(callee->name) > 0;
         }
     }

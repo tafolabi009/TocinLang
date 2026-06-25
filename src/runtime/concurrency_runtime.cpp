@@ -401,6 +401,17 @@ extern "C"
         return out;
     }
     int64_t __tocin_str_to_int(const char *s) { return s ? (int64_t)std::atoll(s) : 0; }
+    double __tocin_str_to_float(const char *s) { return s ? std::atof(s) : 0.0; }
+    char *__tocin_float_to_str(double d)
+    {
+        char buf[64];
+        int len = std::snprintf(buf, sizeof(buf), "%g", d);
+        if (len < 0) return tocin_str_empty();
+        char *out = (char *)__tocin_alloc((size_t)len + 1);
+        if (!out) return nullptr;
+        std::memcpy(out, buf, (size_t)len + 1);
+        return out;
+    }
     char *__tocin_char_to_str(int64_t c)
     {
         char *out = (char *)__tocin_alloc(2);

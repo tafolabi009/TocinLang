@@ -89,6 +89,8 @@ extern "C" {
     void __tocin_free(void *);
     void *__tocin_alloc(int64_t);
     void *__tocin_realloc(void *, int64_t);
+    double __tocin_str_to_float(const char *);
+    char *__tocin_float_to_str(double);
     // File I/O
     char *__tocin_read_file(const char *);
     int64_t __tocin_write_file(const char *, const char *);
@@ -514,6 +516,8 @@ public:
             def("__tocin_free", reinterpret_cast<void *>(&__tocin_free));
             def("__tocin_alloc", reinterpret_cast<void *>(&__tocin_alloc));
             def("__tocin_realloc", reinterpret_cast<void *>(&__tocin_realloc));
+            def("__tocin_str_to_float", reinterpret_cast<void *>(&__tocin_str_to_float));
+            def("__tocin_float_to_str", reinterpret_cast<void *>(&__tocin_float_to_str));
             def("__tocin_read_file", reinterpret_cast<void *>(&__tocin_read_file));
             def("__tocin_write_file", reinterpret_cast<void *>(&__tocin_write_file));
             def("__tocin_append_file", reinterpret_cast<void *>(&__tocin_append_file));
