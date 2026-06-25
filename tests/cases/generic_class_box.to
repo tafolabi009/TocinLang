@@ -1,0 +1,14 @@
+// expect: 100
+// A generic class is monomorphized per concrete type argument inferred from
+// the constructor. Box(42) instantiates Box<int>.
+class Box<T> {
+    value: T;
+    def get(self) -> T { return self.value; }
+    def set(self, v: T) { self.value = v; }
+}
+
+def main() {
+    let b = Box(42);
+    b.set(100);
+    return b.get();
+}

@@ -875,6 +875,9 @@ namespace type_checker
         std::unordered_set<std::string> typeParamNames;
         for (const auto &tp : stmt->typeParameters)
             typeParamNames.insert(tp.getName());
+        // Type parameters of the enclosing generic class are abstract here too.
+        for (const auto &name : classTypeParams_)
+            typeParamNames.insert(name);
         auto resolveParamType = [&](const ast::TypePtr &t) -> ast::TypePtr {
             if (t)
             {
@@ -897,8 +900,13 @@ namespace type_checker
         currentReturnTypes_ = &returnTypes;
         inAsyncContext_ = stmt->isAsync;
 
-        // Generic functions return an abstract type parameter; check permissively.
-        const bool unannotated = isUnannotatedReturn(stmt->returnType) || stmt->isGeneric();
+        // Generic functions (and methods whose return type is a type parameter)
+        // return an abstract type; check permissively.
+        bool returnIsTypeParam = false;
+        if (auto s = std::dynamic_pointer_cast<ast::SimpleType>(stmt->returnType))
+            returnIsTypeParam = typeParamNames.count(s->toString()) > 0;
+        const bool unannotated =
+            isUnannotatedReturn(stmt->returnType) || stmt->isGeneric() || returnIsTypeParam;
         if (!unannotated)
         {
             expectedReturnType_ = canonicalize(stmt->returnType);
@@ -1029,7 +1037,14 @@ namespace type_checker
                                  std::make_shared<ast::ClassType>(stmt->token, stmt->name), true);
         }
 
-        // Check field declarations and methods within a class scope.
+        // Check field declarations and methods within a class scope. For a
+        // generic class, expose its type parameters so methods that mention them
+        // (fields of type T, `-> T` returns) are checked permissively.
+        auto savedClassTypeParams = classTypeParams_;
+        classTypeParams_.clear();
+        for (const auto &tp : stmt->typeParameters)
+            classTypeParams_.insert(tp.getName());
+
         pushScope();
         for (auto &field : stmt->fields)
         {
@@ -1043,6 +1058,7 @@ namespace type_checker
         }
         popScope();
 
+        classTypeParams_ = savedClassTypeParams;
         currentType_ = nullptr;
     }
 
