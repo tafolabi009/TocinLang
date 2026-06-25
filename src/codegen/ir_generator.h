@@ -120,6 +120,7 @@ namespace codegen
         void visitStringInterpolationExpr(ast::StringInterpolationExpr *expr) override;
         void visitArrayLiteralExpr(ast::ArrayLiteralExpr *expr) override;
         void visitIndexExpr(ast::IndexExpr *expr) override;
+        void visitEnumStmt(ast::EnumStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
@@ -164,6 +165,7 @@ namespace codegen
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
+        std::map<std::string, int64_t> enumConstants;                           // EnumName.Member and Member -> value
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information

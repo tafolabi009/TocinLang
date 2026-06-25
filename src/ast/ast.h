@@ -69,6 +69,7 @@ namespace ast
     class GoStmt;
     class ArrayLiteralExpr;
     class IndexExpr;
+    class EnumStmt;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -115,6 +116,7 @@ namespace ast
         virtual void visitGoStmt(GoStmt *stmt) = 0;
         virtual void visitArrayLiteralExpr(ArrayLiteralExpr *expr) = 0;
         virtual void visitIndexExpr(IndexExpr *expr) = 0;
+        virtual void visitEnumStmt(EnumStmt *stmt) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -899,6 +901,21 @@ namespace ast
         ExprPtr object;
         ExprPtr index;
         TypePtr getType() const override { return nullptr; }
+    };
+
+    /**
+     * @brief Enum declaration (e.g., enum Color { Red, Green, Blue }).
+     *        Members are integer constants with auto-incrementing values.
+     */
+    class EnumStmt : public Statement
+    {
+    public:
+        EnumStmt(const lexer::Token &token, const std::string &name,
+                 std::vector<std::pair<std::string, int64_t>> members)
+            : Statement(token), name(name), members(std::move(members)) {}
+        void accept(Visitor &visitor) override { visitor.visitEnumStmt(this); }
+        std::string name;
+        std::vector<std::pair<std::string, int64_t>> members;
     };
 
     /**

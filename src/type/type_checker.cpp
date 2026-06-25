@@ -222,6 +222,18 @@ namespace type_checker
         currentType_ = std::make_shared<ast::BasicType>(ast::TypeKind::UNKNOWN);
     }
 
+    void TypeChecker::visitEnumStmt(ast::EnumStmt *stmt)
+    {
+        // Enum members are integer constants; make them visible by name.
+        auto intType = makeBasic(ast::TypeKind::INT);
+        for (const auto &m : stmt->members)
+        {
+            if (environment_) environment_->define(m.first, intType, true);
+            if (globalEnv_) globalEnv_->define(m.first, intType, true);
+        }
+        currentType_ = nullptr;
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op
