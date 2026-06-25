@@ -611,6 +611,21 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     if (!vcls.empty())
         varClasses[stmt->name] = vcls;
 
+    // Track array element type so indexing into this variable loads/stores the
+    // right element type.
+    if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
+    {
+        varArrayElem[stmt->name] =
+            lst->elements.empty() ? llvm::Type::getInt64Ty(context)
+                                  : inferExprType(lst->elements[0], {});
+    }
+    else if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(stmt->initializer))
+    {
+        auto it = varArrayElem.find(v->name);
+        if (it != varArrayElem.end())
+            varArrayElem[stmt->name] = it->second;
+    }
+
     // If there's an initializer, store its value
     if (stmt->initializer)
     {
@@ -1012,6 +1027,16 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     if (auto varExpr = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
     {
         std::string funcName = varExpr->name;
+
+        // len(arr) reads the length stored in the array header (offset 0).
+        if (funcName == "len" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            llvm::Value *base = lastValue;
+            if (!base) return;
+            lastValue = builder.CreateLoad(llvm::Type::getInt64Ty(context), base, "len");
+            return;
+        }
 
         // print()/println() are built-ins forwarded to printf. println appends
         // a newline. Two calling styles are supported:
@@ -1755,101 +1780,51 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
 
 void IRGenerator::visitListExpr(ast::ListExpr *expr)
 {
-    // Use getType() method for type information
-    ast::TypePtr exprType = expr->getType();
-
-    if (expr->elements.empty())
-    {
-        // Create an empty list using the type info
-        createEmptyList(exprType);
-        return;
-    }
-
-    // Evaluate the first element to determine type
-    expr->elements[0]->accept(*this);
-    llvm::Value *firstElement = lastValue;
-    if (!firstElement)
-        return;
-
-    // Get element type
-    llvm::Type *elementType = firstElement->getType();
-
-    // Create list struct type: { int64_t length, elementType* data }
-    std::vector<llvm::Type *> listFields = {
-        llvm::Type::getInt64Ty(context),   // length
-        llvm::PointerType::get(context, 0) // opaque pointer for data
-    };
-    llvm::StructType *listStructType = llvm::StructType::get(context, listFields);
-
-    // Allocate list struct
-    llvm::AllocaInst *listAlloc = builder.CreateAlloca(listStructType, nullptr, "list");
-
-    // Set length
-    llvm::Value *lengthPtr = builder.CreateStructGEP(listStructType, listAlloc, 0, "list.length");
-    builder.CreateStore(llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), expr->elements.size()), lengthPtr);
-
-    // Allocate array for elements using the correct CreateMalloc signature
-    llvm::Value *arraySize = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), expr->elements.size());
-
-    // Calculate the size of each element
-    llvm::Value *elementSize = llvm::ConstantExpr::getSizeOf(elementType);
-
-    // Calculate total allocation size
-    llvm::Value *totalSize = builder.CreateMul(arraySize, elementSize);
-
-    // Call malloc
-    llvm::FunctionType *mallocType = llvm::FunctionType::get(
-        llvm::PointerType::get(context, 0),
-        {llvm::Type::getInt64Ty(context)},
-        false);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     llvm::Function *mallocFunc = getStdLibFunction("malloc");
-    if (!mallocFunc)
+
+    // Determine the element type from the first element (default to i64).
+    llvm::Type *elemTy = i64;
+    std::vector<llvm::Value *> elems;
+    for (auto &e : expr->elements)
     {
-        mallocFunc = llvm::Function::Create(
-            mallocType, llvm::Function::ExternalLinkage, "malloc", *module);
+        e->accept(*this);
+        if (!lastValue) return;
+        elems.push_back(lastValue);
     }
+    if (!elems.empty())
+        elemTy = elems[0]->getType();
 
-    llvm::Value *dataPtr = builder.CreateCall(mallocFunc, {totalSize}, "list.data");
+    // Layout: [ i64 length ][ elem0 ][ elem1 ]...  in one heap block.
+    llvm::Value *count = llvm::ConstantInt::get(i64, elems.size());
+    llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+    llvm::Value *header = llvm::ConstantInt::get(i64, 8);
+    llvm::Value *total = builder.CreateAdd(header, builder.CreateMul(count, elemSize), "arr.size");
+    llvm::Value *base = builder.CreateCall(mallocFunc->getFunctionType(), mallocFunc, {total}, "arr");
 
-    // Store data pointer
-    llvm::Value *dataStorePtr = builder.CreateStructGEP(listStructType, listAlloc, 1, "list.data_ptr");
-    builder.CreateStore(dataPtr, dataStorePtr);
+    // Store the length in the header.
+    builder.CreateStore(count, base);
 
-    // Store first element - bitcast to the right type first
-    llvm::Value *typedPtr = builder.CreateBitCast(dataPtr,
-                                                  llvm::PointerType::get(elementType, 0), "typed_data");
-
-    llvm::Value *elementPtr = builder.CreateGEP(elementType, typedPtr,
-                                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0),
-                                                "list.element");
-    builder.CreateStore(firstElement, elementPtr);
-
-    // Process rest of elements
-    for (size_t i = 1; i < expr->elements.size(); ++i)
+    // Store each element at offset 8 + i*sizeof(elem).
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    for (size_t i = 0; i < elems.size(); ++i)
     {
-        expr->elements[i]->accept(*this);
-        llvm::Value *element = lastValue;
-        if (!element)
-            return;
-
-        // Validate element type
-        if (element->getType() != elementType)
+        llvm::Value *v = elems[i];
+        if (v->getType() != elemTy)
         {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
-                                     "List elements must have the same type",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            return;
+            if (v->getType()->isIntegerTy() && elemTy->isIntegerTy())
+                v = builder.CreateIntCast(v, elemTy, true, "ecast");
+            else if (v->getType()->isFloatingPointTy() && elemTy->isFloatingPointTy())
+                v = builder.CreateFPCast(v, elemTy, "ecast");
         }
-
-        // Store element
-        elementPtr = builder.CreateGEP(elementType, typedPtr,
-                                       llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i),
-                                       "list.element");
-        builder.CreateStore(element, elementPtr);
+        llvm::Value *off = builder.CreateAdd(
+            header, builder.CreateMul(llvm::ConstantInt::get(i64, i), elemSize), "arr.off");
+        llvm::Value *slot = builder.CreateGEP(i8, base, off, "arr.slot");
+        builder.CreateStore(v, slot);
     }
 
-    // Return list
-    lastValue = listAlloc;
+    lastValue = base;
+    lastExprArrayElem = elemTy;
 }
 
 void IRGenerator::createEmptyList(ast::TypePtr listTypeArg)
@@ -2142,6 +2117,54 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
         }
     }
     return "";
+}
+
+llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
+{
+    if (!expr)
+        return llvm::Type::getInt64Ty(context);
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+    {
+        auto it = varArrayElem.find(var->name);
+        if (it != varArrayElem.end())
+            return it->second;
+    }
+    if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(expr))
+    {
+        if (!lst->elements.empty())
+            return inferExprType(lst->elements[0], {});
+    }
+    if (auto idx = std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+    {
+        // Nested arrays: element of an element is the same scalar type for now.
+        return getArrayElemType(idx->object);
+    }
+    return llvm::Type::getInt64Ty(context);
+}
+
+void IRGenerator::visitIndexExpr(ast::IndexExpr *expr)
+{
+    // Evaluate the array base pointer and the index.
+    expr->object->accept(*this);
+    llvm::Value *base = lastValue;
+    if (!base) return;
+    expr->index->accept(*this);
+    llvm::Value *index = lastValue;
+    if (!index) return;
+
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    if (!index->getType()->isIntegerTy(64))
+        index = builder.CreateIntCast(index, i64, true, "idx");
+
+    llvm::Type *elemTy = getArrayElemType(expr->object);
+    llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+    // Offset = 8 (length header) + index * sizeof(elem).
+    llvm::Value *off = builder.CreateAdd(
+        llvm::ConstantInt::get(i64, 8),
+        builder.CreateMul(index, elemSize), "idx.off");
+    llvm::Value *slot = builder.CreateGEP(i8, base, off, "idx.slot");
+    lastValue = builder.CreateLoad(elemTy, slot, "idx.val");
 }
 
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
@@ -2977,6 +3000,38 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
             lastValue = nullptr;
             return;
         }
+    }
+
+    // Handle indexed assignment (arr[i] = value)
+    if (auto idxExpr = std::dynamic_pointer_cast<ast::IndexExpr>(expr->target))
+    {
+        idxExpr->object->accept(*this);
+        llvm::Value *base = lastValue;
+        if (!base) return;
+        idxExpr->index->accept(*this);
+        llvm::Value *index = lastValue;
+        if (!index) return;
+
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+        if (!index->getType()->isIntegerTy(64))
+            index = builder.CreateIntCast(index, i64, true, "idx");
+        llvm::Type *elemTy = getArrayElemType(idxExpr->object);
+        if (rhs->getType() != elemTy)
+        {
+            if (rhs->getType()->isIntegerTy() && elemTy->isIntegerTy())
+                rhs = builder.CreateIntCast(rhs, elemTy, true, "ecast");
+            else if (rhs->getType()->isFloatingPointTy() && elemTy->isFloatingPointTy())
+                rhs = builder.CreateFPCast(rhs, elemTy, "ecast");
+        }
+        llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+        llvm::Value *off = builder.CreateAdd(
+            llvm::ConstantInt::get(i64, 8),
+            builder.CreateMul(index, elemSize), "idx.off");
+        llvm::Value *slot = builder.CreateGEP(i8, base, off, "idx.slot");
+        builder.CreateStore(rhs, slot);
+        lastValue = rhs;
+        return;
     }
 
     // Handle property assignment (obj.prop = value)

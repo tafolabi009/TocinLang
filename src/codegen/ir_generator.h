@@ -119,6 +119,7 @@ namespace codegen
         void visitDeleteExpr(ast::DeleteExpr *expr) override;
         void visitStringInterpolationExpr(ast::StringInterpolationExpr *expr) override;
         void visitArrayLiteralExpr(ast::ArrayLiteralExpr *expr) override;
+        void visitIndexExpr(ast::IndexExpr *expr) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
@@ -158,8 +159,10 @@ namespace codegen
         // Symbol tables
         std::map<std::string, llvm::AllocaInst *> namedValues;                     // Variable symbol table
         std::map<std::string, std::string> varClasses;                            // Variable name -> class name
+        std::map<std::string, llvm::Type *> varArrayElem;                         // Variable name -> array element LLVM type
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
+        llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
         std::map<std::string, llvm::Function *> classMethods;                      // Class method table
@@ -247,6 +250,9 @@ namespace codegen
         // Determine the class name of an expression (self, local variables of
         // class type, and constructor calls), used for field/method resolution.
         std::string getExprClassName(const ast::ExprPtr &expr);
+
+        // Determine the element LLVM type of an array-valued expression.
+        llvm::Type *getArrayElemType(const ast::ExprPtr &expr);
     };
 
     // Pattern visitor for match statements
