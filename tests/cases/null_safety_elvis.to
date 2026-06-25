@@ -1,0 +1,10 @@
+// expect: 12
+// Elvis/null-coalescing: `a ?: b` is `a` when non-null, else `b`.
+class Box { v: int; def get(self) -> int { return self.v; } }
+def main() {
+    let b: Box = Box(5);
+    let c = b ?: Box(99);     // b non-null -> 5
+    let n: Box = None;
+    let d = n ?: Box(7);      // n null -> 7
+    return c.get() + d.get(); // 12
+}

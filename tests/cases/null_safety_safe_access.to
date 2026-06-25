@@ -1,0 +1,11 @@
+// expect: 9
+// Safe navigation `a?.b`: a null base yields a zero/null result instead of
+// dereferencing.
+class Box { v: int; }
+def main() {
+    let b: Box = Box(9);
+    let x = b?.v;        // 9
+    let nb: Box = None;
+    let y = nb?.v;       // null base -> 0
+    return x + y;        // 9
+}
