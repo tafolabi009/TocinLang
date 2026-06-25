@@ -650,6 +650,16 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
                 varFuncSig[stmt->name] = it->second;
         }
     }
+    else if (auto lam = std::dynamic_pointer_cast<ast::LambdaExpr>(stmt->initializer))
+    {
+        // `let f = lambda (x: int) -> int ...` — record f's signature so it can
+        // be called through the variable.
+        std::vector<ast::TypePtr> pts;
+        for (auto &p : lam->parameters)
+            pts.push_back(p.type);
+        varFuncSig[stmt->name] =
+            std::make_shared<ast::FunctionType>(lam->token, pts, lam->returnType);
+    }
 
     // Track string-typed locals so == / != compare by value, not pointer.
     bool declaredString = stmt->type && stmt->type->toString() == "string";

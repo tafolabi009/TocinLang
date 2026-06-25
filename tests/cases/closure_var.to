@@ -1,0 +1,7 @@
+// expect: 11
+def main() {
+    let n = 10;
+    let f = lambda (x: int) -> int x + n;  // capture n by value
+    n = 100;                               // does not affect the snapshot
+    return f(1);                           // 1 + 10 = 11
+}
