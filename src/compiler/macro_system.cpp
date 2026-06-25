@@ -89,6 +89,7 @@ ast::StmtPtr FunctionMacro::expand(const MacroContext& context, error::ErrorHand
         void visitDeleteExpr(ast::DeleteExpr* expr) override {}
         void visitStringInterpolationExpr(ast::StringInterpolationExpr* expr) override {}
         void visitArrayLiteralExpr(ast::ArrayLiteralExpr* expr) override {}
+        void visitIndexExpr(ast::IndexExpr* expr) override {}
         void visitMoveExpr(void* expr) override {}
         void visitGoExpr(void* expr) override {}
         void visitRuntimeChannelSendExpr(void* expr) override {}
@@ -243,6 +244,7 @@ ast::StmtPtr MacroSystem::processMacros(ast::StmtPtr stmt, error::ErrorHandler& 
         void visitDeleteExpr(ast::DeleteExpr* expr) override {}
         void visitStringInterpolationExpr(ast::StringInterpolationExpr* expr) override {}
         void visitArrayLiteralExpr(ast::ArrayLiteralExpr* expr) override {}
+        void visitIndexExpr(ast::IndexExpr* expr) override {}
         void visitMoveExpr(void* expr) override {}
         void visitGoExpr(void* expr) override {}
         void visitRuntimeChannelSendExpr(void* expr) override {}

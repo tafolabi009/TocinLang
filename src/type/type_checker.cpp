@@ -198,6 +198,27 @@ namespace type_checker
             std::vector<ast::TypePtr>{elementType});
     }
 
+    void TypeChecker::visitIndexExpr(ast::IndexExpr *expr)
+    {
+        // Type-check the object and index expressions.
+        ast::TypePtr objType;
+        if (expr->object) { expr->object->accept(*this); objType = currentType_; }
+        if (expr->index) expr->index->accept(*this);
+
+        // If the object is a known array/list, the result is its element type;
+        // otherwise stay permissive (UNKNOWN) so codegen handles it.
+        if (auto generic = std::dynamic_pointer_cast<ast::GenericType>(objType))
+        {
+            if ((generic->name == "array" || generic->name == "list" || generic->name == "List") &&
+                !generic->typeArguments.empty())
+            {
+                currentType_ = generic->typeArguments[0];
+                return;
+            }
+        }
+        currentType_ = std::make_shared<ast::BasicType>(ast::TypeKind::UNKNOWN);
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op
