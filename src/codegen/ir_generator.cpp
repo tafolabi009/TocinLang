@@ -591,6 +591,13 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     // Store the variable in the symbol table
     namedValues[stmt->name] = alloca;
 
+    // Track the variable's class (for field/method resolution).
+    std::string vcls = getExprClassName(stmt->initializer);
+    if (vcls.empty() && stmt->type && classTypes.count(stmt->type->toString()))
+        vcls = stmt->type->toString();
+    if (!vcls.empty())
+        varClasses[stmt->name] = vcls;
+
     // If there's an initializer, store its value
     if (stmt->initializer)
     {
@@ -916,6 +923,70 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
 
 void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 {
+    // Constructor call: ClassName(args) allocates an instance and initializes
+    // its fields positionally from the arguments.
+    if (auto ctorName = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+    {
+        auto cit = classTypes.find(ctorName->name);
+        if (cit != classTypes.end())
+        {
+            llvm::StructType *st = cit->second.classType;
+            llvm::Function *mallocFn = stdLibFunctions["malloc"];
+            llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+            llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn,
+                                                  {size}, ctorName->name + ".obj");
+            for (size_t i = 0; i < expr->arguments.size() &&
+                               i < cit->second.memberNames.size();
+                 ++i)
+            {
+                expr->arguments[i]->accept(*this);
+                if (!lastValue) return;
+                llvm::Value *fieldVal = lastValue;
+                llvm::Type *fieldTy = st->getStructElementType(i);
+                if (fieldVal->getType() != fieldTy)
+                {
+                    if (fieldVal->getType()->isIntegerTy() && fieldTy->isIntegerTy())
+                        fieldVal = builder.CreateIntCast(fieldVal, fieldTy, true, "fcast");
+                    else if (fieldVal->getType()->isFloatingPointTy() && fieldTy->isFloatingPointTy())
+                        fieldVal = builder.CreateFPCast(fieldVal, fieldTy, "fcast");
+                }
+                std::vector<llvm::Value *> idx = {
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (unsigned)i)};
+                llvm::Value *fp = builder.CreateGEP(st, obj, idx, "init." + cit->second.memberNames[i]);
+                builder.CreateStore(fieldVal, fp);
+            }
+            lastValue = obj;
+            lastExprClassName = ctorName->name;
+            return;
+        }
+    }
+
+    // Method call: receiver.method(args) -> ClassName_method(receiver, args).
+    if (auto methodCallee = std::dynamic_pointer_cast<ast::GetExpr>(expr->callee))
+    {
+        std::string cls = getExprClassName(methodCallee->object);
+        if (!cls.empty())
+        {
+            if (llvm::Function *mfn = module->getFunction(cls + "_" + methodCallee->name))
+            {
+                methodCallee->object->accept(*this);
+                llvm::Value *recv = lastValue;
+                if (!recv) return;
+                std::vector<llvm::Value *> args;
+                args.push_back(recv);
+                for (const auto &a : expr->arguments)
+                {
+                    a->accept(*this);
+                    if (!lastValue) return;
+                    args.push_back(lastValue);
+                }
+                lastValue = builder.CreateCall(mfn->getFunctionType(), mfn, args);
+                return;
+            }
+        }
+    }
+
     // Evaluate callee
     expr->callee->accept(*this);
     llvm::Value *callee = lastValue;
@@ -2009,97 +2080,137 @@ void IRGenerator::visitClassStmt(ast::ClassStmt *stmt)
     // Check if this is a generic class
     if (stmt->isGeneric())
     {
-        // Similar to generic functions, we don't generate code immediately
-        // We'll instantiate them when needed
-
-        // Just register the class for later instantiation
-
-        // No code generation needed here
+        // Generic classes are instantiated on demand; nothing to emit yet.
         return;
     }
 
-    // The rest of the class implementation for non-generic classes
-    // ... existing non-generic class implementation ...
+    // Build the LLVM struct type from the declared fields (in order).
+    ClassInfo info;
+    std::vector<llvm::Type *> fieldTypes;
+    for (const auto &fieldStmt : stmt->fields)
+    {
+        auto var = std::dynamic_pointer_cast<ast::VariableStmt>(fieldStmt);
+        if (!var)
+            continue;
+        llvm::Type *ft = var->type ? getLLVMType(var->type) : llvm::Type::getInt64Ty(context);
+        info.memberNames.push_back(var->name);
+        info.memberTypes[var->name] = ft;
+        fieldTypes.push_back(ft);
+    }
+
+    llvm::StructType *structType = llvm::StructType::getTypeByName(context, stmt->name);
+    if (!structType)
+        structType = llvm::StructType::create(context, fieldTypes, stmt->name);
+    else
+        structType->setBody(fieldTypes);
+
+    info.classType = structType;
+    info.baseClass = nullptr;
+    classTypes[stmt->name] = info;
+
+    // Generate each method (with an implicit leading 'this' parameter).
+    for (const auto &methodStmt : stmt->methods)
+    {
+        if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(methodStmt))
+        {
+            generateMethod(stmt->name, structType, method.get());
+        }
+    }
+}
+
+std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
+{
+    if (!expr)
+        return "";
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+    {
+        if (var->name == "self" || var->name == "this")
+            return currentClassName;
+        auto it = varClasses.find(var->name);
+        if (it != varClasses.end())
+            return it->second;
+        return "";
+    }
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+    {
+        // Constructor call: ClassName(...)
+        if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+            if (classTypes.count(callee->name))
+                return callee->name;
+    }
+    if (auto get = std::dynamic_pointer_cast<ast::GetExpr>(expr))
+    {
+        // Field whose declared type is itself a class.
+        std::string objClass = getExprClassName(get->object);
+        auto cit = classTypes.find(objClass);
+        if (cit != classTypes.end())
+        {
+            // Field type names aren't tracked symbolically; best effort only.
+            (void)cit;
+        }
+    }
+    return "";
 }
 
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
 {
-    // Get return type
-    llvm::Type *returnType = getLLVMType(method->returnType);
+    llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
+
+    // Return type (inferred from the body when not annotated).
+    llvm::Type *returnType = method->returnType
+                                 ? getLLVMType(method->returnType)
+                                 : inferFunctionReturnType(method);
     if (!returnType)
-        return;
+        returnType = llvm::Type::getVoidTy(context);
 
-    // Get parameter types, add 'this' pointer as first parameter
+    // Parameter types. A leading `self` parameter becomes the receiver pointer.
     std::vector<llvm::Type *> paramTypes;
-    paramTypes.push_back(llvm::PointerType::getUnqual(classType)); // 'this' pointer
-
     for (const auto &param : method->parameters)
     {
-        llvm::Type *paramType = getLLVMType(param.type);
-        if (!paramType)
-            return;
-
-        paramTypes.push_back(paramType);
+        if (param.name == "self")
+            paramTypes.push_back(opaquePtr);
+        else
+        {
+            llvm::Type *paramType = getLLVMType(param.type);
+            paramTypes.push_back(paramType ? paramType : opaquePtr);
+        }
     }
 
-    // Create method name with class prefix to avoid name conflicts
     std::string methodName = className + "_" + method->name;
-
-    // Create function type
     llvm::FunctionType *functionType = llvm::FunctionType::get(returnType, paramTypes, false);
-
-    // Create function
     llvm::Function *function = llvm::Function::Create(
         functionType, llvm::Function::ExternalLinkage, methodName, module.get());
 
-    // Set parameter names, first param is 'this'
-    auto argIt = function->arg_begin();
-    argIt->setName("this");
-    ++argIt;
+    unsigned ai = 0;
+    for (auto &arg : function->args())
+        arg.setName(method->parameters[ai++].name);
 
-    unsigned idx = 0;
-    for (; argIt != function->arg_end(); ++argIt, ++idx)
-    {
-        argIt->setName(method->parameters[idx].name);
-    }
-
-    // Create basic block
     llvm::BasicBlock *block = llvm::BasicBlock::Create(context, "entry", function);
-
-    // Save current insert point
     llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
     llvm::Function *savedFunction = currentFunction;
+    std::string savedClassName = currentClassName;
+    std::map<std::string, llvm::AllocaInst *> savedNamedValues(namedValues);
+    std::map<std::string, std::string> savedVarClasses(varClasses);
 
-    // Set new insert point
     builder.SetInsertPoint(block);
     currentFunction = function;
-
-    // Save previous variables
-    std::map<std::string, llvm::AllocaInst *> savedNamedValues(namedValues);
+    currentClassName = className;
     namedValues.clear();
 
-    // Create allocas for parameters, starting with 'this'
-    argIt = function->arg_begin();
-    llvm::Value *thisValue = argIt;
-    llvm::AllocaInst *thisAlloca = createEntryBlockAlloca(function, "this", thisValue->getType());
-    builder.CreateStore(thisValue, thisAlloca);
-    namedValues["this"] = thisAlloca;
-    ++argIt;
-
-    idx = 0;
-    for (; argIt != function->arg_end(); ++argIt, ++idx)
+    // Bind parameters (including `self`) into the method scope.
+    ai = 0;
+    for (auto &arg : function->args())
     {
-        llvm::AllocaInst *alloca = createEntryBlockAlloca(
-            function, argIt->getName().str(), argIt->getType());
-
-        // Store the parameter value
-        builder.CreateStore(&*argIt, alloca);
-
-        // Add to symbol table
-        namedValues[argIt->getName().str()] = alloca;
+        const std::string &pname = method->parameters[ai].name;
+        llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
+        builder.CreateStore(&arg, alloca);
+        namedValues[pname] = alloca;
+        if (pname == "self")
+            varClasses["self"] = className;
+        ++ai;
     }
 
-    // Store the method in the virtual method table
+    // Store the method in the method table.
     classMethods[className + "." + method->name] = function;
 
     // Codegen method body
@@ -2149,7 +2260,9 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
     // Restore previous state
     namedValues = savedNamedValues;
+    varClasses = savedVarClasses;
     currentFunction = savedFunction;
+    currentClassName = savedClassName;
 
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
@@ -2164,17 +2277,14 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 
     llvm::Value *object = lastValue;
 
-    // With opaque pointers, we need to get the type information from elsewhere
-    std::string className;
-    if (expr->getType()) // Changed from getTypeInfo() to getType()
+    // Resolve the class name from the AST (self, typed locals, constructors).
+    std::string className = getExprClassName(expr->object);
+    if (className.empty())
     {
-        // Try to get the class name from type info if available
-        className = expr->getType()->toString();
-    }
-    else
-    {
-        // Fallback - try to get from the module
-        className = inferTypeNameFromValue(object);
+        if (expr->getType())
+            className = expr->getType()->toString();
+        else
+            className = inferTypeNameFromValue(object);
     }
 
     // Look up the class info
@@ -2264,187 +2374,56 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 
 void IRGenerator::visitSetExpr(ast::SetExpr *expr)
 {
-    // Evaluate the object expression
-    expr->object->accept(*this);
-    if (!lastValue)
-        return;
-
-    llvm::Value *object = lastValue;
-
-    // Get the type of the object
-    llvm::Type *pointedType = nullptr;
-    if (auto ptrType = llvm::dyn_cast<llvm::PointerType>(object->getType()))
-    {
-        // For opaque pointers, we need structural type information from elsewhere
-        // Try to find from class info first
-        std::string className = inferTypeNameFromValue(object);
-        auto classIt = classTypes.find(className);
-        if (classIt != classTypes.end())
-        {
-            pointedType = classIt->second.classType;
-        }
-        else
-        {
-            // As a fallback, see if we have type information through a BitCast
-            if (auto bitCast = llvm::dyn_cast<llvm::BitCastInst>(object))
-            {
-                auto srcTy = bitCast->getSrcTy();
-                if (srcTy->isPointerTy() && llvm::cast<llvm::PointerType>(srcTy)->getArrayElementType()->isStructTy())
-                {
-                    pointedType = llvm::cast<llvm::PointerType>(srcTy)->getArrayElementType();
-                }
-            }
-
-            // If still no type info, handle as a generic structure
-            if (!pointedType)
-            {
-                errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                         "Cannot determine pointed type for object",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
-                lastValue = nullptr;
-                return;
-            }
-        }
-    }
-    else
+    // Resolve the class of the object being assigned into.
+    std::string className = getExprClassName(expr->object);
+    auto it = classTypes.find(className);
+    if (it == classTypes.end())
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                 "Cannot access field of non-pointer type",
+                                 "Cannot determine class of object in field assignment",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        return;
+    }
+    const ClassInfo &info = it->second;
+    llvm::StructType *structType = info.classType;
+
+    // Locate the field.
+    int fieldIndex = -1;
+    for (size_t i = 0; i < info.memberNames.size(); ++i)
+        if (info.memberNames[i] == expr->name) { fieldIndex = (int)i; break; }
+    if (fieldIndex < 0)
+    {
+        errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
+                                 "Unknown field '" + expr->name + "' on class " + className,
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
 
-    // Check if it's a struct/class type
-    if (llvm::StructType *structType = llvm::dyn_cast<llvm::StructType>(pointedType))
+    // Evaluate the receiver pointer and the value.
+    expr->object->accept(*this);
+    llvm::Value *object = lastValue;
+    if (!object) return;
+    expr->value->accept(*this);
+    llvm::Value *val = lastValue;
+    if (!val) return;
+
+    llvm::Type *fieldType = structType->getStructElementType(fieldIndex);
+    if (val->getType() != fieldType)
     {
-        // Try to find the class info
-        std::string className = structType->getName().str();
-
-        // Sometimes LLVM adds a dot prefix to struct names, so remove it if present
-        if (className.size() > 0 && className[0] == '.')
-        {
-            className = className.substr(1);
-        }
-
-        auto it = classTypes.find(className);
-        if (it != classTypes.end())
-        {
-            // It's a proper class/struct object
-            const ClassInfo &classInfo = it->second;
-
-            // Find the field index
-            int fieldIndex = -1;
-            for (size_t i = 0; i < classInfo.memberNames.size(); i++)
-            {
-                if (classInfo.memberNames[i] == expr->name)
-                {
-                    fieldIndex = i;
-                    break;
-                }
-            }
-
-            if (fieldIndex != -1)
-            {
-                // Create a GEP instruction to access the field
-                std::vector<llvm::Value *> indices = {
-                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
-                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), fieldIndex)};
-
-                llvm::Value *fieldPtr = builder.CreateGEP(
-                    pointedType, object, indices, "field." + expr->name);
-
-                // Evaluate the value to assign
-                expr->value->accept(*this);
-                if (!lastValue)
-                    return;
-
-                // Get the field type
-                llvm::Type *fieldType = nullptr;
-                if (auto ptrType = llvm::dyn_cast<llvm::PointerType>(fieldPtr->getType()))
-                {
-                    // For opaque pointers, we need to use context information
-                    if (fieldIndex < structType->getNumElements())
-                    {
-                        fieldType = structType->getElementType(fieldIndex);
-                    }
-                    else
-                    {
-                        errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                                 "Field index out of bounds",
-                                                 "", 0, 0, error::ErrorSeverity::ERROR);
-                        lastValue = nullptr;
-                        return;
-                    }
-                }
-                else
-                {
-                    fieldType = fieldPtr->getType();
-                }
-
-                // Check that the types match
-                if (lastValue->getType() != fieldType)
-                {
-                    // Try simple numeric conversions
-                    if (lastValue->getType()->isIntegerTy() && fieldType->isIntegerTy())
-                    {
-                        lastValue = builder.CreateIntCast(lastValue, fieldType, true, "cast");
-                    }
-                    else if ((lastValue->getType()->isFloatTy() || lastValue->getType()->isDoubleTy()) &&
-                             (fieldType->isFloatTy() || fieldType->isDoubleTy()))
-                    {
-                        lastValue = builder.CreateFPCast(lastValue, fieldType, "cast");
-                    }
-                    else
-                    {
-                        errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
-                                                 "Type mismatch in field assignment",
-                                                 "", 0, 0, error::ErrorSeverity::ERROR);
-                        lastValue = nullptr;
-                        return;
-                    }
-                }
-
-                // Store the value in the field
-                builder.CreateStore(lastValue, fieldPtr);
-                return;
-            }
-            else if (classInfo.baseClass)
-            {
-                // If field not found in this class, try base class
-                llvm::AllocaInst *basePtr = createEntryBlockAlloca(
-                    currentFunction, "base", object->getType());
-                builder.CreateStore(object, basePtr);
-
-                // Load the base class pointer
-                llvm::Value *base = nullptr;
-                if (auto ptrType = llvm::dyn_cast<llvm::PointerType>(basePtr->getType()))
-                {
-                    // For opaque pointers in LLVM 15+, use the basePtr type directly
-                    base = builder.CreateLoad(object->getType(), basePtr);
-                }
-                else
-                {
-                    base = builder.CreateLoad(basePtr->getType(), basePtr);
-                }
-
-                // Cast to base class type
-                llvm::PointerType *baseType = llvm::PointerType::get(classInfo.baseClass, 0);
-                llvm::Value *baseCast = builder.CreateBitCast(base, baseType);
-
-                // Set the object to the base object and try again
-                lastValue = baseCast;
-                visitSetExpr(expr);
-                return;
-            }
-        }
+        if (val->getType()->isIntegerTy() && fieldType->isIntegerTy())
+            val = builder.CreateIntCast(val, fieldType, true, "cast");
+        else if (val->getType()->isFloatingPointTy() && fieldType->isFloatingPointTy())
+            val = builder.CreateFPCast(val, fieldType, "cast");
     }
 
-    // If we get here, the field was not found
-    errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
-                             "Undefined property: " + expr->name,
-                             "", 0, 0, error::ErrorSeverity::ERROR);
-    lastValue = nullptr;
+    std::vector<llvm::Value *> indices = {
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (unsigned)fieldIndex)};
+    llvm::Value *fieldPtr = builder.CreateGEP(structType, object, indices, "field." + expr->name);
+    builder.CreateStore(val, fieldPtr);
+    lastValue = val;
 }
 
 void IRGenerator::visitDeleteExpr(ast::DeleteExpr *expr)
