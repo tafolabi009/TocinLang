@@ -1,0 +1,6 @@
+// expect: 24
+import std.linq;
+def main() -> int {
+    let a = [1, 2, 3, 4];
+    return reduceProduct(a);   // 24
+}
