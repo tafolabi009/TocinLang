@@ -108,15 +108,12 @@ namespace parser
         auto parameters = parseParameters();
         consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
         ast::TypePtr returnType = nullptr;
-        // Support both -> and : for return type annotation
+        // Support both -> and : for return type annotation. When neither is
+        // present, leave the return type unspecified (null) so it can be
+        // inferred from the function body during type checking / codegen.
         if (match(lexer::TokenType::ARROW) || match(lexer::TokenType::COLON))
         {
             returnType = parseType();
-        }
-        else
-        {
-            returnType = std::make_shared<ast::SimpleType>(
-                lexer::Token(lexer::TokenType::NIL, "None", "", 0, 0));
         }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before function body");
         auto body = blockStmt();
@@ -137,6 +134,20 @@ namespace parser
             else if (match(lexer::TokenType::DEF) || match(lexer::TokenType::ASYNC))
             {
                 methods.push_back(functionDeclaration());
+            }
+            else if (check(lexer::TokenType::IDENTIFIER))
+            {
+                // Bare field declaration: `name: Type;` (struct-style)
+                auto fieldName = consume(lexer::TokenType::IDENTIFIER, "Expected field name");
+                ast::TypePtr fieldType = nullptr;
+                if (match(lexer::TokenType::COLON))
+                    fieldType = parseType();
+                ast::ExprPtr init = nullptr;
+                if (match(lexer::TokenType::EQUAL))
+                    init = expression();
+                match(lexer::TokenType::SEMI_COLON); // optional trailing ';'
+                fields.push_back(std::make_shared<ast::VariableStmt>(
+                    fieldName, fieldName.value, fieldType, init, false));
             }
             else
             {
@@ -216,6 +227,14 @@ namespace parser
         }
         consume(lexer::TokenType::IN, "Expected 'in' after loop variable");
         auto iterable = expression();
+        // Range syntax: `for i in start..end` builds a RANGE binary expression
+        // that codegen lowers into a counting loop.
+        if (match(lexer::TokenType::RANGE))
+        {
+            lexer::Token rangeOp = previous();
+            auto end = expression();
+            iterable = std::make_shared<ast::BinaryExpr>(iterable->token, iterable, rangeOp, end);
+        }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after for iterable");
         auto body = blockStmt();
         return std::make_shared<ast::ForStmt>(variable, variable.value, variableType, iterable, body);
@@ -263,12 +282,14 @@ namespace parser
             {
                 auto pattern = expression();
                 consume(lexer::TokenType::COLON, "Expected ':' after case pattern");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after case pattern");
                 auto body = blockStmt();
                 cases.emplace_back(pattern, body);
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
                 consume(lexer::TokenType::COLON, "Expected ':' after default");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after default");
                 defaultCase = blockStmt();
             }
             else
@@ -587,6 +608,21 @@ namespace parser
         {
             do
             {
+                // Method receiver: a leading `self` with no required type.
+                if (check(lexer::TokenType::SELF) ||
+                    (check(lexer::TokenType::IDENTIFIER) && peek().value == "self"))
+                {
+                    auto selfTok = advance();
+                    ast::TypePtr selfType;
+                    if (match(lexer::TokenType::COLON))
+                        selfType = parseType();
+                    else
+                        selfType = std::make_shared<ast::SimpleType>(
+                            lexer::Token(lexer::TokenType::IDENTIFIER, "Self", "",
+                                         selfTok.line, selfTok.column));
+                    parameters.emplace_back("self", selfType);
+                    continue;
+                }
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected parameter name");
                 consume(lexer::TokenType::COLON, "Expected ':' after parameter name");
                 auto type = parseType();

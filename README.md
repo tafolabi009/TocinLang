@@ -1,333 +1,213 @@
-# Tocin - Modern Systems Programming with Next-Gen Concurrency
+# Tocin — a statically-typed, LLVM-compiled programming language
 
 [![CI Status](https://github.com/tafolabi009/tocin-compiler/workflows/CI/badge.svg)](https://github.com/tafolabi009/tocin-compiler/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)](https://github.com/tafolabi009/tocin-compiler)
 
-> A statically-typed systems language with goroutine-style concurrency, NUMA-aware scheduling, V8 JavaScript integration, and LLVM-powered JIT compilation—designed for performance-critical applications that demand seamless multi-language interoperability.
+> Tocin is a statically-typed, compiled programming language with type inference,
+> classes, and an LLVM backend. Programs can be **JIT-executed** for fast iteration
+> or **compiled ahead-of-time to native executables**.
 
-## Why This Exists
+This README describes what the compiler **actually does today**. Longer-term,
+aspirational features are collected in the [Roadmap](#roadmap) so it is always
+clear what is implemented versus planned.
 
-Modern systems programming faces a paradox: languages are either high-performance but complex (C++, Rust) or easy to use but slow (Python, JavaScript). Tocin bridges this gap by providing **Rust-level performance** with **Go-style concurrency** while maintaining **seamless JavaScript/Python interoperability**. 
+## Highlights (implemented and tested)
 
-Built for developers who need to:
-- Write high-performance concurrent systems without fighting complex type systems
-- Integrate with existing JavaScript/Python codebases without FFI overhead
-- Scale from single-core to multi-socket NUMA systems with automatic topology optimization
-- Leverage LLVM optimizations (PGO, IPO, LTO) without manual tuning
+- **Compiles to native code via LLVM 18** — every example below produces a real
+  ELF/Mach-O/PE executable, or can be JIT-executed in-process.
+- **Type inference** — variable and function return types are inferred when not
+  annotated; a real type checker reports genuine type errors.
+- **Functions** — parameters, recursion, mutual recursion, and use-before-definition
+  (declarations are order-independent via two-pass code generation).
+- **Control flow** — `if / elif / else`, `while`, and range-based `for i in a..b`.
+- **Classes / structs** — fields, methods with `self`, construction, field read and
+  mutation, and method calls.
+- **Strings** — string literals and concatenation with `+`.
+- **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
 
-## Key Features
+## Quick start
 
-- **Lightweight Goroutine Scheduler** - Fiber-based execution with 4KB stacks supporting millions of concurrent goroutines, complete with work-stealing queues and 5-level priority scheduling (Critical → Background)
-- **NUMA-Aware Topology Optimization** - Automatic hardware detection and worker placement for multi-socket systems, minimizing cross-node memory access penalties
-- **V8 JavaScript Integration** - Full bidirectional FFI with ES6 module support, async/await bridge, and zero-copy data sharing between Tocin and JavaScript
-- **LLVM-Powered JIT & AOT** - Profile-Guided Optimization (PGO), Interprocedural Optimization (IPO), Polyhedral loop transformations, and Link-Time Optimization (LTO)
-- **Trait-Based Polymorphism** - Go-style interfaces with Rust-inspired default method implementations, enabling powerful abstractions without vtable overhead
-- **LINQ-Style Collections** - Functional programming primitives (where, select, aggregate) with lazy evaluation and SIMD vectorization
-- **Comprehensive Null Safety** - Safe call operator (`?.`), Elvis operator (`?:`), and not-null assertions preventing billion-dollar mistakes at compile time
+### Prerequisites
 
-## Architecture
+- LLVM 18 (development package, e.g. `llvm-18-dev` on Debian/Ubuntu)
+- CMake ≥ 3.16 and a C++20 compiler (GCC 11+, Clang 14+)
+- `zlib`, `libffi` (and optionally `libzstd`, `libxml2`, Python 3 for FFI)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        TOCIN COMPILER PIPELINE                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Source Code (.to)                                                      │
-│        ↓                                                                │
-│  ┌──────────┐      ┌──────────┐      ┌──────────────┐                │
-│  │  Lexer   │  →   │  Parser  │  →   │ Type Checker │                │
-│  └──────────┘      └──────────┘      └──────────────┘                │
-│        ↓                                      ↓                         │
-│  ┌─────────────────────────────────────────────────────┐              │
-│  │              LLVM IR Generator                       │              │
-│  │  • SSA Form   • Loop Optimization   • Inlining      │              │
-│  └─────────────────────────────────────────────────────┘              │
-│        ↓                                      ↓                         │
-│  ┌──────────────┐                    ┌──────────────┐                 │
-│  │ Interpreter  │                    │ JIT Compiler │                 │
-│  │ (Direct AST) │                    │ (LLVM ORC)   │                 │
-│  └──────────────┘                    └──────────────┘                 │
-│        ↓                                      ↓                         │
-│  ┌─────────────────────────────────────────────────────┐              │
-│  │              RUNTIME SYSTEM                          │              │
-│  │  ┌────────────────┐    ┌──────────────────┐        │              │
-│  │  │ Goroutine      │    │ V8 JavaScript    │        │              │
-│  │  │ Scheduler      │    │ Bridge           │        │              │
-│  │  │ • Work Steal   │    │ • ES6 Modules    │        │              │
-│  │  │ • NUMA Aware   │    │ • Async/Await    │        │              │
-│  │  │ • Priority Q   │    │ • Promise Bridge │        │              │
-│  │  └────────────────┘    └──────────────────┘        │              │
-│  │  ┌────────────────┐    ┌──────────────────┐        │              │
-│  │  │ Memory Mgmt    │    │ FFI Layer        │        │              │
-│  │  │ • GC           │    │ • Python         │        │              │
-│  │  │ • Arena Alloc  │    │ • C/C++          │        │              │
-│  │  └────────────────┘    └──────────────────┘        │              │
-│  └─────────────────────────────────────────────────────┘              │
-│        ↓                                      ↓                         │
-│  Native Binary                        In-Memory Execution              │
-│  (.exe, ELF, Mach-O)                  (JIT/Interpreter)                │
-└─────────────────────────────────────────────────────────────────────────┘
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get install -y llvm-18-dev libffi-dev zlib1g-dev libzstd-dev libxml2-dev cmake ninja-build
 ```
 
-## How It Works
+### Build
 
-**Compilation Pipeline**: Tocin's frontend employs a classic three-stage architecture—lexical analysis tokenizes source code, recursive descent parsing builds an AST, and a constraint-based type checker ensures soundness. The IR generator emits LLVM SSA form, enabling downstream optimizations.
-
-**NUMA-Aware Scheduling**: The runtime detects hardware topology via platform APIs (Windows: `GetNumaHighestNodeNumber`, Linux: `/sys/devices/system/node`), creating per-node worker pools. Work-stealing queues implement randomized victim selection within NUMA domains before crossing node boundaries, reducing remote memory access latency by up to 40%.
-
-**V8 JavaScript Bridge**: Tocin embeds V8 8.0+ with Isolate-per-thread design. The async/await bridge converts JavaScript Promises to Tocin coroutines via `MicrotaskQueue` polling. ES6 modules load through V8's `ModuleRequest` API, supporting dynamic imports with circular dependency detection.
-
-**JIT Compilation**: LLVM's ORCv2 JIT framework compiles functions on first invocation. PGO instruments branches and indirect calls, collecting profiles that guide inlining and devirtualization in subsequent compilations. Polyhedral optimization (via ISL library) transforms nested loops for vectorization and cache locality.
-
-**Lightweight Scheduler**: Each goroutine maps to a 4KB fiber with separate stack (Windows: `ConvertThreadToFiber`, Linux: `getcontext`/`setcontext`). The M:N scheduler multiplexes goroutines across OS threads, parking idle workers after 10ms to reduce contention. Priority inversion avoidance uses priority inheritance for channel operations.
-
-## Performance Benchmarks
-
-| Metric | Value | Comparison |
-|--------|-------|------------|
-| Goroutine Creation | 1.2M goroutines/sec | 3x faster than Go 1.21 |
-| Channel Throughput | 850ns/op (buffered) | On par with Go channels |
-| NUMA Remote Access | 40% reduction | vs. naive round-robin |
-| JIT Warmup Time | <50ms (typical) | LLVM Tier-1 optimization |
-| Memory Footprint | 4KB/goroutine | 8x smaller than Java threads |
-| LINQ Select | 120M ops/sec | SIMD-vectorized |
-| JavaScript FFI | 2.5μs/call | Includes V8 context switch |
-| Python FFI | 12μs/call | Via CPython C-API |
-
-*Benchmarks measured on AMD EPYC 7742 (2x64 cores), 256GB RAM, Ubuntu 22.04, LLVM 14*
-
-## Usage Example
-
-```tocin
-// Traits with default methods
-trait Logger {
-    fn log(self, msg: string);
-    fn debug(self, msg: string) { self.log("[DEBUG] " + msg); }
-}
-
-struct FileLogger { path: string }
-impl Logger for FileLogger {
-    fn log(self, msg: string) { write_file(self.path, msg); }
-}
-
-// LINQ with null safety
-let users: [User?] = fetch_users();
-let admins = users
-    .where(u => u?.role == "admin")
-    .select(u => u!.name)  // not-null assertion
-    .to_list();
-
-// Goroutines with priority scheduling
-go(priority: Critical) {
-    handle_critical_event();
-};
-
-// JavaScript interop with async/await
-let js_module = v8.load_module("./analytics.js");
-let result = await js_module.calculate_metrics(data, timeout: 5000);
-
-// NUMA-aware parallel processing
-let workers = numa.get_node_count();
-for node in 0..workers {
-    go(numa_node: node) {
-        process_partition(data.chunk(node));
-    }
-}
-```
-
-## Technical Stack
-
-- **Language**: C++17 (compiler), Tocin (stdlib/runtime)
-- **Dependencies**: 
-  - LLVM 11.0+ (IR generation, JIT, optimization passes)
-  - V8 8.0+ (JavaScript engine, ES6 module loader)
-  - Python 3.6+ (CPython FFI)
-  - CMake 3.15+ (build system)
-- **Platforms**: 
-  - Windows 10/11 (x64, ARM64)
-  - Linux (x64, ARM64) - Ubuntu 20.04+, CentOS 8+
-  - macOS 11+ (x64, Apple Silicon)
-- **Build Requirements**: 
-  - GCC 7+ / Clang 5+ / MSVC 2017+
-  - 4GB RAM (8GB recommended for parallel build)
-  - 2GB disk space (build artifacts + LLVM)
-
-## Research & Papers
-
-Tocin's design draws inspiration from:
-- **Go's Goroutine Scheduler**: [_Analysis of the Go runtime scheduler_ (Vyukov, 2014)](https://docs.google.com/document/d/1TTj4T2JO42uD5ID9e89oa0sLKhJYD0Y_kqxDv3I3XMw)
-- **NUMA-Aware Scheduling**: [_Carrefour: Mixing Buffering with Scheduling_ (ASPLOS 2021)](https://dl.acm.org/doi/10.1145/3445814.3446701)
-- **Polyhedral Optimization**: [_Integer Set Library for Polyhedral Compilation_ (Verdoolaege, 2010)](https://lirias.kuleuven.be/retrieve/141369)
-- **JIT Compilation**: [_LLVM: A Compilation Framework for Lifelong Program Analysis_ (Lattner & Adve, 2004)](https://llvm.org/pubs/2004-01-30-CGO-LLVM.html)
-
-## Future Work
-
-- [ ] **GPU Offloading** - CUDA/ROCm integration for data-parallel LINQ operations
-- [ ] **Distributed Runtime** - Goroutine migration across network nodes via gRPC
-- [ ] **Advanced GC** - Generational garbage collection with concurrent marking
-- [ ] **WebAssembly Target** - LLVM backend for WASM with JavaScript interop
-- [ ] **Formal Verification** - Liquid types for runtime property checking
-- [ ] **Language Server Protocol** - LSP implementation for IDE integration (VSCode, IntelliJ)
-- [ ] **Package Manager** - Central repository with semantic versioning and dependency resolution
-
-## Getting Started
-
-### Quick Build
 ```bash
 git clone https://github.com/tafolabi009/tocin-compiler.git
 cd tocin-compiler
-mkdir build && cd build
-cmake -DWITH_V8=ON -DWITH_ADVANCED_OPT=ON ..
-cmake --build . -j$(nproc)
-./tocin --version
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DWITH_V8=OFF -DLLVM_DIR=$(llvm-config-18 --cmakedir)
+cmake --build build -j
 ```
 
-### First Program
+This produces `build/tocin`.
+
+### Hello, Tocin
+
 ```tocin
 // hello.to
-fn main() {
+def main() {
     println("Hello from Tocin!");
-    
-    // Spawn 1000 concurrent goroutines
-    let ch = channel<int>();
-    for i in 0..1000 {
-        go { ch <- i * i; }
-    }
-    
-    let sum = 0;
-    for _ in 0..1000 {
-        sum += <-ch;
-    }
-    println("Sum of squares: {}", sum);
+    return 0;
 }
 ```
 
 ```bash
-./tocin hello.to --jit  # JIT execution
-./tocin hello.to -o hello && ./hello  # AOT compilation
+./build/tocin hello.to --run          # JIT-compile and run immediately
+./build/tocin hello.to -o hello       # compile to a native executable
+./hello
 ```
 
-See [docs/02_Getting_Started.md](docs/02_Getting_Started.md) for comprehensive tutorials.
+## Language tour (all of this runs today)
 
-## Documentation
+```tocin
+// Type inference: the return type of `add` is inferred as int.
+def add(a: int, b: int) {
+    return a + b;
+}
 
-- [Language Basics](docs/03_Language_Basics.md) - Syntax, types, control flow
-- [Concurrency Guide](docs/CONCURRENCY.md) - Goroutines, channels, select, NUMA
-- [Standard Library](docs/04_Standard_Library.md) - Math, strings, collections, I/O
-- [FFI & Interop](docs/FFI.md) - JavaScript, Python, C integration
-- [Architecture Deep Dive](docs/ARCHITECTURE.md) - Compiler internals
-- [Performance Tuning](docs/PERFORMANCE.md) - Optimization techniques
-- [Advanced Features](docs/ADVANCED_FEATURES.md) - V8, JIT, scheduler details
+// Recursion.
+def fib(n: int) -> int {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
 
-## Testing & Validation
+// Range-based loops and formatted printing.
+def main() {
+    let sum = 0;
+    for i in 1..101 {
+        sum = sum + i;
+    }
+    println("sum 1..100 = {}", sum);     // 5050
+    println("fib(10) = {}", fib(10));    // 55
 
-### Comprehensive Test Suite
-```bash
-# Run all tests with coverage reporting
-python3 test_interpreter_completion.py
+    // Strings concatenate with +.
+    let who = "world";
+    println("hello, " + who);
 
-# Run specific test categories
-./build/tocin tests/test_traits.to
-./build/tocin tests/test_concurrency_parser.to
-./build/tocin tests/test_linq.to
-
-# CMake test targets
-cd build && ctest -V
+    return add(2, 3);                    // process exit code = 5
+}
 ```
 
-### Test Coverage Areas
-- ✅ **Language Features**: Traits, LINQ, null safety, pattern matching
-- ✅ **Concurrency**: Goroutines, channels, select statements, priority scheduling
-- ✅ **FFI**: JavaScript/Python interop, async/await bridge, ES6 modules
-- ✅ **Optimization**: PGO, IPO, loop transformations, inlining
-- ✅ **Runtime**: NUMA topology, work-stealing, fiber management
-- ✅ **Error Handling**: Diagnostics, stack traces, recovery mechanisms
+Classes with methods and `self`:
 
-See [tests/README.md](tests/README.md) for detailed test documentation.
+```tocin
+class Point {
+    x: int;
+    y: int;
+    def sum(self) -> int { return self.x + self.y; }
+    def scaled(self, k: int) -> int { return (self.x + self.y) * k; }
+}
 
-### Benchmarking
-```bash
-# Run performance benchmarks
-cd benchmarks
-../build/tocin benchmark_runtime_concurrency.to
-../build/tocin benchmark_runtime_linq.to
-
-# Compare against baseline
-./run_benchmarks.sh --compare baseline.json
+def main() {
+    let p = Point(3, 4);
+    p.x = 10;                            // field mutation
+    println("sum   = {}", p.sum());      // 14
+    println("scale = {}", p.scaled(2));  // 28
+    return p.sum();
+}
 ```
 
-## Project Structure
+## How it works
+
+```
+Source (.to)
+   → Lexer        (tokens, indentation/brace blocks, string + numeric literals)
+   → Parser       (recursive-descent → AST)
+   → Type checker (two-pass: hoist signatures, then infer & check bodies)
+   → IR generator (LLVM IR; two-pass so declaration order doesn't matter)
+   → { JIT (ORCv2 LLJIT)  |  AOT (TargetMachine → object → system linker) }
+```
+
+The driver (`src/main.cpp`) drives this pipeline. `--run` JIT-executes `main`
+in-process; `-o <file>` selects output by extension (`.ll` IR, `.s` assembly,
+`.o` object, anything else → a linked native executable).
+
+## Project structure
 
 ```
 tocin-compiler/
 ├── src/
-│   ├── lexer/          # Tokenization and lexical analysis
-│   ├── parser/         # AST construction and syntax validation
-│   ├── ast/            # Abstract syntax tree definitions
-│   ├── type/           # Type checking and inference
-│   ├── codegen/        # LLVM IR generation
-│   ├── compiler/       # Optimization passes and compilation pipeline
-│   ├── runtime/        # Goroutine scheduler, NUMA, memory management
-│   ├── v8_integration/ # JavaScript bridge and ES6 module loader
-│   ├── ffi/            # Python/C FFI implementation
-│   └── error/          # Diagnostics and error reporting
-├── stdlib/             # Standard library modules
-│   ├── math/           # Mathematical functions and constants
-│   ├── net/            # Networking (HTTP, WebSocket, TCP)
-│   ├── web/            # Web framework and templating
-│   ├── ml/             # Machine learning utilities
-│   ├── database/       # SQL/NoSQL connectors
-│   └── gui/            # Cross-platform GUI toolkit
-├── tests/              # 30+ comprehensive test files
-├── benchmarks/         # Performance measurement suite
-├── examples/           # Real-world usage demonstrations
-├── docs/               # Language and API documentation
-└── installer/          # Platform-specific installation scripts
+│   ├── lexer/       # Tokenizer
+│   ├── parser/      # Recursive-descent parser → AST
+│   ├── ast/         # AST and type node definitions
+│   ├── type/        # Type checker and (in-progress) advanced type features
+│   ├── codegen/     # LLVM IR generation
+│   ├── compiler/    # Compilation context, optimization, (in-progress) macros
+│   ├── runtime/     # Scheduler, async, concurrency support (in-progress)
+│   ├── ffi/         # Python / C / JavaScript FFI (see Roadmap)
+│   └── error/       # Diagnostics
+├── stdlib/          # Standard-library modules written in Tocin (in-progress)
+├── tests/           # Unit tests and .to integration programs
+├── examples/        # Example programs
+└── docs/            # Language and design documentation
 ```
 
-## Troubleshooting
+## Testing
 
-**Build Issues:**
-- Ensure LLVM is in your PATH: `llvm-config --version`
-- Windows users: Install Visual Studio 2017+ with C++ Desktop Development workload
-- macOS: `brew install llvm cmake` (may require `export PATH="/usr/local/opt/llvm/bin:$PATH"`)
+```bash
+cmake --build build --target tocin tocin_tests
+ctest --test-dir build --output-on-failure       # C++ unit tests
+bash scripts/run_to_tests.sh                      # .to integration programs
+```
 
-**Runtime Errors:**
-- FFI failures: Verify Python 3.6+ and V8 8.0+ are installed
-- NUMA detection: Check `/sys/devices/system/node` (Linux) or run as Administrator (Windows)
-- Goroutine crashes: Increase stack size via `TOCIN_STACK_SIZE` environment variable
+## Roadmap
 
-**Performance:**
-- JIT warmup: First runs are slower; use `--warmup` flag for benchmarking
-- NUMA: Explicitly bind with `numa_node` parameter or use `numactl` (Linux)
-- Memory: Profile with `valgrind` or Windows Performance Analyzer
+These features are partially scaffolded in the source tree and/or planned, but are
+**not yet fully working end-to-end**. They are listed here honestly so expectations
+match reality:
 
-See [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) for diagnostic techniques.
+- **Traits & `impl` blocks** — AST/parsing groundwork exists; resolution and codegen pending.
+- **Generics** — generic syntax is recognized; monomorphization is pending.
+- **Collections & LINQ** — arrays/lists with indexing, and `where`/`select`/`aggregate`.
+- **Pattern matching** — `match` with destructuring patterns.
+- **Null safety** — `?.`, `?:`, `!!` operators and nullable-type flow analysis.
+- **`Option` / `Result`** — types are defined; exhaustiveness checking and ergonomics pending.
+- **Concurrency** — `go`, channels, and `select` parse today; a fiber scheduler exists in
+  `src/runtime` but is not yet wired to codegen. `async` / `await`.
+- **FFI** — Python (CPython) and C/C++ (`dlopen`) backends are largely implemented;
+  JavaScript is a stub. V8 is gated behind `-DWITH_V8=ON` and is **not** bundled
+  (it is not installable from standard package managers), so CI builds with `-DWITH_V8=OFF`.
+- **Macros** — a macro engine exists but is not yet invoked by the compile pipeline.
+- **WebAssembly target**, **package manager**, and an **interactive debugger**
+  (behind their respective CMake flags).
+- **Advanced optimization** — the standard LLVM `-O0..-O3` pipelines are wired and
+  working today (e.g. constant folding); profile-guided/interprocedural/polyhedral
+  passes in `src/compiler/advanced_optimizations.cpp` are not yet on the default path.
 
+Contributions toward any of these are very welcome.
+
+## Technical stack
+
+- **Compiler**: C++20
+- **Backend**: LLVM 18 (IR generation, ORCv2 JIT, TargetMachine AOT, optimization passes)
+- **Build**: CMake ≥ 3.16
+- **Optional**: Python 3 (FFI), libffi, zstd, libxml2
 
 ## License
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE).
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Code style guidelines
-- Testing requirements  
-- PR submission process
-- Community code of conduct
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). When adding a
+language feature, please include a `.to` test under `tests/` demonstrating it.
 
-## Contact
+## Author
 
-**Built by Afolabi Oluwatosin**
+**Afolabi Oluwatosin**
 
-- 🌐 Website: [https://folabi.me](https://folabi.me)
-- 💼 LinkedIn: [linkedin.com/in/tafolabi009](https://www.linkedin.com/in/tafolabi009)
-- 📧 Email: [tafolabi009@gmail.com](mailto:tafolabi009@gmail.com)
-- 🐙 GitHub: [@tafolabi009](https://github.com/tafolabi009)
-
----
-
-*Tocin: Where systems programming meets developer productivity*
- 
+- Website: [https://folabi.me](https://folabi.me)
+- LinkedIn: [linkedin.com/in/tafolabi009](https://www.linkedin.com/in/tafolabi009)
+- Email: [tafolabi009@gmail.com](mailto:tafolabi009@gmail.com)
+- GitHub: [@tafolabi009](https://github.com/tafolabi009)

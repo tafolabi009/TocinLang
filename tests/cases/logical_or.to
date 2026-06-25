@@ -1,0 +1,2 @@
+// expect: 8
+def main() { let a = 50; if a < 0 or a > 10 { return 8; } return 0; }
