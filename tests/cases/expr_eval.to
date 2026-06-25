@@ -1,0 +1,23 @@
+// expect: 82
+class P { src: string; pos: int; }
+def peek(p: P) -> int { if p.pos >= strLen(p.src) { return -1; } return charAt(p.src, p.pos); }
+def number(p: P) -> int {
+    let n = 0; let c = peek(p);
+    while c >= 48 and c <= 57 { n = n*10 + (c-48); p.pos = p.pos+1; c = peek(p); }
+    return n;
+}
+def factor(p: P) -> int {
+    if peek(p) == 40 { p.pos = p.pos+1; let v = expr(p); p.pos = p.pos+1; return v; }
+    return number(p);
+}
+def term(p: P) -> int {
+    let v = factor(p); let c = peek(p);
+    while c == 42 or c == 47 { p.pos = p.pos+1; let r = factor(p); if c == 42 { v = v*r; } else { v = v/r; } c = peek(p); }
+    return v;
+}
+def expr(p: P) -> int {
+    let v = term(p); let c = peek(p);
+    while c == 43 or c == 45 { p.pos = p.pos+1; let r = term(p); if c == 43 { v = v+r; } else { v = v-r; } c = peek(p); }
+    return v;
+}
+def main() -> int { let p = P("100-4*5+2", 0); return expr(p); }

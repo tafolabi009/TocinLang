@@ -2836,6 +2836,9 @@ void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &
     // Record string parameters so == / != compare by value.
     if (type && type->toString() == "string")
         varIsString.insert(name);
+    // Record class-typed parameters so field/method access resolves the class.
+    if (type && classTypes.count(type->toString()))
+        varClasses[name] = type->toString();
 }
 
 llvm::Value *IRGenerator::makeClosure(llvm::Function *fn,
