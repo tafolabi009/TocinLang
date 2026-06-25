@@ -4666,87 +4666,100 @@ void codegen::IRGenerator::visitChannelReceiveExpr(ast::ChannelReceiveExpr* expr
 }
 
 void codegen::IRGenerator::visitSelectStmt(ast::SelectStmt* stmt) {
-    // Generate IR for select statement
-    
-    // Create a function to handle the select logic
-    std::string selectFuncName = "select_handler_" + std::to_string(getNextId());
-    llvm::Function* selectFunc = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false), // Returns case index
-        llvm::Function::InternalLinkage,
-        selectFuncName,
-        module.get()
-    );
-    
-    // Create the select function body
-    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", selectFunc);
-    builder.SetInsertPoint(entryBlock);
-    
-    // Get the runtime select function
-    llvm::Function* runtimeSelectFunc = module->getFunction("runtime_select");
-    if (!runtimeSelectFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* selectType = llvm::FunctionType::get(
-            llvm::Type::getInt32Ty(context), // Returns selected case index
-            {llvm::Type::getInt32Ty(context)}, // Number of cases
-            false
-        );
-        runtimeSelectFunc = llvm::Function::Create(
-            selectType,
-            llvm::Function::ExternalLinkage,
-            "runtime_select",
-            module.get()
-        );
+    // `select` waits on multiple channel receives. Lowered to a poll loop over
+    // the cases using the non-blocking __tocin_chan_try_recv: try each channel;
+    // run the first ready case's body; with a `default`, run it when none are
+    // ready; otherwise park briefly and retry (blocking).
+    llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+
+    llvm::Function *tryF = module->getFunction("__tocin_chan_try_recv");
+    if (!tryF)
+        tryF = llvm::Function::Create(
+            llvm::FunctionType::get(i8, {ptr, ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_try_recv", *module);
+    llvm::Function *parkF = module->getFunction("__tocin_chan_park");
+    if (!parkF)
+        parkF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_park", *module);
+
+    // Split receive cases from an optional default.
+    std::vector<const ast::SelectStmt::Case *> recvCases;
+    const ast::SelectStmt::Case *defCase = nullptr;
+    for (const auto &c : stmt->cases) {
+        if (c.isDefault) defCase = &c;
+        else recvCases.push_back(&c);
     }
-    
-    // Call the runtime select function with the number of cases
-    std::vector<llvm::Value*> args = {
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), stmt->cases.size())
-    };
-    llvm::Value* selectedCase = builder.CreateCall(runtimeSelectFunc, args);
-    
-    // Return the selected case index
-    builder.CreateRet(selectedCase);
-    
-    // Now create the main select logic in the current function
-    llvm::BasicBlock* currentBlock = builder.GetInsertBlock();
-    llvm::Function* currentFunction = currentBlock->getParent();
-    
-    // Call the select handler
-    std::vector<llvm::Value*> callArgs;
-    llvm::Value* caseIndex = builder.CreateCall(selectFunc, callArgs);
-    
-    // Create a switch statement to handle each case
-    llvm::SwitchInst* switchInst = builder.CreateSwitch(caseIndex, nullptr, stmt->cases.size());
-    
-    // Add cases for each select case
-    for (size_t i = 0; i < stmt->cases.size(); ++i) {
-        const auto& selectCase = stmt->cases[i];
-        
-        // Create a basic block for this case
-        llvm::BasicBlock* caseBlock = llvm::BasicBlock::Create(context, 
-            "select_case_" + std::to_string(i), currentFunction);
-        
-        // Add the case to the switch
-        switchInst->addCase(llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), i), caseBlock);
-        
-        // Set the insert point to the case block
-        builder.SetInsertPoint(caseBlock);
-        
-        // Execute the case body
-        if (selectCase.body) {
-            selectCase.body->accept(*this);
+
+    // Evaluate channel handles once; one received-value slot per case.
+    std::vector<llvm::Value *> handles, slots;
+    for (auto *c : recvCases) {
+        c->channel->accept(*this);
+        llvm::Value *h = lastValue;
+        if (!h) { lastValue = nullptr; return; }
+        if (!h->getType()->isPointerTy())
+            h = builder.CreateIntToPtr(h, ptr, "ch.ptr");
+        handles.push_back(h);
+        slots.push_back(createEntryBlockAlloca(function, "sel.slot", i64));
+    }
+
+    llvm::BasicBlock *pollBlock = llvm::BasicBlock::Create(context, "select.poll", function);
+    llvm::BasicBlock *noMatch = llvm::BasicBlock::Create(context, "select.nomatch", function);
+    llvm::BasicBlock *contBlock = llvm::BasicBlock::Create(context, "select.cont", function);
+    std::vector<llvm::BasicBlock *> tryBlocks, bodyBlocks;
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        tryBlocks.push_back(llvm::BasicBlock::Create(context, "select.try", function));
+        bodyBlocks.push_back(llvm::BasicBlock::Create(context, "select.body", function));
+    }
+
+    builder.CreateBr(pollBlock);
+    builder.SetInsertPoint(pollBlock);
+    builder.CreateBr(recvCases.empty() ? noMatch : tryBlocks[0]);
+
+    // Per-case readiness checks, chained.
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        builder.SetInsertPoint(tryBlocks[i]);
+        llvm::Value *got = builder.CreateCall(tryF, {handles[i], slots[i]}, "got");
+        llvm::Value *ready = builder.CreateICmpNE(got, llvm::ConstantInt::get(i8, 0), "ready");
+        llvm::BasicBlock *nextTry = (i + 1 < recvCases.size()) ? tryBlocks[i + 1] : noMatch;
+        builder.CreateCondBr(ready, bodyBlocks[i], nextTry);
+    }
+
+    // No case ready: run default, or park and retry (blocking).
+    builder.SetInsertPoint(noMatch);
+    if (defCase) {
+        createEnvironment();
+        if (defCase->body) defCase->body->accept(*this);
+        restoreEnvironment();
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(contBlock);
+    } else {
+        builder.CreateCall(parkF, {});
+        builder.CreateBr(pollBlock);
+    }
+
+    // Case bodies: bind the received value (if named), then run the body.
+    for (size_t i = 0; i < recvCases.size(); ++i) {
+        builder.SetInsertPoint(bodyBlocks[i]);
+        auto savedNamed = namedValues;
+        createEnvironment();
+        if (!recvCases[i]->bindName.empty()) {
+            llvm::AllocaInst *bindSlot = createEntryBlockAlloca(function, recvCases[i]->bindName, i64);
+            builder.CreateStore(builder.CreateLoad(i64, slots[i], "recv"), bindSlot);
+            namedValues[recvCases[i]->bindName] = bindSlot;
         }
-        
-        // Branch to the end of the select
-        llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(context, "select_end", currentFunction);
-        builder.CreateBr(endBlock);
-        
-        // Set the insert point to the end block
-        builder.SetInsertPoint(endBlock);
+        if (recvCases[i]->body) recvCases[i]->body->accept(*this);
+        restoreEnvironment();
+        namedValues = savedNamed;
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(contBlock);
     }
-    
-    // Set the current value to void
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+
+    builder.SetInsertPoint(contBlock);
+    lastValue = nullptr;
 }
 
 int IRGenerator::getNextId() {

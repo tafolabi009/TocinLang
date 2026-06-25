@@ -1,0 +1,14 @@
+// expect: 99
+// select picks the ready channel among several.
+def producer(ch: channel<int>) { ch <- 99; }
+def main() {
+    let a = channel<int>();
+    let b = channel<int>();
+    go producer(b);
+    let result = 0;
+    select {
+        case v = <-a: { result = v; }
+        case v = <-b: { result = v; }
+    }
+    return result;
+}
