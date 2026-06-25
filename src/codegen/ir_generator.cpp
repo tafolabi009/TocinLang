@@ -762,12 +762,13 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     llvm::FunctionType *funcType = llvm::FunctionType::get(
         returnType, paramTypes, false);
 
-    // Create the function
-    llvm::Function *function = llvm::Function::Create(
-        funcType,
-        llvm::Function::ExternalLinkage,
-        funcName,
-        *module);
+    // Reuse a forward-declared prototype if present, else create it.
+    llvm::Function *function = module->getFunction(funcName);
+    if (!function)
+    {
+        function = llvm::Function::Create(
+            funcType, llvm::Function::ExternalLinkage, funcName, *module);
+    }
 
     // Set parameter names and store them in symbol table
     unsigned idx = 0;
@@ -2178,8 +2179,11 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
     std::string methodName = className + "_" + method->name;
     llvm::FunctionType *functionType = llvm::FunctionType::get(returnType, paramTypes, false);
-    llvm::Function *function = llvm::Function::Create(
-        functionType, llvm::Function::ExternalLinkage, methodName, module.get());
+    // Reuse the forward-declared prototype if present.
+    llvm::Function *function = module->getFunction(methodName);
+    if (!function)
+        function = llvm::Function::Create(
+            functionType, llvm::Function::ExternalLinkage, methodName, module.get());
 
     unsigned ai = 0;
     for (auto &arg : function->args())
@@ -2776,6 +2780,117 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
     return false;
 }
 
+llvm::Function *IRGenerator::declareFunctionProto(ast::FunctionStmt *stmt)
+{
+    if (!stmt || stmt->isAsync || stmt->isGeneric())
+        return nullptr;
+    if (llvm::Function *existing = module->getFunction(stmt->name))
+        return existing;
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &p : stmt->parameters)
+    {
+        llvm::Type *t = p.type ? getLLVMType(p.type) : i64;
+        if (!t || t->isVoidTy())
+            t = i64;
+        paramTypes.push_back(t);
+    }
+    llvm::Type *retType = stmt->returnType ? getLLVMType(stmt->returnType)
+                                           : inferFunctionReturnType(stmt);
+    if (!retType)
+        retType = llvm::Type::getVoidTy(context);
+    llvm::FunctionType *ft = llvm::FunctionType::get(retType, paramTypes, false);
+    return llvm::Function::Create(ft, llvm::Function::ExternalLinkage, stmt->name, module.get());
+}
+
+void IRGenerator::registerClassType(ast::ClassStmt *stmt)
+{
+    if (!stmt || stmt->isGeneric() || classTypes.count(stmt->name))
+        return;
+    ClassInfo info;
+    std::vector<llvm::Type *> fieldTypes;
+    for (const auto &fieldStmt : stmt->fields)
+    {
+        auto var = std::dynamic_pointer_cast<ast::VariableStmt>(fieldStmt);
+        if (!var)
+            continue;
+        llvm::Type *ft = var->type ? getLLVMType(var->type) : llvm::Type::getInt64Ty(context);
+        info.memberNames.push_back(var->name);
+        info.memberTypes[var->name] = ft;
+        fieldTypes.push_back(ft);
+    }
+    llvm::StructType *structType = llvm::StructType::getTypeByName(context, stmt->name);
+    if (!structType)
+        structType = llvm::StructType::create(context, fieldTypes, stmt->name);
+    else
+        structType->setBody(fieldTypes);
+    info.classType = structType;
+    info.baseClass = nullptr;
+    classTypes[stmt->name] = info;
+}
+
+llvm::Function *IRGenerator::declareMethodProto(const std::string &className,
+                                                llvm::StructType *classType,
+                                                ast::FunctionStmt *method)
+{
+    std::string methodName = className + "_" + method->name;
+    if (llvm::Function *existing = module->getFunction(methodName))
+        return existing;
+    llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
+    llvm::Type *retType = method->returnType ? getLLVMType(method->returnType)
+                                             : inferFunctionReturnType(method);
+    if (!retType)
+        retType = llvm::Type::getVoidTy(context);
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &param : method->parameters)
+    {
+        if (param.name == "self")
+            paramTypes.push_back(opaquePtr);
+        else
+        {
+            llvm::Type *t = getLLVMType(param.type);
+            paramTypes.push_back(t ? t : opaquePtr);
+        }
+    }
+    llvm::FunctionType *ft = llvm::FunctionType::get(retType, paramTypes, false);
+    llvm::Function *fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
+                                               methodName, module.get());
+    classMethods[className + "." + method->name] = fn;
+    return fn;
+}
+
+void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
+{
+    std::vector<ast::StmtPtr> stmts;
+    if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(ast))
+        stmts = blk->statements;
+    else if (auto mod = std::dynamic_pointer_cast<ast::ModuleStmt>(ast))
+        stmts = mod->body;
+    else
+        stmts.push_back(ast);
+
+    // Register class types first (so signatures can reference them).
+    for (auto &s : stmts)
+        if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
+            registerClassType(cls.get());
+
+    // Then forward-declare free functions and method prototypes.
+    for (auto &s : stmts)
+    {
+        if (auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(s))
+            declareFunctionProto(fn.get());
+        else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
+        {
+            auto cit = classTypes.find(cls->name);
+            if (cit == classTypes.end())
+                continue;
+            for (auto &m : cls->methods)
+                if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(m))
+                    declareMethodProto(cls->name, cit->second.classType, method.get());
+        }
+    }
+}
+
 std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
 {
     if (!ast)
@@ -2786,16 +2901,14 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
         return nullptr;
     }
 
-    // Don't create a dummy main - let the user provide their own
-    // createMainFunction();
-
-    // Don't call declarePrintFunction - already done in declareStdLibFunctions()
-    // declarePrintFunction();
-
     // Create a global scope
     enterScope();
 
-    // Visit the AST to generate IR
+    // Pass 1: forward-declare all top-level functions, classes and methods so
+    // declaration order doesn't matter (mutual recursion, use-before-def).
+    predeclareTopLevel(ast);
+
+    // Pass 2: visit the AST to generate IR
     ast->accept(*this);
 
     // Exit the global scope
