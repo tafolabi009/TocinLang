@@ -23,7 +23,7 @@ namespace lexer
         {"interface", TokenType::INTERFACE}, {"trait", TokenType::TRAIT}, {"impl", TokenType::IMPL},
         {"pub", TokenType::PUB}, {"priv", TokenType::PRIV}, {"static", TokenType::STATIC},
         {"final", TokenType::FINAL}, {"abstract", TokenType::ABSTRACT}, {"virtual", TokenType::VIRTUAL},
-        {"override", TokenType::OVERRIDE}, {"super", TokenType::SUPER}, {"self", TokenType::SELF},
+        {"override", TokenType::OVERRIDE}, {"super", TokenType::SUPER},
         {"null", TokenType::NULL_TOKEN}, {"undefined", TokenType::UNDEFINED}, {"void", TokenType::VOID},
         {"typeof", TokenType::TYPEOF}, {"instanceof", TokenType::INSTANCEOF}, {"as", TokenType::AS},
         {"is", TokenType::IS}, {"where", TokenType::WHERE}, {"yield", TokenType::YIELD},
