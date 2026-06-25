@@ -97,6 +97,7 @@ namespace type_checker
         void visitMatchStmt(ast::MatchStmt *stmt) override;
         void visitArrayLiteralExpr(ast::ArrayLiteralExpr *expr) override;
         void visitIndexExpr(ast::IndexExpr *expr) override;
+        void visitEnumStmt(ast::EnumStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
