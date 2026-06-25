@@ -928,43 +928,91 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     {
         std::string funcName = varExpr->name;
 
-        // print()/println() are built-ins: format each argument according to
-        // its runtime type and forward to printf. println appends a newline.
+        // print()/println() are built-ins forwarded to printf. println appends
+        // a newline. Two calling styles are supported:
+        //   * format style: print("x = {}, y = {}", x, y)  (first arg is a
+        //     string literal containing {} placeholders)
+        //   * sequential style: print(a, b, c)  (each argument printed in turn)
         if (funcName == "print" || funcName == "println")
         {
             llvm::Function *printfFunc = stdLibFunctions["printf"];
-            std::string format;
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Type *dbl = llvm::Type::getDoubleTy(context);
             std::vector<llvm::Value *> printfArgs;
             printfArgs.push_back(nullptr); // reserved for the format string
-            for (const auto &arg : expr->arguments)
-            {
-                arg->accept(*this);
-                if (!lastValue)
-                    return;
-                llvm::Value *v = lastValue;
+            std::string format;
+
+            // Helper: coerce a value for a varargs printf slot and append its
+            // conversion specifier to the format string.
+            auto appendValue = [&](llvm::Value *v) {
                 llvm::Type *t = v->getType();
                 if (t->isIntegerTy())
                 {
-                    v = builder.CreateIntCast(v, llvm::Type::getInt64Ty(context),
-                                              !t->isIntegerTy(1), "printi");
+                    v = builder.CreateIntCast(v, i64, !t->isIntegerTy(1), "printi");
                     format += "%lld";
                 }
                 else if (t->isFloatTy() || t->isDoubleTy())
                 {
                     if (t->isFloatTy())
-                        v = builder.CreateFPExt(v, llvm::Type::getDoubleTy(context), "printf_d");
-                    format += "%f";
+                        v = builder.CreateFPExt(v, dbl, "printf_d");
+                    format += "%g";
                 }
                 else if (t->isPointerTy())
-                {
                     format += "%s";
-                }
                 else
-                {
                     format += "%p";
-                }
                 printfArgs.push_back(v);
+            };
+
+            // Detect format style: first argument is a string literal with {}.
+            ast::LiteralExpr *fmtLit = nullptr;
+            if (!expr->arguments.empty())
+                if (auto l = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[0]))
+                    if (l->literalType == ast::LiteralExpr::LiteralType::STRING &&
+                        l->value.find("{}") != std::string::npos)
+                        fmtLit = l.get();
+
+            if (fmtLit)
+            {
+                // Evaluate the substitution arguments first.
+                std::vector<llvm::Value *> argVals;
+                for (size_t i = 1; i < expr->arguments.size(); ++i)
+                {
+                    expr->arguments[i]->accept(*this);
+                    if (!lastValue) return;
+                    argVals.push_back(lastValue);
+                }
+                std::string raw = fmtLit->value;
+                if (raw.size() >= 2 && (raw.front() == '"' || raw.front() == '\''))
+                    raw = raw.substr(1, raw.size() - 2);
+                size_t ai = 0;
+                for (size_t i = 0; i < raw.size(); ++i)
+                {
+                    if (raw[i] == '{' && i + 1 < raw.size() && raw[i + 1] == '}')
+                    {
+                        if (ai < argVals.size()) appendValue(argVals[ai++]);
+                        else format += "{}";
+                        ++i;
+                    }
+                    else if (raw[i] == '\\' && i + 1 < raw.size())
+                    {
+                        char n = raw[++i];
+                        format += (n == 'n') ? '\n' : (n == 't') ? '\t' : (n == 'r') ? '\r' : n;
+                    }
+                    else if (raw[i] == '%') format += "%%";
+                    else format += raw[i];
+                }
             }
+            else
+            {
+                for (const auto &arg : expr->arguments)
+                {
+                    arg->accept(*this);
+                    if (!lastValue) return;
+                    appendValue(lastValue);
+                }
+            }
+
             if (funcName == "println")
                 format += "\n";
             printfArgs[0] = builder.CreateGlobalString(format, "fmt");
@@ -1231,6 +1279,52 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
     // Use direct field access instead of accessor methods
     std::string variable = stmt->variable;          // Changed from getVariable()
     ast::TypePtr variableType = stmt->variableType; // Changed from getVariableType()
+
+    // Range-based for loop: `for v in start..end` -> integer counting loop.
+    if (auto rangeExpr = std::dynamic_pointer_cast<ast::BinaryExpr>(stmt->iterable))
+    {
+        if (rangeExpr->op.type == lexer::TokenType::RANGE)
+        {
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            rangeExpr->left->accept(*this);
+            llvm::Value *startV = lastValue;
+            if (!startV) return;
+            if (!startV->getType()->isIntegerTy(64))
+                startV = builder.CreateIntCast(startV, i64, true, "range.start");
+            rangeExpr->right->accept(*this);
+            llvm::Value *endV = lastValue;
+            if (!endV) return;
+            if (!endV->getType()->isIntegerTy(64))
+                endV = builder.CreateIntCast(endV, i64, true, "range.end");
+
+            llvm::Function *fn = builder.GetInsertBlock()->getParent();
+            llvm::AllocaInst *iterVar = builder.CreateAlloca(i64, nullptr, variable);
+            builder.CreateStore(startV, iterVar);
+            namedValues[variable] = iterVar;
+
+            llvm::BasicBlock *condBB = llvm::BasicBlock::Create(context, "for.cond", fn);
+            llvm::BasicBlock *bodyBB = llvm::BasicBlock::Create(context, "for.body", fn);
+            llvm::BasicBlock *afterBB = llvm::BasicBlock::Create(context, "for.after", fn);
+
+            builder.CreateBr(condBB);
+            builder.SetInsertPoint(condBB);
+            llvm::Value *cur = builder.CreateLoad(i64, iterVar, variable);
+            llvm::Value *cond = builder.CreateICmpSLT(cur, endV, "for.cmp");
+            builder.CreateCondBr(cond, bodyBB, afterBB);
+
+            builder.SetInsertPoint(bodyBB);
+            if (stmt->body) stmt->body->accept(*this);
+            if (!builder.GetInsertBlock()->getTerminator())
+            {
+                llvm::Value *c2 = builder.CreateLoad(i64, iterVar, variable);
+                llvm::Value *next = builder.CreateAdd(c2, llvm::ConstantInt::get(i64, 1), "for.inc");
+                builder.CreateStore(next, iterVar);
+                builder.CreateBr(condBB);
+            }
+            builder.SetInsertPoint(afterBB);
+            return;
+        }
+    }
 
     llvm::Function *function = builder.GetInsertBlock()->getParent();
 

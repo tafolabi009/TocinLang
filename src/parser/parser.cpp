@@ -213,6 +213,14 @@ namespace parser
         }
         consume(lexer::TokenType::IN, "Expected 'in' after loop variable");
         auto iterable = expression();
+        // Range syntax: `for i in start..end` builds a RANGE binary expression
+        // that codegen lowers into a counting loop.
+        if (match(lexer::TokenType::RANGE))
+        {
+            lexer::Token rangeOp = previous();
+            auto end = expression();
+            iterable = std::make_shared<ast::BinaryExpr>(iterable->token, iterable, rangeOp, end);
+        }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after for iterable");
         auto body = blockStmt();
         return std::make_shared<ast::ForStmt>(variable, variable.value, variableType, iterable, body);
