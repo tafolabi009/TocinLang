@@ -1,0 +1,13 @@
+// expect: 30
+// A generic class with multiple type parameters; each is inferred from the
+// matching constructor argument.
+class Pair<A, B> {
+    first: A;
+    second: B;
+    def total(self) -> A { return self.first + self.second; }
+}
+
+def main() {
+    let p = Pair(10, 20);
+    return p.total();
+}
