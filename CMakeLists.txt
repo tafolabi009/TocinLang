@@ -516,6 +516,7 @@ if(ENABLE_TESTING)
         tests/test_type_checker.cpp
         tests/test_codegen.cpp
         tests/test_optimizer.cpp
+        tests/test_macros.cpp
     )
     
     target_include_directories(tocin_tests PRIVATE
@@ -533,6 +534,7 @@ if(ENABLE_TESTING)
     add_test(NAME TypeCheckerTests COMMAND tocin_tests --filter=TypeChecker)
     add_test(NAME CodeGenTests COMMAND tocin_tests --filter=CodeGen)
     add_test(NAME OptimizerTests COMMAND tocin_tests --filter=Optimizer)
+    add_test(NAME MacroTests COMMAND tocin_tests --filter=Macro)
     
     message(STATUS "Testing enabled - use 'ctest' to run tests")
 endif()

@@ -1,0 +1,17 @@
+// Function-like macros, expanded at the token level before parsing.
+//   tocin examples/macros.to --run
+//
+// A `macro name(params) { body }` definition is invoked as `name!(args)`. Each
+// argument is substituted into the body and auto-parenthesized, and the whole
+// expansion is parenthesized too, so macros compose like expressions and
+// respect operator precedence. Macros may use other macros.
+
+macro square(x) { x * x }
+macro hypot2(a, b) { square!(a) + square!(b) }
+
+def main() {
+    println("square(5)      = {}", square!(5));        // 25
+    println("square(2 + 3)  = {}", square!(2 + 3));    // 25 (precedence safe)
+    println("hypot2(3, 4)   = {}", hypot2!(3, 4));     // 25 (nested macros)
+    return hypot2!(3, 4);
+}
