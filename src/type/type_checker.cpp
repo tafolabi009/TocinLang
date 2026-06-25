@@ -146,7 +146,10 @@ namespace type_checker
         }
         // If the return type is unannotated, default to UNKNOWN so callers stay
         // permissive until it is inferred; otherwise canonicalize the annotation.
-        ast::TypePtr ret = isUnannotatedReturn(fn->returnType)
+        // Generic functions also expose UNKNOWN: their declared return type may
+        // reference type parameters that are only resolved at instantiation, so
+        // callers must not adopt the raw type-parameter as a concrete type.
+        ast::TypePtr ret = (isUnannotatedReturn(fn->returnType) || fn->isGeneric())
                                ? makeBasic(ast::TypeKind::UNKNOWN)
                                : canonicalize(fn->returnType);
         return std::make_shared<ast::FunctionType>(fn->token, std::move(paramTypes), ret, fn->isAsync);
@@ -196,6 +199,27 @@ namespace type_checker
             expr->token,
             "array",
             std::vector<ast::TypePtr>{elementType});
+    }
+
+    void TypeChecker::visitIndexExpr(ast::IndexExpr *expr)
+    {
+        // Type-check the object and index expressions.
+        ast::TypePtr objType;
+        if (expr->object) { expr->object->accept(*this); objType = currentType_; }
+        if (expr->index) expr->index->accept(*this);
+
+        // If the object is a known array/list, the result is its element type;
+        // otherwise stay permissive (UNKNOWN) so codegen handles it.
+        if (auto generic = std::dynamic_pointer_cast<ast::GenericType>(objType))
+        {
+            if ((generic->name == "array" || generic->name == "list" || generic->name == "List") &&
+                !generic->typeArguments.empty())
+            {
+                currentType_ = generic->typeArguments[0];
+                return;
+            }
+        }
+        currentType_ = std::make_shared<ast::BasicType>(ast::TypeKind::UNKNOWN);
     }
 
     void TypeChecker::visitMoveExpr(void *expr)
@@ -797,12 +821,27 @@ namespace type_checker
         // New scope for parameters and body.
         pushScope();
 
+        // Inside a generic function, type parameters are abstract: bind any
+        // parameter typed by a type-parameter name to UNKNOWN so the body checks
+        // permissively (operations on T are validated at instantiation).
+        std::unordered_set<std::string> typeParamNames;
+        for (const auto &tp : stmt->typeParameters)
+            typeParamNames.insert(tp.getName());
+        auto resolveParamType = [&](const ast::TypePtr &t) -> ast::TypePtr {
+            if (t)
+            {
+                if (auto s = std::dynamic_pointer_cast<ast::SimpleType>(t))
+                    if (typeParamNames.count(s->toString()))
+                        return makeBasic(ast::TypeKind::UNKNOWN);
+                return canonicalize(t);
+            }
+            return makeBasic(ast::TypeKind::UNKNOWN);
+        };
+
         for (const auto &param : stmt->parameters)
         {
-            ast::TypePtr pType = param.type ? canonicalize(param.type)
-                                            : makeBasic(ast::TypeKind::UNKNOWN);
             if (environment_)
-                environment_->define(param.name, pType, false);
+                environment_->define(param.name, resolveParamType(param.type), false);
         }
 
         // Determine the declared return type (if any) and set up inference.
@@ -810,7 +849,8 @@ namespace type_checker
         currentReturnTypes_ = &returnTypes;
         inAsyncContext_ = stmt->isAsync;
 
-        const bool unannotated = isUnannotatedReturn(stmt->returnType);
+        // Generic functions return an abstract type parameter; check permissively.
+        const bool unannotated = isUnannotatedReturn(stmt->returnType) || stmt->isGeneric();
         if (!unannotated)
         {
             expectedReturnType_ = canonicalize(stmt->returnType);
