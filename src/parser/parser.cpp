@@ -108,15 +108,12 @@ namespace parser
         auto parameters = parseParameters();
         consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
         ast::TypePtr returnType = nullptr;
-        // Support both -> and : for return type annotation
+        // Support both -> and : for return type annotation. When neither is
+        // present, leave the return type unspecified (null) so it can be
+        // inferred from the function body during type checking / codegen.
         if (match(lexer::TokenType::ARROW) || match(lexer::TokenType::COLON))
         {
             returnType = parseType();
-        }
-        else
-        {
-            returnType = std::make_shared<ast::SimpleType>(
-                lexer::Token(lexer::TokenType::NIL, "None", "", 0, 0));
         }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before function body");
         auto body = blockStmt();
