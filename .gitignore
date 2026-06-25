@@ -414,3 +414,6 @@ Makefile
 /test_*.to
 /test_*.cpp
 !/tests/
+
+# Agent worktrees
+.claude/worktrees/
