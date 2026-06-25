@@ -20,11 +20,17 @@ clear what is implemented versus planned.
   annotated; a real type checker reports genuine type errors.
 - **Functions** — parameters, recursion, mutual recursion, and use-before-definition
   (declarations are order-independent via two-pass code generation).
-- **First-class functions** — functions are values: pass them as arguments
-  (`f: (int) -> int`), store them, return them, and call them indirectly; plus
-  non-capturing `lambda (x: int) -> int  x * 2`.
-- **Control flow** — `if / elif / else`, `while`, range-based `for i in a..b`, and
-  `match` / `case` / `default`.
+- **First-class functions & closures** — functions are values: pass them as
+  arguments (`f: (int) -> int`), store them, return them, and call them
+  indirectly; `lambda (x: int) -> int  x * 2` lambdas **capture enclosing
+  locals by value** and can be returned from a function (escaping closures with
+  independent state). Nested `def` helpers are also supported.
+- **Control flow** — `if / elif / else`, `while`, range-based `for i in a..b`,
+  `for v in arr`, `break` / `continue`, and `match` / `case` / `default`.
+- **Operators** — full arithmetic with automatic int→float promotion, compound
+  assignment (`+= -= *= /= %=`), bitwise & shifts (`& | ^ << >> ~`), logical
+  (`&&`/`and`, `||`/`or`, `!`), and string equality by value (`s == "x"`).
+  Integer literals support `0x`/`0o`/`0b` and `_` separators.
 - **Error handling** — `throw`, `try` / `catch (e)` / `finally`; exceptions unwind
   across function calls (setjmp/longjmp runtime) in both JIT and native builds.
 - **Null safety** — safe navigation `a?.b`, elvis/coalescing `a ?: b`, and
@@ -61,6 +67,18 @@ clear what is implemented versus planned.
 - **File I/O** — `readFile`, `writeFile`, `appendFile`, `readLine`.
 - **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
+
+## Documentation
+
+Four guides cover the language from first program to compiler internals. Every
+code snippet in them has been compiled and run against the in-tree compiler.
+
+| Guide | Audience | Contents |
+|---|---|---|
+| [docs/tutorial.md](docs/tutorial.md) | New users | A from-scratch, example-driven walkthrough — install, first program, then each feature with runnable code. Read this to **learn to write Tocin**. |
+| [docs/language-reference.md](docs/language-reference.md) | All users | The complete reference: grammar, types, operators & precedence, control flow, classes/traits/generics, error handling, concurrency, FFI, and the built-in function reference. |
+| [docs/stdlib-reference.md](docs/stdlib-reference.md) | All users | Every built-in and standard-library function with signatures, semantics, and examples — strings, collections, math, file I/O, and more. |
+| [docs/tocin-for-ai.md](docs/tocin-for-ai.md) | LLMs / tooling | A dense, precise spec of the *real* implemented language (verified feature set, ABI, codegen model, exact gotchas) so an AI can write correct Tocin on the first try. |
 
 ## Quick start
 
