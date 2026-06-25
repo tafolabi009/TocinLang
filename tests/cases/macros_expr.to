@@ -1,0 +1,9 @@
+// expect: 25
+// A function-like macro is expanded at the token level before parsing.
+// Arguments are auto-parenthesized, so precedence is preserved:
+// square!(2 + 3) -> ((2 + 3) * (2 + 3)) = 25, not 2 + 3*2 + 3.
+macro square(x) { x * x }
+
+def main() {
+    return square!(2 + 3);
+}

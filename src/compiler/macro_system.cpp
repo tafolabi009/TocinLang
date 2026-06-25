@@ -649,4 +649,230 @@ ast::StmtPtr profileMacro(const MacroContext& context, error::ErrorHandler& erro
 
 } // namespace builtin_macros
 
+// ---------------------------------------------------------------------------
+// Token-level macro expansion (runs between lexing and parsing).
+// ---------------------------------------------------------------------------
+namespace {
+
+struct TokenMacro {
+    std::vector<std::string> params;
+    std::vector<lexer::Token> body;
+    lexer::Token site; // for diagnostics
+};
+
+// Build a synthetic token that borrows position info from a nearby token.
+lexer::Token synth(lexer::TokenType type, const char *value, const lexer::Token &at) {
+    return lexer::Token(type, value, at.filename, at.line, at.column);
+}
+
+bool isOpenBracket(lexer::TokenType t) {
+    return t == lexer::TokenType::LEFT_PAREN ||
+           t == lexer::TokenType::LEFT_BRACKET ||
+           t == lexer::TokenType::LEFT_BRACE;
+}
+bool isCloseBracket(lexer::TokenType t) {
+    return t == lexer::TokenType::RIGHT_PAREN ||
+           t == lexer::TokenType::RIGHT_BRACKET ||
+           t == lexer::TokenType::RIGHT_BRACE;
+}
+
+} // namespace
+
+std::vector<lexer::Token> expandMacroTokens(const std::vector<lexer::Token> &input,
+                                            error::ErrorHandler &errorHandler) {
+    using lexer::Token;
+    using lexer::TokenType;
+
+    const size_t n = input.size();
+
+    // --- Pass 1: collect `macro name(params) { body }` definitions, removing
+    //     them from the token stream. ---
+    std::unordered_map<std::string, TokenMacro> macros;
+    std::vector<Token> stripped;
+    stripped.reserve(n);
+
+    size_t i = 0;
+    while (i < n) {
+        const Token &t = input[i];
+        const bool isDef = t.type == TokenType::IDENTIFIER && t.value == "macro" &&
+                           i + 2 < n &&
+                           input[i + 1].type == TokenType::IDENTIFIER &&
+                           input[i + 2].type == TokenType::LEFT_PAREN;
+        if (!isDef) {
+            stripped.push_back(t);
+            ++i;
+            continue;
+        }
+
+        TokenMacro m;
+        m.site = t;
+        const std::string name = input[i + 1].value;
+        size_t j = i + 3; // first token after '('
+
+        // Parameter list: comma-separated identifiers up to ')'.
+        bool paramsOk = true;
+        while (j < n && input[j].type != TokenType::RIGHT_PAREN) {
+            if (input[j].type == TokenType::IDENTIFIER) {
+                m.params.push_back(input[j].value);
+            } else if (input[j].type != TokenType::COMMA) {
+                errorHandler.reportError(error::ErrorCode::S006_INVALID_FUNCTION_DECLARATION,
+                                         "Invalid parameter in macro '" + name + "'",
+                                         input[j], error::ErrorSeverity::FATAL);
+                paramsOk = false;
+                break;
+            }
+            ++j;
+        }
+        if (!paramsOk) break;
+        if (j >= n) {
+            errorHandler.reportError(error::ErrorCode::S006_INVALID_FUNCTION_DECLARATION,
+                                     "Unterminated parameter list in macro '" + name + "'",
+                                     t, error::ErrorSeverity::FATAL);
+            break;
+        }
+        ++j; // skip ')'
+        if (j >= n || input[j].type != TokenType::LEFT_BRACE) {
+            errorHandler.reportError(error::ErrorCode::S006_INVALID_FUNCTION_DECLARATION,
+                                     "Expected '{' to open body of macro '" + name + "'",
+                                     t, error::ErrorSeverity::FATAL);
+            break;
+        }
+        ++j; // skip '{'
+
+        // Body: tokens up to the matching '}'.
+        int depth = 1;
+        bool bodyOk = false;
+        while (j < n) {
+            if (input[j].type == TokenType::LEFT_BRACE) {
+                ++depth;
+            } else if (input[j].type == TokenType::RIGHT_BRACE) {
+                --depth;
+                if (depth == 0) { bodyOk = true; break; }
+            }
+            m.body.push_back(input[j]);
+            ++j;
+        }
+        if (!bodyOk) {
+            errorHandler.reportError(error::ErrorCode::S006_INVALID_FUNCTION_DECLARATION,
+                                     "Unterminated body in macro '" + name + "'",
+                                     t, error::ErrorSeverity::FATAL);
+            break;
+        }
+        ++j; // skip closing '}'
+
+        macros[name] = std::move(m);
+        i = j;
+    }
+
+    if (errorHandler.hasFatalErrors())
+        return input;
+    if (macros.empty())
+        return input; // fast path: nothing to expand
+
+    // --- Pass 2: replace `name!(args)` invocations with substituted bodies,
+    //     iterating to a fixed point so macros can invoke other macros. ---
+    const int kMaxRounds = 128;
+    std::vector<Token> cur = std::move(stripped);
+    for (int round = 0; round < kMaxRounds; ++round) {
+        std::vector<Token> next;
+        next.reserve(cur.size());
+        bool expandedAny = false;
+
+        size_t k = 0;
+        const size_t cn = cur.size();
+        while (k < cn) {
+            const bool isCall = cur[k].type == TokenType::IDENTIFIER &&
+                                macros.count(cur[k].value) && k + 2 < cn &&
+                                cur[k + 1].type == TokenType::BANG &&
+                                cur[k + 2].type == TokenType::LEFT_PAREN;
+            if (!isCall) {
+                next.push_back(cur[k]);
+                ++k;
+                continue;
+            }
+
+            const Token callTok = cur[k];
+            const TokenMacro &def = macros[callTok.value];
+
+            // Split arguments on top-level commas until the matching ')'.
+            std::vector<std::vector<Token>> args;
+            std::vector<Token> arg;
+            int depth = 1;
+            size_t a = k + 3;
+            bool closed = false;
+            for (; a < cn; ++a) {
+                const TokenType tt = cur[a].type;
+                if (tt == TokenType::LEFT_PAREN || tt == TokenType::LEFT_BRACKET ||
+                    tt == TokenType::LEFT_BRACE) {
+                    ++depth;
+                } else if (tt == TokenType::RIGHT_PAREN || tt == TokenType::RIGHT_BRACKET ||
+                           tt == TokenType::RIGHT_BRACE) {
+                    --depth;
+                    if (depth == 0) {
+                        if (!arg.empty() || !args.empty())
+                            args.push_back(arg);
+                        closed = true;
+                        ++a;
+                        break;
+                    }
+                } else if (tt == TokenType::COMMA && depth == 1) {
+                    args.push_back(arg);
+                    arg.clear();
+                    continue;
+                }
+                arg.push_back(cur[a]);
+            }
+
+            if (!closed) {
+                errorHandler.reportError(error::ErrorCode::S001_UNEXPECTED_TOKEN,
+                                         "Unterminated invocation of macro '" + callTok.value + "'",
+                                         callTok, error::ErrorSeverity::FATAL);
+                return input;
+            }
+            if (args.size() != def.params.size()) {
+                errorHandler.reportError(error::ErrorCode::S001_UNEXPECTED_TOKEN,
+                                         "Macro '" + callTok.value + "' expects " +
+                                             std::to_string(def.params.size()) + " argument(s), got " +
+                                             std::to_string(args.size()),
+                                         callTok, error::ErrorSeverity::FATAL);
+                return input;
+            }
+
+            std::unordered_map<std::string, const std::vector<Token> *> argOf;
+            for (size_t p = 0; p < def.params.size(); ++p)
+                argOf[def.params[p]] = &args[p];
+
+            // Emit `( body-with-substitutions )`.
+            next.push_back(synth(TokenType::LEFT_PAREN, "(", callTok));
+            for (const Token &bt : def.body) {
+                auto it = bt.type == TokenType::IDENTIFIER ? argOf.find(bt.value) : argOf.end();
+                if (it != argOf.end()) {
+                    next.push_back(synth(TokenType::LEFT_PAREN, "(", bt));
+                    for (const Token &at : *it->second)
+                        next.push_back(at);
+                    next.push_back(synth(TokenType::RIGHT_PAREN, ")", bt));
+                } else {
+                    next.push_back(bt);
+                }
+            }
+            next.push_back(synth(TokenType::RIGHT_PAREN, ")", callTok));
+
+            expandedAny = true;
+            k = a; // resume after the invocation
+        }
+
+        cur = std::move(next);
+        if (!expandedAny)
+            break;
+        if (round == kMaxRounds - 1) {
+            errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                                     "Macro expansion did not terminate (recursive macro?)",
+                                     error::ErrorSeverity::FATAL);
+            return input;
+        }
+    }
+
+    return cur;
+}
+
 } // namespace compiler 
