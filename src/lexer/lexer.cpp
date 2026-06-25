@@ -648,10 +648,11 @@ namespace lexer
 
         // For all other tokens, advance and process
         advance();  // Now advance for non-identifier tokens
-        
-        // After advancing, check again if we're at EOF
-        // This handles the case where the last character was consumed
-        if (c == '\0' || isAtEnd())
+
+        // `c` was already validated (we peeked a real character above), so it
+        // must still be tokenized even when it was the final character of the
+        // source. Only bail on a genuine null.
+        if (c == '\0')
             return;
 
         switch (c)

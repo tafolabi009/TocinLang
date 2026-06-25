@@ -1,0 +1,2 @@
+// expect: 14
+def main() { return 2 + 3 * 4; }

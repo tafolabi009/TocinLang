@@ -1,0 +1,3 @@
+// expect: 42
+class Box { v: int; def get(self) -> int { return self.v; } }
+def main() { let b = Box(0); b.v = 41; b.v = b.v + 1; return b.get(); }
