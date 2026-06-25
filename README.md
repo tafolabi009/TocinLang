@@ -37,6 +37,9 @@ clear what is implemented versus planned.
   send/receive, in both JIT and native builds.
 - **Modules** — `import a.b.c` / `import "path"` resolves and merges other `.to`
   files; a small standard library ships in `stdlib/std/` (math, list).
+- **Macros** — function-like `macro name(params) { body }` expanded at the token
+  level before parsing; invoked as `name!(args)` with precedence-safe, composable
+  expansion.
 - **C FFI** — call C library functions via `extern def name(...) -> T;`.
 - **Strings** — string literals and concatenation with `+`.
 - **Math builtins** — `sqrt`, `pow`, `abs`, `min`, `max`, `floor`, trig, and more.
@@ -175,6 +178,18 @@ def main() {
 }
 ```
 
+Function-like macros (`name!(args)`), expanded before parsing:
+
+```tocin
+macro square(x) { x * x }
+macro hypot2(a, b) { square!(a) + square!(b) }   // macros can use macros
+
+def main() {
+    println("{}", square!(2 + 3));   // 25 — arguments are auto-parenthesized
+    return hypot2!(3, 4);            // 25
+}
+```
+
 Error handling with `throw` / `try` / `catch` / `finally`:
 
 ```tocin
@@ -261,7 +276,9 @@ end-to-end**. They are listed honestly so expectations match reality:
 - **Python / JavaScript FFI** — C FFI works via `extern`; deep CPython and V8
   integration is gated behind build flags (V8 is not bundled — it is not
   installable from standard package managers, so CI builds with `-DWITH_V8=OFF`).
-- **Macros** — a macro engine exists but is not yet invoked by the pipeline.
+- **Hygienic / AST macros** — function-like token macros work today (`name!(...)`);
+  hygiene (auto-renaming macro-introduced bindings) and statement/item macros that
+  expand to multiple declarations are future work.
 - **WebAssembly target**, **package manager**, and an **interactive debugger**
   (behind their respective CMake flags).
 - **Advanced optimization** — the standard LLVM `-O0..-O3` pipelines are wired and

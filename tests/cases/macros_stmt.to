@@ -1,0 +1,8 @@
+// expect-output: hi Tocin
+// A macro can wrap a call so it reads as a statement at the use site.
+macro greet(name) { println("hi {}", name) }
+
+def main() {
+    greet!("Tocin");
+    return 0;
+}
