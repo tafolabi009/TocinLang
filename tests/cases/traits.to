@@ -1,0 +1,11 @@
+// expect: 37
+trait Shape { def area(self) -> int; }
+struct Square { side: int; }
+impl Shape for Square { def area(self) -> int { return self.side * self.side; } }
+struct Rect { w: int; h: int; }
+impl Shape for Rect { def area(self) -> int { return self.w * self.h; } }
+def main() {
+    let s = Square(5);
+    let r = Rect(3, 4);
+    return s.area() + r.area();
+}
