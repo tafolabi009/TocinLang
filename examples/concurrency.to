@@ -1,0 +1,21 @@
+// Goroutines and channels. Run with:
+//   tocin examples/concurrency.to --run
+//   tocin examples/concurrency.to -o conc && ./conc
+def worker(ch: channel<int>, n: int) {
+    ch <- n * n;          // send this worker's result
+}
+
+def main() {
+    let ch = channel<int>();
+    // Spawn goroutines that each compute a square concurrently.
+    for i in 1..6 {
+        go worker(ch, i);
+    }
+    // Collect the 5 results from the channel.
+    let total = 0;
+    for i in 0..5 {
+        total = total + <-ch;
+    }
+    println("sum of squares 1..5 = {}", total);   // 1+4+9+16+25 = 55
+    return total;
+}
