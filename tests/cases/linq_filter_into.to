@@ -1,0 +1,10 @@
+// expect: 22
+import std.linq;
+def main() -> int {
+    let src = [5, 1, 8, 2, 9];
+    let dst = [0, 0, 0, 0, 0];
+    let n = filterGreaterInto(dst, src, 3);   // [5,8,9], n=3
+    let acc = 0;
+    for i in 0..n { acc = acc + dst[i]; }
+    return acc;                  // 22
+}

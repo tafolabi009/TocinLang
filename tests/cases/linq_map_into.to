@@ -1,0 +1,8 @@
+// expect: 20
+import std.linq;
+def main() -> int {
+    let src = [1, 2, 3, 4];
+    let dst = [0, 0, 0, 0];
+    mapScaleInto(dst, src, 2);   // [2,4,6,8]
+    return reduceSum(dst);       // 20
+}

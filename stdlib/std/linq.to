@@ -1,0 +1,85 @@
+// Tocin standard library: LINQ-style collection operations over int lists.
+//
+// Tocin does not yet have first-class lambdas, so transforms come in two forms:
+//   * reductions/aggregations that return a scalar, and
+//   * `*Into` transforms that write into a caller-allocated destination list.
+// Booleans are represented as int (0/1), matching std.list / std.math.
+
+// ---- Reductions / aggregations ----
+
+def reduceSum(xs: list<int>) -> int {
+    let acc = 0;
+    for i in 0..len(xs) { acc = acc + xs[i]; }
+    return acc;
+}
+
+def reduceProduct(xs: list<int>) -> int {
+    let acc = 1;
+    for i in 0..len(xs) { acc = acc * xs[i]; }
+    return acc;
+}
+
+// Fold with an explicit seed and an operation code:
+//   op 0 = add, 1 = multiply, 2 = max, 3 = min.
+def aggregate(xs: list<int>, seed: int, op: int) -> int {
+    let acc = seed;
+    for i in 0..len(xs) {
+        let v = xs[i];
+        if op == 0 { acc = acc + v; }
+        if op == 1 { acc = acc * v; }
+        if op == 2 { if v > acc { acc = v; } }
+        if op == 3 { if v < acc { acc = v; } }
+    }
+    return acc;
+}
+
+def count(xs: list<int>) -> int { return len(xs); }
+
+// where(x > threshold).count()
+def countGreater(xs: list<int>, threshold: int) -> int {
+    let c = 0;
+    for i in 0..len(xs) { if xs[i] > threshold { c = c + 1; } }
+    return c;
+}
+
+def indexOf(xs: list<int>, target: int) -> int {
+    for i in 0..len(xs) { if xs[i] == target { return i; } }
+    return -1;
+}
+
+// all(x > threshold)
+def allGreater(xs: list<int>, threshold: int) -> int {
+    for i in 0..len(xs) { if xs[i] <= threshold { return 0; } }
+    return 1;
+}
+
+// any(x > threshold)
+def anyGreater(xs: list<int>, threshold: int) -> int {
+    for i in 0..len(xs) { if xs[i] > threshold { return 1; } }
+    return 0;
+}
+
+// ---- select / map into a caller-allocated destination (dst length >= src) ----
+
+def mapScaleInto(dst: list<int>, src: list<int>, k: int) -> int {
+    for i in 0..len(src) { dst[i] = src[i] * k; }
+    return len(src);
+}
+
+def mapAddInto(dst: list<int>, src: list<int>, k: int) -> int {
+    for i in 0..len(src) { dst[i] = src[i] + k; }
+    return len(src);
+}
+
+// ---- where / filter into a destination; returns the number written ----
+
+def filterGreaterInto(dst: list<int>, src: list<int>, threshold: int) -> int {
+    let n = 0;
+    for i in 0..len(src) {
+        if src[i] > threshold {
+            dst[n] = src[i];
+            n = n + 1;
+        }
+    }
+    return n;
+}
