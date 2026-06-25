@@ -1,0 +1,6 @@
+// expect: 42
+def main() {
+    def dbl(x: int) -> int { return x * 2; }
+    def inc(x: int) -> int { return x + 1; }
+    return dbl(20) + inc(1);  // 40 + 2 = 42
+}

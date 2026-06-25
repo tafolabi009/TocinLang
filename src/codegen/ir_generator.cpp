@@ -838,6 +838,17 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         idx++;
     }
 
+    // Save the enclosing codegen scope so a nested `def` inside another
+    // function body does not clobber the outer function's insert point or
+    // local symbol tables. (For top-level functions these are empty / a
+    // terminated block, so the save/restore is a harmless no-op.)
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    auto savedNamedValues = namedValues;
+    auto savedVarClasses = varClasses;
+    auto savedVarArrayElem = varArrayElem;
+    auto savedVarFuncSig = varFuncSig;
+    auto savedVarIsString = varIsString;
+
     // Create entry basic block
     llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
     builder.SetInsertPoint(entryBlock);
@@ -845,6 +856,13 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     // Save the current function context
     llvm::Function *previousFunction = currentFunction;
     currentFunction = function;
+
+    // Fresh symbol tables for this function body.
+    namedValues.clear();
+    varClasses.clear();
+    varArrayElem.clear();
+    varFuncSig.clear();
+    varIsString.clear();
 
     // Create allocas for parameters and store values
     idx = 0;
@@ -904,13 +922,15 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
                                  "", 0, 0, error::ErrorSeverity::ERROR);
     }
 
-    // Restore previous function context
+    // Restore the enclosing function/codegen scope.
     currentFunction = previousFunction;
-    
-    // Clear named values for next function
-    namedValues.clear();
-    varFuncSig.clear();
-    varIsString.clear();
+    namedValues = savedNamedValues;
+    varClasses = savedVarClasses;
+    varArrayElem = savedVarArrayElem;
+    varFuncSig = savedVarFuncSig;
+    varIsString = savedVarIsString;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
 }
 
 void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
