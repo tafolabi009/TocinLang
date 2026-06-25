@@ -80,6 +80,13 @@ extern "C" {
     int64_t __tocin_str_to_int(const char *);
     char *__tocin_char_to_str(int64_t);
     char *__tocin_str_concat(const char *, const char *);
+    char *__tocin_str_to_upper(const char *);
+    char *__tocin_str_to_lower(const char *);
+    int64_t __tocin_str_index_of(const char *, const char *);
+    int64_t __tocin_str_contains(const char *, const char *);
+    int64_t __tocin_str_starts_with(const char *, const char *);
+    int64_t __tocin_str_ends_with(const char *, const char *);
+    void __tocin_free(void *);
     // File I/O
     char *__tocin_read_file(const char *);
     int64_t __tocin_write_file(const char *, const char *);
@@ -496,6 +503,13 @@ public:
             def("__tocin_str_to_int", reinterpret_cast<void *>(&__tocin_str_to_int));
             def("__tocin_char_to_str", reinterpret_cast<void *>(&__tocin_char_to_str));
             def("__tocin_str_concat", reinterpret_cast<void *>(&__tocin_str_concat));
+            def("__tocin_str_to_upper", reinterpret_cast<void *>(&__tocin_str_to_upper));
+            def("__tocin_str_to_lower", reinterpret_cast<void *>(&__tocin_str_to_lower));
+            def("__tocin_str_index_of", reinterpret_cast<void *>(&__tocin_str_index_of));
+            def("__tocin_str_contains", reinterpret_cast<void *>(&__tocin_str_contains));
+            def("__tocin_str_starts_with", reinterpret_cast<void *>(&__tocin_str_starts_with));
+            def("__tocin_str_ends_with", reinterpret_cast<void *>(&__tocin_str_ends_with));
+            def("__tocin_free", reinterpret_cast<void *>(&__tocin_free));
             def("__tocin_read_file", reinterpret_cast<void *>(&__tocin_read_file));
             def("__tocin_write_file", reinterpret_cast<void *>(&__tocin_write_file));
             def("__tocin_append_file", reinterpret_cast<void *>(&__tocin_append_file));

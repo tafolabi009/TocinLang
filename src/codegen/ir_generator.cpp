@@ -1326,6 +1326,28 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             if (funcName == "charToStr" && na == 1) {
                 auto c = slot(0); if (!c) return;
                 lastValue = builder.CreateCall(rt("__tocin_char_to_str", ptrb, {i64b}), {c}, "ctos"); return; }
+            if (funcName == "toUpper" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_to_upper", ptrb, {ptrb}), {s}, "upper"); return; }
+            if (funcName == "toLower" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_to_lower", ptrb, {ptrb}), {s}, "lower"); return; }
+            if (funcName == "strIndexOf" && na == 2) {
+                auto s = pptr(0); auto sub = pptr(1); if (!s || !sub) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_index_of", i64b, {ptrb, ptrb}), {s, sub}, "idxof2"); return; }
+            if (funcName == "strContains" && na == 2) {
+                auto s = pptr(0); auto sub = pptr(1); if (!s || !sub) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_contains", i64b, {ptrb, ptrb}), {s, sub}, "contains"); return; }
+            if (funcName == "startsWith" && na == 2) {
+                auto s = pptr(0); auto pre = pptr(1); if (!s || !pre) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_starts_with", i64b, {ptrb, ptrb}), {s, pre}, "startsw"); return; }
+            if (funcName == "endsWith" && na == 2) {
+                auto s = pptr(0); auto suf = pptr(1); if (!s || !suf) return;
+                lastValue = builder.CreateCall(rt("__tocin_str_ends_with", i64b, {ptrb, ptrb}), {s, suf}, "endsw"); return; }
+            if (funcName == "free" && na == 1) {
+                auto p = pptr(0); if (!p) return;
+                builder.CreateCall(rt("__tocin_free", voidb, {ptrb}), {p});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
 
             // ---- file I/O ----
             if (funcName == "readFile" && na == 1) {
@@ -2960,7 +2982,8 @@ bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
         {
             // Builtins whose return value is a freshly-allocated string.
             static const std::set<std::string> strFns = {
-                "substring", "intToStr", "charToStr", "readFile", "readLine"};
+                "substring", "intToStr", "charToStr", "readFile", "readLine",
+                "toUpper", "toLower"};
             return strFns.count(callee->name) > 0;
         }
     }
