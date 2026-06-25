@@ -1,0 +1,15 @@
+// expect: 99
+// An inner try with only a finally re-throws to the outer handler after the
+// finally block runs.
+def main() {
+    try {
+        try {
+            throw 99;
+        } finally {
+            print("");
+        }
+    } catch (e) {
+        return e;
+    }
+    return 0;
+}

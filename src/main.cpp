@@ -46,6 +46,10 @@ extern "C" {
     int64_t __tocin_chan_recv(void *);
     void __tocin_go(void (*)(void *), void *);
     void __tocin_join_all();
+    void __tocin_try_register(void *);
+    void __tocin_try_pop();
+    int64_t __tocin_exc_value();
+    void __tocin_throw(int64_t);
 }
 
 // Conditionally include Python
@@ -422,6 +426,10 @@ public:
             def("__tocin_chan_recv", reinterpret_cast<void *>(&__tocin_chan_recv));
             def("__tocin_go", reinterpret_cast<void *>(&__tocin_go));
             def("__tocin_join_all", reinterpret_cast<void *>(&__tocin_join_all));
+            def("__tocin_try_register", reinterpret_cast<void *>(&__tocin_try_register));
+            def("__tocin_try_pop", reinterpret_cast<void *>(&__tocin_try_pop));
+            def("__tocin_exc_value", reinterpret_cast<void *>(&__tocin_exc_value));
+            def("__tocin_throw", reinterpret_cast<void *>(&__tocin_throw));
             llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
         }
 

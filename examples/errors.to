@@ -1,0 +1,32 @@
+// Error handling: throw, try / catch, and finally.
+//   tocin examples/errors.to --run
+//
+// `throw` unwinds to the nearest enclosing `catch`, carrying an integer code.
+// `finally` always runs on the normal and caught paths. A `try` with only a
+// `finally` re-throws to the next handler after the finally block runs.
+
+def divide(a: int, b: int) -> int {
+    if b == 0 {
+        throw 1;            // error code: division by zero
+    }
+    return a / b;
+}
+
+def main() {
+    // Caught error from a called function.
+    try {
+        let r = divide(10, 0);
+        println("10 / 0 = {}", r);          // not reached
+    } catch (e) {
+        println("error code {}", e);        // error code 1
+    }
+
+    // Success path still runs finally.
+    try {
+        println("10 / 2 = {}", divide(10, 2));   // 10 / 2 = 5
+    } finally {
+        println("done");                          // done
+    }
+
+    return 0;
+}

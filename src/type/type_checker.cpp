@@ -234,6 +234,42 @@ namespace type_checker
         currentType_ = nullptr;
     }
 
+    void TypeChecker::visitTryStmt(ast::TryStmt *stmt)
+    {
+        // try block in its own scope.
+        if (stmt->tryBlock)
+        {
+            pushScope();
+            stmt->tryBlock->accept(*this);
+            popScope();
+        }
+        // catch block: the caught value is bound as an int (exceptions carry a
+        // 64-bit value).
+        if (stmt->catchBlock)
+        {
+            pushScope();
+            if (environment_ && !stmt->catchVar.empty())
+                environment_->define(stmt->catchVar, makeBasic(ast::TypeKind::INT), true);
+            stmt->catchBlock->accept(*this);
+            popScope();
+        }
+        // finally block.
+        if (stmt->finallyBlock)
+        {
+            pushScope();
+            stmt->finallyBlock->accept(*this);
+            popScope();
+        }
+        currentType_ = nullptr;
+    }
+
+    void TypeChecker::visitThrowStmt(ast::ThrowStmt *stmt)
+    {
+        if (stmt->value)
+            stmt->value->accept(*this);
+        currentType_ = nullptr;
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op
