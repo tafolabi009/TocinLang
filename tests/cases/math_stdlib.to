@@ -1,0 +1,8 @@
+// expect: 30
+def main() {
+    let a = sqrt(16);          // 4.0
+    let b = pow(3, 2);         // 9.0
+    let c = abs(-7);           // 7
+    let d = max(5, 10);        // 10
+    return c + d + 13;         // 7 + 10 + 13 = 30
+}
