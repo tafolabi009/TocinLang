@@ -1,0 +1,6 @@
+// expect-output: Hello, World!
+def main() {
+    let g = "Hello, " + "World" + "!";  // folded to one compile-time constant
+    println("{}", g);
+    return 0;
+}
