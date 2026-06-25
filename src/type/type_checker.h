@@ -132,6 +132,44 @@ namespace type_checker
         ast::TypePtr resolveType(ast::TypePtr type);
         void registerBuiltins();
 
+        // --- Real type-checker helpers (added) ---
+        // Entry point that performs two-pass checking over the program root.
+        void checkProgram(ast::Statement *root);
+        // Pass 1: hoist a top-level declaration (function/class) into globalEnv_.
+        void hoistDeclaration(ast::Statement *stmt);
+        // Convenience: build a BasicType shared_ptr.
+        ast::TypePtr makeBasic(ast::TypeKind kind) const;
+        // Map a declared/annotated type to its canonical BasicType when it names a
+        // primitive (int/float/bool/string/void); otherwise returns the input.
+        ast::TypePtr canonicalize(ast::TypePtr type) const;
+        // Is this type a numeric (int or float) primitive?
+        bool isNumeric(ast::TypePtr type) const;
+        // Structural type equality that is correct for BasicType (whose built-in
+        // equals() is pointer-identity only). Canonicalizes named primitives.
+        bool sameType(ast::TypePtr a, ast::TypePtr b) const;
+        // Convenience: the BasicType kind of a (canonicalized) type, or UNKNOWN.
+        ast::TypeKind kindOf(ast::TypePtr type) const;
+        // Treat null/UNKNOWN as "don't know" so we stay permissive.
+        bool isUnknown(ast::TypePtr type) const;
+        // Build a FunctionType from a FunctionStmt's signature (for hoisting/lookup).
+        ast::TypePtr functionTypeOf(ast::FunctionStmt *fn) const;
+        // The parser stores an *unannotated* return type as SimpleType("None")
+        // (not null). Recognize "no explicit annotation" so we can infer instead
+        // of treating it as an explicit void.
+        bool isUnannotatedReturn(ast::TypePtr returnType) const;
+
+        // During body checking, returns encountered inside the current function are
+        // recorded here so an unannotated function can infer its return type.
+        std::vector<ast::TypePtr> *currentReturnTypes_ = nullptr;
+        // True while checking inside a function whose return type was explicitly
+        // annotated (so we can flag clear mismatches).
+        bool returnTypeIsExplicit_ = false;
+        // Depth guard so we only treat the outermost statement as the program root.
+        int checkDepth_ = 0;
+        // True only while visiting the program-root block/module so its direct
+        // children share the global environment (top-level scope).
+        bool atProgramRoot_ = false;
+
         // Module related methods
         bool loadModule(const std::string &moduleName);
         bool importSymbol(const std::string &moduleName, const std::string &symbolName,
