@@ -528,9 +528,23 @@ namespace parser
         return assignment();
     }
 
+    ast::ExprPtr Parser::elvis()
+    {
+        // a ?: b / a ?? b : yield a when non-null, else b. Binds looser than
+        // logical-or and tighter than assignment.
+        auto expr = orExpr();
+        while (match(lexer::TokenType::ELVIS) || match(lexer::TokenType::NULL_COALESCE))
+        {
+            auto op = previous();
+            auto right = orExpr();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
     ast::ExprPtr Parser::assignment()
     {
-        ast::ExprPtr expr = orExpr();
+        ast::ExprPtr expr = elvis();
 
         if (match(lexer::TokenType::EQUAL))
         {
@@ -687,6 +701,18 @@ namespace parser
             {
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
                 expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+            }
+            else if (match(lexer::TokenType::SAFE_ACCESS))
+            {
+                // a?.b : safe navigation (null base yields null).
+                auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '?.'");
+                expr = std::make_shared<ast::GetExpr>(name, expr, name.value, /*isSafe=*/true);
+            }
+            else if (match(lexer::TokenType::BANG_BANG))
+            {
+                // a!! : force-unwrap (trap if null).
+                lexer::Token op = previous();
+                expr = std::make_shared<ast::UnaryExpr>(op, op, expr);
             }
             else if (match(lexer::TokenType::LEFT_BRACKET))
             {

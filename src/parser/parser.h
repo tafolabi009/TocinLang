@@ -80,6 +80,7 @@ namespace parser
         ast::StmtPtr throwStmt();
         ast::ExprPtr expression();
         ast::ExprPtr assignment();
+        ast::ExprPtr elvis();
         ast::ExprPtr orExpr();
         ast::ExprPtr andExpr();
         ast::ExprPtr equality();

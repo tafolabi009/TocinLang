@@ -1749,6 +1749,35 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         }
         break;
 
+    case lexer::TokenType::BANG_BANG:
+    {
+        // Force-unwrap: abort if the operand is null, otherwise yield it.
+        if (!operand->getType()->isPointerTy()) {
+            // Non-pointer values can never be null; identity.
+            lastValue = operand;
+            break;
+        }
+        llvm::Function *fn = builder.GetInsertBlock()->getParent();
+        llvm::Value *isNull = builder.CreateICmpEQ(
+            operand,
+            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(operand->getType())),
+            "uw.isnull");
+        llvm::BasicBlock *nullBB = llvm::BasicBlock::Create(context, "unwrap.null", fn);
+        llvm::BasicBlock *okBB = llvm::BasicBlock::Create(context, "unwrap.ok", fn);
+        builder.CreateCondBr(isNull, nullBB, okBB);
+        builder.SetInsertPoint(nullBB);
+        llvm::Function *abortFn = module->getFunction("abort");
+        if (!abortFn)
+            abortFn = llvm::Function::Create(
+                llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+                llvm::Function::ExternalLinkage, "abort", *module);
+        builder.CreateCall(abortFn, {});
+        builder.CreateUnreachable();
+        builder.SetInsertPoint(okBB);
+        lastValue = operand;
+        break;
+    }
+
     case lexer::TokenType::BITWISE_NOT:
         if (operand->getType()->isIntegerTy()) {
             lastValue = builder.CreateNot(operand, "bitnot");
@@ -2304,6 +2333,21 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
             (void)cit;
         }
     }
+    // Null-safety operators preserve the operand's class: `a ?: b` and `a!!`.
+    if (auto bin = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+    {
+        if (bin->op.type == lexer::TokenType::ELVIS ||
+            bin->op.type == lexer::TokenType::NULL_COALESCE)
+        {
+            std::string c = getExprClassName(bin->left);
+            return !c.empty() ? c : getExprClassName(bin->right);
+        }
+    }
+    if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+    {
+        if (un->op.type == lexer::TokenType::BANG_BANG)
+            return getExprClassName(un->right);
+    }
     return "";
 }
 
@@ -2840,17 +2884,42 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 
         if (fieldIndex != -1)
         {
-            // Create a GEP instruction to access the field
             std::vector<llvm::Value *> indices = {
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), fieldIndex)};
+            llvm::Type *fieldType = structType->getStructElementType(fieldIndex);
+
+            // Safe navigation `a?.b`: when the base is null, yield a null/zero
+            // value of the field type instead of dereferencing.
+            if (expr->isSafe && object->getType()->isPointerTy())
+            {
+                llvm::Function *fn = builder.GetInsertBlock()->getParent();
+                llvm::Value *isNull = builder.CreateICmpEQ(
+                    object,
+                    llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(object->getType())),
+                    "safe.isnull");
+                llvm::BasicBlock *nullBB = builder.GetInsertBlock();
+                llvm::BasicBlock *loadBB = llvm::BasicBlock::Create(context, "safe.load", fn);
+                llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "safe.merge", fn);
+                builder.CreateCondBr(isNull, mergeBB, loadBB);
+
+                builder.SetInsertPoint(loadBB);
+                llvm::Value *fieldPtr = builder.CreateGEP(structType, object, indices, "field." + expr->name);
+                llvm::Value *loaded = builder.CreateLoad(fieldType, fieldPtr);
+                llvm::BasicBlock *loadEnd = builder.GetInsertBlock();
+                builder.CreateBr(mergeBB);
+
+                builder.SetInsertPoint(mergeBB);
+                llvm::PHINode *phi = builder.CreatePHI(fieldType, 2, "safe");
+                phi->addIncoming(llvm::Constant::getNullValue(fieldType), nullBB);
+                phi->addIncoming(loaded, loadEnd);
+                lastValue = phi;
+                return;
+            }
 
             // Get a pointer to the field (using the known struct type)
             llvm::Value *fieldPtr = builder.CreateGEP(
                 structType, object, indices, "field." + expr->name);
-
-            // Load the field value (use the field type from class info)
-            llvm::Type *fieldType = structType->getStructElementType(fieldIndex);
             lastValue = builder.CreateLoad(fieldType, fieldPtr);
             return;
         }
@@ -3860,6 +3929,48 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
                                  "Binary expression missing operands",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
+        return;
+    }
+
+    // Elvis / null-coalescing: `a ?: b` / `a ?? b`. Short-circuit — only
+    // evaluate `b` when `a` is null. Handled before the eager both-operands
+    // evaluation below.
+    if (expr->op.type == lexer::TokenType::ELVIS ||
+        expr->op.type == lexer::TokenType::NULL_COALESCE)
+    {
+        expr->left->accept(*this);
+        llvm::Value *lhs = lastValue;
+        if (!lhs) { lastValue = nullptr; return; }
+
+        if (!lhs->getType()->isPointerTy()) {
+            // A non-pointer left operand is never null; result is the left.
+            lastValue = lhs;
+            return;
+        }
+
+        llvm::Function *fn = builder.GetInsertBlock()->getParent();
+        llvm::Value *isNull = builder.CreateICmpEQ(
+            lhs, llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(lhs->getType())),
+            "elvis.isnull");
+        llvm::BasicBlock *lhsBB = builder.GetInsertBlock();
+        llvm::BasicBlock *rhsBB = llvm::BasicBlock::Create(context, "elvis.rhs", fn);
+        llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "elvis.merge", fn);
+        builder.CreateCondBr(isNull, rhsBB, mergeBB);
+
+        builder.SetInsertPoint(rhsBB);
+        expr->right->accept(*this);
+        llvm::Value *rhs = lastValue;
+        if (!rhs) { lastValue = nullptr; return; }
+        if (rhs->getType() != lhs->getType() && rhs->getType()->isPointerTy())
+            rhs = builder.CreateBitCast(rhs, lhs->getType(), "elvis.cast");
+        llvm::BasicBlock *rhsEnd = builder.GetInsertBlock();
+        builder.CreateBr(mergeBB);
+
+        builder.SetInsertPoint(mergeBB);
+        llvm::PHINode *phi = builder.CreatePHI(lhs->getType(), 2, "elvis");
+        phi->addIncoming(lhs, lhsBB);
+        phi->addIncoming(rhs, rhsEnd);
+        lastValue = phi;
         return;
     }
 
