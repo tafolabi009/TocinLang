@@ -4819,6 +4819,20 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
             lastValue = builder.CreateFAdd(left, right, "fadd");
         } else if (left->getType()->isPointerTy() && right->getType()->isPointerTy()) {
+            // Front-end optimization: fold concatenation of two string literals
+            // into a single constant at compile time (no runtime malloc/strcpy).
+            auto strLit = [](const ast::ExprPtr &e) -> const ast::LiteralExpr * {
+                ast::ExprPtr cur = e;
+                while (auto g = std::dynamic_pointer_cast<ast::GroupingExpr>(cur)) cur = g->expression;
+                auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(cur);
+                return (lit && lit->literalType == ast::LiteralExpr::LiteralType::STRING)
+                           ? lit.get() : nullptr;
+            };
+            if (const ast::LiteralExpr *ls = strLit(expr->left))
+                if (const ast::LiteralExpr *rs = strLit(expr->right)) {
+                    lastValue = builder.CreateGlobalStringPtr(ls->value + rs->value, "cstr");
+                    break;
+                }
             // String concatenation: malloc(strlen(a)+strlen(b)+1); strcpy; strcat.
             llvm::Function *strlenF = stdLibFunctions["strlen"];
             llvm::Function *strcpyF = stdLibFunctions["strcpy"];
