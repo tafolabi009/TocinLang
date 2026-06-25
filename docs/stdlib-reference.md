@@ -65,10 +65,11 @@ These properties recur throughout and are not repeated in every entry:
 - **Strings are NUL-terminated `char*`.** Every string-returning builtin returns
   a *fresh* `malloc`'d buffer that never aliases its input.
 - **Leaks.** There is no garbage collector. String results (`substring`,
-  `intToStr`, `charToStr`, `+` concatenation, `readFile`, `readLine`, ...) and
-  collection handles (`vecNew`, `mapNew`) are heap-allocated and leak unless you
-  free them. Vectors/maps have explicit `vecFree`/`mapFree`; strings have no free
-  builtin, so string-heavy loops leak by design.
+  `intToStr`, `charToStr`, `toUpper`, `toLower`, `+` concatenation, `readFile`,
+  `readLine`, ...) and collection handles (`vecNew`, `mapNew`) are heap-allocated
+  and leak unless you free them. Vectors/maps have explicit `vecFree`/`mapFree`;
+  any heap pointer (including a malloc'd string) can be released with
+  `free(p)`. Only free a buffer you own and never use it afterward.
 - **`len` is for arrays only** (see below); use `strLen` for strings.
 
 ---
@@ -246,6 +247,12 @@ still compare by identity.)
 | `strEq` | `strEq(a: string, b: string) -> int` | `1` if equal, else `0`. (Or just use `==`.) |
 | `strCmp` | `strCmp(a: string, b: string) -> int` | `-1`/`0`/`1` (lexicographic, like C `strcmp` normalized). Use for **ordering**. |
 | `indexOfChar` | `indexOfChar(s: string, c: int) -> int` | Index of first byte equal to `c`, else `-1`. |
+| `strIndexOf` | `strIndexOf(s: string, sub: string) -> int` | Index of first occurrence of substring `sub`, else `-1`. |
+| `strContains` | `strContains(s: string, sub: string) -> int` | `1` if `sub` occurs in `s`, else `0`. |
+| `startsWith` | `startsWith(s: string, prefix: string) -> int` | `1` if `s` begins with `prefix`, else `0`. |
+| `endsWith` | `endsWith(s: string, suffix: string) -> int` | `1` if `s` ends with `suffix`, else `0`. |
+| `toUpper` | `toUpper(s: string) -> string` | Uppercased copy (fresh buffer). |
+| `toLower` | `toLower(s: string) -> string` | Lowercased copy (fresh buffer). |
 | `intToStr` | `intToStr(n: int) -> string` | Decimal text of `n` (fresh buffer). |
 | `strToInt` | `strToInt(s: string) -> int` | Parse leading integer; `0` if not numeric. |
 | `charToStr` | `charToStr(c: int) -> string` | 1-byte string holding byte `c` (fresh buffer). |
