@@ -829,6 +829,10 @@ namespace lexer
                     tokens.emplace_back(TokenType::BANG_EQUAL, "!=", filename, line, column - 2);
                 }
             }
+            else if (match('!'))
+            {
+                tokens.emplace_back(TokenType::BANG_BANG, "!!", filename, line, column - 2);
+            }
             else
             {
                 tokens.emplace_back(TokenType::BANG, "!", filename, line, column - 1);
@@ -923,6 +927,10 @@ namespace lexer
             else if (match('?'))
             {
                 tokens.emplace_back(TokenType::NULL_COALESCE, "??", filename, line, column - 2);
+            }
+            else if (match(':'))
+            {
+                tokens.emplace_back(TokenType::ELVIS, "?:", filename, line, column - 2);
             }
             else
             {

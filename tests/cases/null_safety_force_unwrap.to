@@ -1,0 +1,7 @@
+// expect: 11
+// Force-unwrap `a!!` yields a when non-null (it aborts when null).
+class Box { v: int; def get(self) -> int { return self.v; } }
+def main() {
+    let b: Box = Box(11);
+    return b!!.get();
+}

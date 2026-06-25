@@ -496,6 +496,8 @@ namespace parser
         auto value = expression();
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after match value");
         std::vector<std::pair<ast::ExprPtr, ast::StmtPtr>> cases;
+        std::vector<std::string> ctors;
+        std::vector<std::string> binds;
         ast::StmtPtr defaultCase = nullptr;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
         {
@@ -505,7 +507,33 @@ namespace parser
                 consume(lexer::TokenType::COLON, "Expected ':' after case pattern");
                 consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after case pattern");
                 auto body = blockStmt();
+
+                // Classify Option/Result constructor patterns so codegen can do
+                // a tag check + payload binding instead of value equality.
+                std::string ctor, bind;
+                if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(pattern))
+                {
+                    if (lit->literalType == ast::LiteralExpr::LiteralType::NIL)
+                        ctor = "None"; // `None` lexes as the nil literal
+                }
+                else if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(pattern))
+                {
+                    if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+                    {
+                        const std::string &n = callee->name;
+                        if (n == "Some" || n == "Ok" || n == "Err")
+                        {
+                            ctor = n;
+                            if (call->arguments.size() == 1)
+                                if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(call->arguments[0]))
+                                    bind = v->name;
+                        }
+                    }
+                }
+
                 cases.emplace_back(pattern, body);
+                ctors.push_back(ctor);
+                binds.push_back(bind);
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
@@ -520,7 +548,10 @@ namespace parser
             }
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after match");
-        return std::make_shared<ast::MatchStmt>(value->token, value, cases, defaultCase);
+        auto stmt = std::make_shared<ast::MatchStmt>(value->token, value, cases, defaultCase);
+        stmt->caseCtor = std::move(ctors);
+        stmt->caseBind = std::move(binds);
+        return stmt;
     }
 
     ast::ExprPtr Parser::expression()
@@ -528,9 +559,23 @@ namespace parser
         return assignment();
     }
 
+    ast::ExprPtr Parser::elvis()
+    {
+        // a ?: b / a ?? b : yield a when non-null, else b. Binds looser than
+        // logical-or and tighter than assignment.
+        auto expr = orExpr();
+        while (match(lexer::TokenType::ELVIS) || match(lexer::TokenType::NULL_COALESCE))
+        {
+            auto op = previous();
+            auto right = orExpr();
+            expr = std::make_shared<ast::BinaryExpr>(op, expr, op, right);
+        }
+        return expr;
+    }
+
     ast::ExprPtr Parser::assignment()
     {
-        ast::ExprPtr expr = orExpr();
+        ast::ExprPtr expr = elvis();
 
         if (match(lexer::TokenType::EQUAL))
         {
@@ -687,6 +732,18 @@ namespace parser
             {
                 auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
                 expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+            }
+            else if (match(lexer::TokenType::SAFE_ACCESS))
+            {
+                // a?.b : safe navigation (null base yields null).
+                auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '?.'");
+                expr = std::make_shared<ast::GetExpr>(name, expr, name.value, /*isSafe=*/true);
+            }
+            else if (match(lexer::TokenType::BANG_BANG))
+            {
+                // a!! : force-unwrap (trap if null).
+                lexer::Token op = previous();
+                expr = std::make_shared<ast::UnaryExpr>(op, op, expr);
             }
             else if (match(lexer::TokenType::LEFT_BRACKET))
             {
@@ -938,6 +995,13 @@ namespace parser
         return peek().type == type;
     }
 
+    bool Parser::checkNext(lexer::TokenType type) const
+    {
+        if (current + 1 >= tokens.size())
+            return false;
+        return tokens[current + 1].type == type;
+    }
+
     lexer::Token Parser::advance()
     {
         if (!isAtEnd())
@@ -1185,55 +1249,37 @@ namespace parser
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after 'select'");
         
         std::vector<ast::SelectStmt::Case> cases;
-        
+
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
         {
             if (match(lexer::TokenType::CASE))
             {
-                // Parse channel send or receive case
-                ast::ExprPtr channel = nullptr;
-                ast::ExprPtr value = nullptr;
-                bool isSend = false;
-                
-                // Check if this is a send case (channel <- value)
-                auto firstExpr = expression();
-                
-                if (match(lexer::TokenType::CHANNEL_SEND))
+                // Optional receive bind: `case v = <-ch:`.
+                std::string bindName;
+                if (check(lexer::TokenType::IDENTIFIER) && checkNext(lexer::TokenType::EQUAL))
                 {
-                    // This is a send case: channel <- value
-                    channel = firstExpr;
-                    value = expression();
-                    isSend = true;
+                    bindName = advance().value; // bind variable
+                    advance();                  // '='
                 }
-                else
-                {
-                    // This is a receive case: <-channel or value := <-channel
-                    if (firstExpr->token.type == lexer::TokenType::CHANNEL_RECEIVE)
-                    {
-                        // Simple receive: <-channel
-                        channel = expression();
-                    }
-                    else
-                    {
-                        // Assignment receive: value := <-channel
-                        value = firstExpr;
-                        consume(lexer::TokenType::CHANNEL_RECEIVE, "Expected '<-' for channel receive");
-                        channel = expression();
-                    }
-                }
-                
-                consume(lexer::TokenType::COLON, "Expected ':' after case");
+
+                // The receive operation: `<-ch` (lexes as a prefix CHANNEL_SEND
+                // or CHANNEL_RECEIVE, producing a ChannelReceiveExpr).
+                ast::ExprPtr recv = unary();
+                ast::ExprPtr channel = recv;
+                if (auto cr = std::dynamic_pointer_cast<ast::ChannelReceiveExpr>(recv))
+                    channel = cr->channel;
+
+                consume(lexer::TokenType::COLON, "Expected ':' after select case");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' for case body");
                 auto body = blockStmt();
-                
-                cases.emplace_back(channel, body, false);
+                cases.emplace_back(channel, bindName, body, false);
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
                 consume(lexer::TokenType::COLON, "Expected ':' after default");
+                consume(lexer::TokenType::LEFT_BRACE, "Expected '{' for default body");
                 auto body = blockStmt();
-                
-                // Create a default case with null channel
-                cases.emplace_back(nullptr, body, true);
+                cases.emplace_back(nullptr, std::string(), body, true);
             }
             else
             {
@@ -1241,7 +1287,7 @@ namespace parser
                 advance();
             }
         }
-        
+
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after select statement");
         return std::make_shared<ast::SelectStmt>(keyword, cases);
     }

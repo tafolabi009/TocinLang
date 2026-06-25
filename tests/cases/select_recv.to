@@ -1,0 +1,12 @@
+// expect: 42
+// select receives a value sent by a goroutine (blocking, no default).
+def producer(ch: channel<int>) { ch <- 42; }
+def main() {
+    let ch = channel<int>();
+    go producer(ch);
+    let result = 0;
+    select {
+        case v = <-ch: { result = v; }
+    }
+    return result;
+}

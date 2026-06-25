@@ -80,6 +80,7 @@ namespace parser
         ast::StmtPtr throwStmt();
         ast::ExprPtr expression();
         ast::ExprPtr assignment();
+        ast::ExprPtr elvis();
         ast::ExprPtr orExpr();
         ast::ExprPtr andExpr();
         ast::ExprPtr equality();
@@ -100,6 +101,7 @@ namespace parser
 
         bool match(lexer::TokenType type);
         bool check(lexer::TokenType type) const;
+        bool checkNext(lexer::TokenType type) const;
         lexer::Token advance();
         lexer::Token peek() const;
         lexer::Token previous() const;

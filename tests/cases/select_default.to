@@ -1,0 +1,11 @@
+// expect: 7
+// With nothing ready and a default present, select is non-blocking.
+def main() {
+    let ch = channel<int>();
+    let result = 0;
+    select {
+        case v = <-ch: { result = v; }
+        default: { result = 7; }
+    }
+    return result;
+}

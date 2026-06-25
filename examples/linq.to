@@ -1,0 +1,27 @@
+// LINQ-style collection operations from the standard library.
+//   tocin examples/linq.to --run
+//
+// Reductions return a scalar; `*Into` transforms write into a destination list.
+
+import std.linq;
+
+def main() {
+    let xs = [3, 1, 4, 1, 5, 9, 2, 6];
+
+    println("sum      = {}", reduceSum(xs));          // 31
+    println("product  = {}", reduceProduct([1,2,3,4])); // 24
+    println("max      = {}", aggregate(xs, xs[0], 2)); // 9
+    println("> 3 count= {}", countGreater(xs, 3));     // 4 (4,5,9,6)
+
+    // map: double each element into a destination list.
+    let doubled = [0, 0, 0, 0, 0, 0, 0, 0];
+    mapScaleInto(doubled, xs, 2);
+    println("doubled sum = {}", reduceSum(doubled));   // 62
+
+    // filter: keep elements > 3 into a destination, using the returned count.
+    let big = [0, 0, 0, 0, 0, 0, 0, 0];
+    let n = filterGreaterInto(big, xs, 3);
+    println("kept {} elements", n);                    // kept 4 elements
+
+    return reduceSum(xs);                               // 31
+}

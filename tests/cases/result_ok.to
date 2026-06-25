@@ -1,0 +1,8 @@
+// expect: 42
+def main() {
+    match Ok(42) {
+        case Ok(v): { return v; }
+        case Err(e): { return 0; }
+    }
+    return 99;
+}
