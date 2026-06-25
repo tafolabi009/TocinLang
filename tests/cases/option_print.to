@@ -1,0 +1,8 @@
+// expect-output: 30
+def main() {
+    match Some(10) {
+        case Some(x): { println(x + 20); }
+        case None: { println(0); }
+    }
+    return 0;
+}

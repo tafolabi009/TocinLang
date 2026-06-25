@@ -266,6 +266,13 @@ namespace codegen
         // so indexing the parameter inside the function uses the right type.
         void recordArrayParam(const std::string &name, const ast::TypePtr &type);
 
+        // Option/Result lowering: a heap { i64 tag, i64 payload } object.
+        // tag 1 = Some/Ok, tag 0 = Err; None is a null pointer.
+        llvm::StructType *optResTy = nullptr;
+        llvm::StructType *getOptResType();
+        llvm::Value *normalizeToSlot(llvm::Value *v);
+        llvm::Value *makeOptRes(int64_t tag, llvm::Value *payload);
+
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,
                                             const std::map<std::string, llvm::Type *> &bindings);

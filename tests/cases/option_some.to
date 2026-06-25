@@ -1,0 +1,9 @@
+// expect: 5
+// case Some(x) binds the payload.
+def main() {
+    match Some(5) {
+        case Some(x): { return x; }
+        case None: { return 0; }
+    }
+    return 99;
+}

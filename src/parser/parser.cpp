@@ -496,6 +496,8 @@ namespace parser
         auto value = expression();
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after match value");
         std::vector<std::pair<ast::ExprPtr, ast::StmtPtr>> cases;
+        std::vector<std::string> ctors;
+        std::vector<std::string> binds;
         ast::StmtPtr defaultCase = nullptr;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
         {
@@ -505,7 +507,33 @@ namespace parser
                 consume(lexer::TokenType::COLON, "Expected ':' after case pattern");
                 consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after case pattern");
                 auto body = blockStmt();
+
+                // Classify Option/Result constructor patterns so codegen can do
+                // a tag check + payload binding instead of value equality.
+                std::string ctor, bind;
+                if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(pattern))
+                {
+                    if (lit->literalType == ast::LiteralExpr::LiteralType::NIL)
+                        ctor = "None"; // `None` lexes as the nil literal
+                }
+                else if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(pattern))
+                {
+                    if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+                    {
+                        const std::string &n = callee->name;
+                        if (n == "Some" || n == "Ok" || n == "Err")
+                        {
+                            ctor = n;
+                            if (call->arguments.size() == 1)
+                                if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(call->arguments[0]))
+                                    bind = v->name;
+                        }
+                    }
+                }
+
                 cases.emplace_back(pattern, body);
+                ctors.push_back(ctor);
+                binds.push_back(bind);
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
@@ -520,7 +548,10 @@ namespace parser
             }
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after match");
-        return std::make_shared<ast::MatchStmt>(value->token, value, cases, defaultCase);
+        auto stmt = std::make_shared<ast::MatchStmt>(value->token, value, cases, defaultCase);
+        stmt->caseCtor = std::move(ctors);
+        stmt->caseBind = std::move(binds);
+        return stmt;
     }
 
     ast::ExprPtr Parser::expression()

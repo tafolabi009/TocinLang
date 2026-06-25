@@ -1,0 +1,39 @@
+// Option and Result types with destructuring pattern matching.
+//   tocin examples/option_result.to --run
+//
+// Some(x) / Ok(v) / Err(e) wrap a value; None is the empty case. `match` with
+// constructor patterns checks the case and binds the inner payload.
+
+def safeDiv(a: int, b: int) -> Result {
+    if b == 0 {
+        return Err(1);      // error code 1
+    }
+    return Ok(a / b);
+}
+
+def describe(n: int) -> int {
+    match safeDiv(100, n) {
+        case Ok(v): {
+            println("ok: {}", v);
+            return v;
+        }
+        case Err(e): {
+            println("error code {}", e);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+def main() {
+    // Option
+    match Some(42) {
+        case Some(x): { println("got {}", x); }   // got 42
+        case None: { println("nothing"); }
+    }
+
+    describe(4);     // ok: 25
+    describe(0);     // error code 1
+
+    return describe(5);   // ok: 20  -> exit 20
+}
