@@ -167,6 +167,12 @@ namespace codegen
         llvm::AllocaInst *createEntryBlockAlloca(llvm::Function *function, const std::string &name, llvm::Type *type);
         llvm::Type *getLLVMType(ast::TypePtr type);
         llvm::FunctionType *getLLVMFunctionType(ast::TypePtr returnType, const std::vector<ast::Parameter> &params);
+
+        // Lightweight, non-emitting type inference used to determine a
+        // function's return type when it is not explicitly annotated.
+        llvm::Type *inferExprType(const ast::ExprPtr &expr,
+                                  const std::map<std::string, llvm::Type *> &localTypes);
+        llvm::Type *inferFunctionReturnType(ast::FunctionStmt *stmt);
         void declareStdLibFunctions();
         llvm::Function *getStdLibFunction(const std::string &name);
         llvm::Type *createOpaquePtr(llvm::Type *elementType);

@@ -317,6 +317,143 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
     return llvm::Type::getVoidTy(context);
 }
 
+llvm::Type *IRGenerator::inferExprType(const ast::ExprPtr &expr,
+                                       const std::map<std::string, llvm::Type *> &localTypes)
+{
+    if (!expr)
+        return llvm::Type::getVoidTy(context);
+
+    if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr))
+    {
+        switch (lit->literalType)
+        {
+        case ast::LiteralExpr::LiteralType::INTEGER:
+            return llvm::Type::getInt64Ty(context);
+        case ast::LiteralExpr::LiteralType::FLOAT:
+            return llvm::Type::getDoubleTy(context);
+        case ast::LiteralExpr::LiteralType::BOOLEAN:
+            return llvm::Type::getInt1Ty(context);
+        case ast::LiteralExpr::LiteralType::STRING:
+        case ast::LiteralExpr::LiteralType::NIL:
+        default:
+            return llvm::PointerType::get(context, 0);
+        }
+    }
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+    {
+        auto it = localTypes.find(var->name);
+        if (it != localTypes.end())
+            return it->second;
+        auto nv = namedValues.find(var->name);
+        if (nv != namedValues.end() && nv->second)
+            return nv->second->getAllocatedType();
+        return llvm::Type::getInt64Ty(context);
+    }
+    if (auto grp = std::dynamic_pointer_cast<ast::GroupingExpr>(expr))
+        return inferExprType(grp->expression, localTypes);
+    if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+    {
+        if (un->op.type == lexer::TokenType::BANG)
+            return llvm::Type::getInt1Ty(context);
+        return inferExprType(un->right, localTypes);
+    }
+    if (auto bin = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+    {
+        switch (bin->op.type)
+        {
+        case lexer::TokenType::EQUAL_EQUAL:
+        case lexer::TokenType::BANG_EQUAL:
+        case lexer::TokenType::LESS:
+        case lexer::TokenType::LESS_EQUAL:
+        case lexer::TokenType::GREATER:
+        case lexer::TokenType::GREATER_EQUAL:
+        case lexer::TokenType::AND:
+        case lexer::TokenType::OR:
+            return llvm::Type::getInt1Ty(context);
+        default:
+            break;
+        }
+        llvm::Type *lt = inferExprType(bin->left, localTypes);
+        llvm::Type *rt = inferExprType(bin->right, localTypes);
+        if (lt->isDoubleTy() || rt->isDoubleTy() || lt->isFloatTy() || rt->isFloatTy())
+            return llvm::Type::getDoubleTy(context);
+        if (lt->isPointerTy())
+            return lt; // e.g. string concatenation
+        return llvm::Type::getInt64Ty(context);
+    }
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+    {
+        if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            if (llvm::Function *f = module->getFunction(callee->name))
+                return f->getReturnType();
+        }
+        return llvm::Type::getInt64Ty(context);
+    }
+    if (std::dynamic_pointer_cast<ast::StringInterpolationExpr>(expr))
+        return llvm::PointerType::get(context, 0);
+    if (auto asgn = std::dynamic_pointer_cast<ast::AssignExpr>(expr))
+        return inferExprType(asgn->value, localTypes);
+
+    // Conservative default for everything else.
+    return llvm::Type::getInt64Ty(context);
+}
+
+llvm::Type *IRGenerator::inferFunctionReturnType(ast::FunctionStmt *stmt)
+{
+    std::map<std::string, llvm::Type *> localTypes;
+    for (const auto &p : stmt->parameters)
+    {
+        if (p.type)
+            localTypes[p.name] = getLLVMType(p.type);
+    }
+
+    llvm::Type *found = nullptr;
+    std::function<void(const ast::StmtPtr &)> scan = [&](const ast::StmtPtr &s)
+    {
+        if (!s || found)
+            return;
+        if (auto ret = std::dynamic_pointer_cast<ast::ReturnStmt>(s))
+        {
+            if (ret->value)
+                found = inferExprType(ret->value, localTypes);
+            return;
+        }
+        if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(s))
+        {
+            for (const auto &st : blk->statements)
+            {
+                scan(st);
+                if (found)
+                    return;
+            }
+        }
+        else if (auto iff = std::dynamic_pointer_cast<ast::IfStmt>(s))
+        {
+            scan(iff->thenBranch);
+            for (const auto &eb : iff->elifBranches)
+                if (!found)
+                    scan(eb.second);
+            if (!found)
+                scan(iff->elseBranch);
+        }
+        else if (auto wh = std::dynamic_pointer_cast<ast::WhileStmt>(s))
+            scan(wh->body);
+        else if (auto fr = std::dynamic_pointer_cast<ast::ForStmt>(s))
+            scan(fr->body);
+        else if (auto mt = std::dynamic_pointer_cast<ast::MatchStmt>(s))
+        {
+            for (const auto &c : mt->cases)
+                if (!found)
+                    scan(c.second);
+            if (!found)
+                scan(mt->defaultCase);
+        }
+    };
+    scan(stmt->body);
+    return found ? found : llvm::Type::getVoidTy(context);
+}
+
 void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
 {
     // Use the literalType field to determine what kind of literal we have
@@ -604,14 +741,14 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         paramTypes.push_back(paramType);
     }
 
-    // Get return type
-    llvm::Type *returnType = getLLVMType(stmt->returnType);
+    // Get return type. When the function has no explicit return annotation,
+    // infer it from the body's return statements (defaulting to void).
+    llvm::Type *returnType = stmt->returnType
+                                 ? getLLVMType(stmt->returnType)
+                                 : inferFunctionReturnType(stmt);
     if (!returnType)
     {
-        errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                 "Invalid return type in function '" + funcName + "'",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
-        return;
+        returnType = llvm::Type::getVoidTy(context);
     }
 
     // Create function type
@@ -720,18 +857,35 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
         if (!lastValue)
             return;
 
-        // Check return type compatibility
+        // Coerce the value to the function's return type when needed.
         if (lastValue->getType() != returnType)
         {
-            // Try to cast if possible
-            if (lastValue->getType()->isIntegerTy() && returnType->isIntegerTy())
+            llvm::Type *vt = lastValue->getType();
+            if (returnType->isVoidTy())
+            {
+                // Function returns void; discard the value.
+                builder.CreateRetVoid();
+                return;
+            }
+            else if (vt->isIntegerTy() && returnType->isIntegerTy())
             {
                 lastValue = builder.CreateIntCast(lastValue, returnType, true, "castret");
             }
-            else if ((lastValue->getType()->isFloatTy() || lastValue->getType()->isDoubleTy()) &&
-                     (returnType->isFloatTy() || returnType->isDoubleTy()))
+            else if (vt->isFloatingPointTy() && returnType->isFloatingPointTy())
             {
                 lastValue = builder.CreateFPCast(lastValue, returnType, "castret");
+            }
+            else if (vt->isIntegerTy() && returnType->isFloatingPointTy())
+            {
+                lastValue = builder.CreateSIToFP(lastValue, returnType, "castret");
+            }
+            else if (vt->isFloatingPointTy() && returnType->isIntegerTy())
+            {
+                lastValue = builder.CreateFPToSI(lastValue, returnType, "castret");
+            }
+            else if (vt->isPointerTy() && returnType->isPointerTy())
+            {
+                lastValue = builder.CreateBitCast(lastValue, returnType, "castret");
             }
             else
             {
@@ -2461,8 +2615,10 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
     {
         std::string name = varExpr->name; // Use direct member access instead of getName()
 
-        // Look up the variable in the current scope
-        llvm::AllocaInst *alloca = currentScope ? currentScope->lookup(name) : lookupVariable(name);
+        // Look up the variable. Variables are tracked in the flat namedValues
+        // table (populated by variable declarations and function parameters),
+        // so use lookupVariable which consults it before any Scope chain.
+        llvm::AllocaInst *alloca = lookupVariable(name);
 
         if (!alloca)
         {
