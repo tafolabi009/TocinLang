@@ -101,6 +101,7 @@ namespace parser
 
         bool match(lexer::TokenType type);
         bool check(lexer::TokenType type) const;
+        bool checkNext(lexer::TokenType type) const;
         lexer::Token advance();
         lexer::Token peek() const;
         lexer::Token previous() const;

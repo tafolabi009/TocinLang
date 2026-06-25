@@ -855,12 +855,14 @@ namespace ast
     public:
         struct Case
         {
-            ExprPtr channel;
+            ExprPtr channel;      // channel expression for `<-channel` (null for default)
+            std::string bindName; // receive bind variable, e.g. `v` in `case v = <-ch:` ("" = none)
             StmtPtr body;
             bool isDefault;
 
-            Case(ExprPtr ch, StmtPtr b, bool def = false)
-                : channel(std::move(ch)), body(std::move(b)), isDefault(def) {}
+            Case(ExprPtr ch, std::string bind, StmtPtr b, bool def = false)
+                : channel(std::move(ch)), bindName(std::move(bind)),
+                  body(std::move(b)), isDefault(def) {}
         };
 
         SelectStmt(const lexer::Token &token, std::vector<Case> cases)
