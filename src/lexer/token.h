@@ -233,6 +233,40 @@ namespace lexer
         int column;
     };
 
+    /**
+     * @brief Parse an integer literal lexeme into an int64.
+     *
+     * Handles decimal, 0x hex, 0o/0 octal, 0b binary, digit separators ('_'),
+     * and trailing type suffixes (u/U/l/L). Returns 0 on malformed input.
+     */
+    inline long long parseIntegerLiteral(const std::string &lexeme)
+    {
+        std::string t;
+        t.reserve(lexeme.size());
+        for (char c : lexeme)
+            if (c != '_')
+                t += c;
+        // Strip trailing integer type suffixes.
+        while (!t.empty() && (t.back() == 'u' || t.back() == 'U' ||
+                              t.back() == 'l' || t.back() == 'L'))
+            t.pop_back();
+        if (t.empty())
+            return 0;
+        try
+        {
+            if (t.size() > 2 && t[0] == '0' && (t[1] == 'b' || t[1] == 'B'))
+                return std::stoll(t.substr(2), nullptr, 2);
+            if (t.size() > 2 && t[0] == '0' && (t[1] == 'o' || t[1] == 'O'))
+                return std::stoll(t.substr(2), nullptr, 8);
+            // Base 0 auto-detects 0x (hex) and leading-0 (octal), else decimal.
+            return std::stoll(t, nullptr, 0);
+        }
+        catch (...)
+        {
+            return 0;
+        }
+    }
+
 } // namespace lexer
 
 #endif // TOKEN_H

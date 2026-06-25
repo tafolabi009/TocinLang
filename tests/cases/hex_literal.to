@@ -1,0 +1,4 @@
+// expect: 60
+def main() {
+    return 0xFF & 0x3C;  // 255 & 60 = 60
+}
