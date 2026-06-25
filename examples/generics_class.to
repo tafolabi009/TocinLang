@@ -1,0 +1,30 @@
+// Generic classes: class C<T> is monomorphized per concrete type argument,
+// inferred from the constructor call.
+//   tocin examples/generics_class.to --run
+
+class Box<T> {
+    value: T;
+    def get(self) -> T { return self.value; }
+    def set(self, v: T) { self.value = v; }
+}
+
+class Pair<A, B> {
+    first: A;
+    second: B;
+    def sum(self) -> A { return self.first + self.second; }
+}
+
+def main() {
+    let bi = Box(42);                          // Box<int>
+    println("box(int)   = {}", bi.get());      // 42
+    bi.set(100);
+    println("after set  = {}", bi.get());      // 100
+
+    let bf = Box(1.5);                          // Box<float> — separate instance
+    println("box(float) = {}", bf.get());      // 1.5
+
+    let p = Pair(20, 22);
+    println("pair sum   = {}", p.sum());        // 42
+
+    return p.sum();
+}

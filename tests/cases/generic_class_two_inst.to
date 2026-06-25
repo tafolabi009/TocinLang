@@ -1,0 +1,14 @@
+// expect: 7
+// Two instantiations of the same generic class coexist with independent struct
+// layouts: Box<int> (i64) and Box<float> (f64).
+class Box<T> {
+    value: T;
+    def get(self) -> T { return self.value; }
+}
+
+def main() {
+    let bi = Box(7);        // Box<int>
+    let bf = Box(2.5);      // Box<float> — distinct layout + methods
+    let f = bf.get();       // exercises the float instantiation
+    return bi.get();        // 7
+}
