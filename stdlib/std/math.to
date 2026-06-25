@@ -1,0 +1,43 @@
+// Tocin standard library: integer/number utilities.
+// (abs, min, max, sqrt, pow, ... are compiler builtins.)
+
+def gcd(a: int, b: int) -> int {
+    let x = a;
+    let y = b;
+    while y != 0 {
+        let t = y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+
+def lcm(a: int, b: int) -> int {
+    return (a / gcd(a, b)) * b;
+}
+
+def factorial(n: int) -> int {
+    let r = 1;
+    let i = 2;
+    while i <= n {
+        r = r * i;
+        i = i + 1;
+    }
+    return r;
+}
+
+def clamp(x: int, lo: int, hi: int) -> int {
+    if x < lo { return lo; }
+    if x > hi { return hi; }
+    return x;
+}
+
+def isPrime(n: int) -> int {
+    if n < 2 { return 0; }
+    let i = 2;
+    while i * i <= n {
+        if n % i == 0 { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}

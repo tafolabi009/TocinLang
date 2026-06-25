@@ -1,0 +1,3 @@
+// expect: 30
+import lib.m;
+def main() { return triple(10); }

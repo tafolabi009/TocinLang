@@ -377,9 +377,28 @@ namespace parser
 
     ast::StmtPtr Parser::importStmt()
     {
-        auto module = consume(lexer::TokenType::IDENTIFIER, "Expected module name");
-        consume(lexer::TokenType::SEMI_COLON, "Expected ';' after import");
-        return std::make_shared<ast::ImportStmt>(module, module.value);
+        lexer::Token tok = peek();
+        std::string path;
+        if (match(lexer::TokenType::STRING))
+        {
+            // import "relative/or/std/path"
+            path = previous().value;
+            if (path.size() >= 2 && (path.front() == '"' || path.front() == '\''))
+                path = path.substr(1, path.size() - 2);
+        }
+        else
+        {
+            // import a.b.c  ->  a/b/c
+            auto first = consume(lexer::TokenType::IDENTIFIER, "Expected module name");
+            path = first.value;
+            while (match(lexer::TokenType::DOT))
+            {
+                auto part = consume(lexer::TokenType::IDENTIFIER, "Expected name after '.'");
+                path += "/" + part.value;
+            }
+        }
+        match(lexer::TokenType::SEMI_COLON); // optional ';'
+        return std::make_shared<ast::ImportStmt>(tok, path);
     }
 
     ast::StmtPtr Parser::matchStmt()
