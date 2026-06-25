@@ -1,0 +1,9 @@
+// expect: 42
+def process() -> int {
+    let buf = alloc(64);
+    defer free(buf);
+    storeInt(buf, 0, 999);
+    if loadInt(buf, 0) == 999 { return 42; }
+    return 0;
+}
+def main() -> int { return process(); }

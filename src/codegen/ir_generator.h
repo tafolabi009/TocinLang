@@ -126,6 +126,7 @@ namespace codegen
         void visitThrowStmt(ast::ThrowStmt *stmt) override;
         void visitBreakStmt(ast::BreakStmt *stmt) override;
         void visitContinueStmt(ast::ContinueStmt *stmt) override;
+        void visitDeferStmt(ast::DeferStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
@@ -174,6 +175,11 @@ namespace codegen
         // exception handler registered for this try must also be popped.
         struct PendingFinally { ast::StmtPtr block; bool popHandler; };
         std::vector<PendingFinally> finallyStack;
+        // Function-scoped `defer` statements: each carries a reached-flag (an i1
+        // alloca set true when the defer executes) so the cleanup runs at every
+        // function-exit path only if it was dynamically reached, in LIFO order.
+        struct DeferredStmt { ast::StmtPtr body; llvm::AllocaInst *reached; };
+        std::vector<DeferredStmt> deferStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
@@ -213,6 +219,9 @@ namespace codegen
         // Emit any pending finally blocks (innermost first) before a return
         // unwinds out of the enclosing try/finally scopes.
         void runPendingFinally();
+        // Emit function-scoped `defer` cleanups (LIFO, each guarded by its
+        // reached-flag) at a function-exit point.
+        void runDeferred();
         // Cache of generated thunks, keyed by the wrapped target function.
         std::map<llvm::Function *, llvm::Function *> thunks;
 

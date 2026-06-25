@@ -74,6 +74,7 @@ namespace ast
     class ThrowStmt;
     class BreakStmt;
     class ContinueStmt;
+    class DeferStmt;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -125,6 +126,7 @@ namespace ast
         virtual void visitThrowStmt(ThrowStmt *stmt) = 0;
         virtual void visitBreakStmt(BreakStmt *stmt) = 0;
         virtual void visitContinueStmt(ContinueStmt *stmt) = 0;
+        virtual void visitDeferStmt(DeferStmt *stmt) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -984,6 +986,19 @@ namespace ast
     public:
         explicit ContinueStmt(const lexer::Token &token) : Statement(token) {}
         void accept(Visitor &visitor) override { visitor.visitContinueStmt(this); }
+    };
+
+    /**
+     * @brief Defer statement: runs its body when the enclosing function returns
+     * (LIFO order), regardless of which return path is taken. Used for cleanup.
+     */
+    class DeferStmt : public Statement
+    {
+    public:
+        DeferStmt(const lexer::Token &token, StmtPtr body)
+            : Statement(token), body(std::move(body)) {}
+        void accept(Visitor &visitor) override { visitor.visitDeferStmt(this); }
+        StmtPtr body;
     };
 
     /**

@@ -1,0 +1,19 @@
+// `defer` runs a statement when the enclosing function returns — on EVERY
+// return path, in LIFO order. Ideal for guaranteed resource cleanup.
+def readConfig(path: string) -> int {
+    let buf = alloc(256);
+    defer free(buf);              // released no matter how we return below
+
+    let n = strLen(path);
+    if n == 0 {
+        return -1;                // defer still frees buf
+    }
+    storeInt(buf, 0, n);
+    return loadInt(buf, 0);
+}
+
+def main() -> int {
+    defer println("shutdown complete");   // runs last, at program-main return
+    println("config len = {}", readConfig("/etc/app.conf"));
+    return 0;
+}

@@ -864,6 +864,8 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     auto savedVarArrayElem = varArrayElem;
     auto savedVarFuncSig = varFuncSig;
     auto savedVarIsString = varIsString;
+    auto savedDeferStack = deferStack;  // defer is function-scoped
+    deferStack.clear();
 
     // Create entry basic block
     llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
@@ -900,6 +902,11 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     {
         stmt->body->accept(*this);
     }
+
+    // Normal fall-through exit: run function-scoped deferred cleanups before
+    // the implicit return.
+    if (!builder.GetInsertBlock()->getTerminator())
+        runDeferred();
 
     // If the function doesn't have an explicit return and returns void, add one
     if (returnType->isVoidTy() && !builder.GetInsertBlock()->getTerminator())
@@ -945,6 +952,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     varArrayElem = savedVarArrayElem;
     varFuncSig = savedVarFuncSig;
     varIsString = savedVarIsString;
+    deferStack = savedDeferStack;
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
 }
@@ -970,6 +978,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             {
                 // Function returns void; discard the value.
                 runPendingFinally();
+                runDeferred();
                 builder.CreateRetVoid();
                 return;
             }
@@ -1002,10 +1011,11 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             }
         }
 
-        // Run any pending finally blocks, then return. Save the value first:
-        // the finally block emission may overwrite lastValue.
+        // Run any pending finally blocks and deferred cleanups, then return.
+        // Save the value first: that emission may overwrite lastValue.
         llvm::Value *retVal = lastValue;
         runPendingFinally();
+        runDeferred();
         builder.CreateRet(retVal);
     }
     else
@@ -1019,6 +1029,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             return;
         }
         runPendingFinally();
+        runDeferred();
 
         builder.CreateRetVoid();
     }
@@ -3094,6 +3105,58 @@ void IRGenerator::runPendingFinally()
     }
     lastValue = savedLast;
     finallyStack = pending;
+}
+
+void IRGenerator::visitDeferStmt(ast::DeferStmt *stmt)
+{
+    if (!stmt->body || !currentFunction)
+    {
+        lastValue = nullptr;
+        return;
+    }
+    llvm::Type *i1ty = llvm::Type::getInt1Ty(context);
+    // A reached-flag in the entry block, initialized to false (immediately after
+    // its alloca so it dominates), then set true at this defer site.
+    llvm::AllocaInst *flag = createEntryBlockAlloca(currentFunction, "defer.reached", i1ty);
+    {
+        llvm::IRBuilder<> initB(flag->getParent(), std::next(flag->getIterator()));
+        initB.CreateStore(llvm::ConstantInt::getFalse(context), flag);
+    }
+    builder.CreateStore(llvm::ConstantInt::getTrue(context), flag);
+    deferStack.push_back({stmt->body, flag});
+    lastValue = nullptr;
+}
+
+void IRGenerator::runDeferred()
+{
+    if (deferStack.empty())
+        return;
+    // Snapshot and clear so a `return` inside a deferred body doesn't recurse.
+    auto pending = deferStack;
+    deferStack.clear();
+    llvm::Type *i1ty = llvm::Type::getInt1Ty(context);
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    llvm::Value *savedLast = lastValue;
+    // LIFO: most recently deferred runs first.
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it)
+    {
+        if (builder.GetInsertBlock()->getTerminator())
+            break;
+        // Only run cleanups whose defer statement was dynamically reached.
+        llvm::Value *r = builder.CreateLoad(i1ty, it->reached, "defer.r");
+        llvm::BasicBlock *run = llvm::BasicBlock::Create(context, "defer.run", fn);
+        llvm::BasicBlock *cont = llvm::BasicBlock::Create(context, "defer.cont", fn);
+        builder.CreateCondBr(r, run, cont);
+        builder.SetInsertPoint(run);
+        createEnvironment();
+        it->body->accept(*this);
+        restoreEnvironment();
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(cont);
+        builder.SetInsertPoint(cont);
+    }
+    lastValue = savedLast;
+    deferStack = pending; // restore for the other exit paths
 }
 
 bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)

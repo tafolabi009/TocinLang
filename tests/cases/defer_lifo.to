@@ -1,0 +1,8 @@
+// expect-output: body|C|B|A|
+def main() {
+    defer print("A|");
+    defer print("B|");
+    defer print("C|");
+    print("body|");
+    return 0;
+}
