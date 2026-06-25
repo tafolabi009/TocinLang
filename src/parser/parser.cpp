@@ -96,6 +96,24 @@ namespace parser
         return std::make_shared<ast::VariableStmt>(name, name.value, type, initializer, isConstant);
     }
 
+    std::vector<ast::TypeParameter> Parser::parseTypeParameters()
+    {
+        std::vector<ast::TypeParameter> typeParams;
+        if (match(lexer::TokenType::LESS))
+        {
+            do
+            {
+                auto tpName = consume(lexer::TokenType::IDENTIFIER, "Expected type parameter name");
+                // Optional constraint `: SomeTrait` is parsed and ignored for now.
+                if (match(lexer::TokenType::COLON))
+                    parseType();
+                typeParams.emplace_back(tpName, tpName.value);
+            } while (match(lexer::TokenType::COMMA));
+            consume(lexer::TokenType::GREATER, "Expected '>' after type parameters");
+        }
+        return typeParams;
+    }
+
     ast::StmtPtr Parser::functionDeclaration()
     {
         bool isAsync = previous().type == lexer::TokenType::ASYNC;
@@ -104,6 +122,8 @@ namespace parser
             error(previous(), "Expected 'def' after 'async'");
         }
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected function name");
+        // Optional generic type parameters: def f<T, U>(...)
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
         consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after function name");
         auto parameters = parseParameters();
         consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after parameters");
@@ -117,12 +137,16 @@ namespace parser
         }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before function body");
         auto body = blockStmt();
+        if (!typeParams.empty())
+            return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
+                                                       parameters, returnType, body, isAsync);
         return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
     }
 
     ast::StmtPtr Parser::classDeclaration()
     {
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected class name");
+        std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before class body");
         std::vector<ast::StmtPtr> fields, methods;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
@@ -156,6 +180,10 @@ namespace parser
             }
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after class body");
+        if (!typeParams.empty())
+            return std::make_shared<ast::ClassStmt>(name, name.value, typeParams,
+                                                    nullptr, std::vector<ast::TypePtr>{},
+                                                    fields, methods);
         return std::make_shared<ast::ClassStmt>(name, name.value, fields, methods);
     }
 
