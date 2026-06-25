@@ -4,6 +4,10 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <set>
+#include <functional>
+#include <filesystem>
+#include <iterator>
 
 // Core LLVM headers
 #include <llvm/IR/LLVMContext.h>
@@ -31,6 +35,18 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/CodeGen.h>
 #include <cstdlib>
+#include <cstdint>
+
+// The Tocin runtime (channels/goroutines) lives in the static core library.
+// Declared here so the JIT can register their addresses; referencing them in
+// runJIT also forces the runtime objects to be linked into the compiler.
+extern "C" {
+    void *__tocin_chan_new();
+    void __tocin_chan_send(void *, int64_t);
+    int64_t __tocin_chan_recv(void *);
+    void __tocin_go(void (*)(void *), void *);
+    void __tocin_join_all();
+}
 
 // Conditionally include Python
 #ifdef WITH_PYTHON
@@ -171,6 +187,13 @@ public:
             return false;
         }
 
+        // Resolve `import` statements by loading and merging other modules.
+        program = resolveImports(program, filename);
+        if (errorHandler.hasFatalErrors() || !program)
+        {
+            return false;
+        }
+
         // Create compilation context with advanced features
         tocin::compiler::CompilationContext compilationContext(filename);
 
@@ -189,6 +212,79 @@ public:
         } else {
             return compileToNative(program, filename, options);
         }
+    }
+
+    /**
+     * @brief Resolve `import` statements by loading, parsing and merging the
+     *        imported modules' declarations into a single program.
+     */
+    ast::StmtPtr resolveImports(ast::StmtPtr program, const std::string& mainFile)
+    {
+        namespace fs = std::filesystem;
+        std::set<std::string> loaded;
+        std::vector<ast::StmtPtr> merged;
+
+        auto flatten = [](ast::StmtPtr p) {
+            std::vector<ast::StmtPtr> v;
+            if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(p)) v = blk->statements;
+            else if (auto mod = std::dynamic_pointer_cast<ast::ModuleStmt>(p)) v = mod->body;
+            else if (p) v.push_back(p);
+            return v;
+        };
+
+        auto resolvePath = [&](const std::string& name, const std::string& fromDir) -> std::string {
+            std::string rel = name;
+            if (rel.size() < 3 || rel.substr(rel.size() - 3) != ".to") rel += ".to";
+            std::vector<std::string> candidates;
+            if (!fromDir.empty()) candidates.push_back((fs::path(fromDir) / rel).string());
+            if (const char* envp = std::getenv("TOCIN_PATH"))
+                candidates.push_back((fs::path(envp) / rel).string());
+#ifdef TOCIN_STDLIB_PATH
+            candidates.push_back((fs::path(TOCIN_STDLIB_PATH) / rel).string());
+#endif
+            for (auto& c : candidates)
+            {
+                std::error_code ec;
+                if (fs::exists(c, ec)) return fs::absolute(c, ec).string();
+            }
+            return "";
+        };
+
+        std::function<void(ast::StmtPtr, const std::string&)> process =
+            [&](ast::StmtPtr prog, const std::string& fromDir) {
+            for (auto& s : flatten(prog))
+            {
+                if (auto imp = std::dynamic_pointer_cast<ast::ImportStmt>(s))
+                {
+                    std::string file = resolvePath(imp->moduleName, fromDir);
+                    if (file.empty())
+                    {
+                        errorHandler.reportError(error::ErrorCode::I001_FILE_NOT_FOUND,
+                                                 "Cannot resolve import '" + imp->moduleName + "'",
+                                                 mainFile, 0, 0);
+                        continue;
+                    }
+                    if (loaded.count(file)) continue;
+                    loaded.insert(file);
+                    std::ifstream f(file);
+                    std::string src((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+                    lexer::Lexer lx(src, file, 4);
+                    auto toks = lx.tokenize();
+                    parser::Parser ps(toks);
+                    auto sub = ps.parse();
+                    process(sub, fs::path(file).parent_path().string()); // imported module's imports first
+                }
+                else if (s)
+                {
+                    merged.push_back(s);
+                }
+            }
+        };
+
+        process(program, fs::path(mainFile).parent_path().string());
+        return std::make_shared<ast::BlockStmt>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, "", mainFile, 0, 0), merged);
     }
 
     bool compileToNative(ast::StmtPtr program, const std::string& filename,
@@ -313,6 +409,22 @@ public:
             jit->getMainJITDylib().addGenerator(std::move(*gen));
         }
 
+        // Register the Tocin runtime (channels/goroutines) so JIT'd code can
+        // call it. Taking the addresses also forces these symbols to be linked.
+        {
+            llvm::orc::SymbolMap rt;
+            auto def = [&](const char *name, void *addr) {
+                rt[jit->mangleAndIntern(name)] = llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(addr), llvm::JITSymbolFlags::Exported);
+            };
+            def("__tocin_chan_new", reinterpret_cast<void *>(&__tocin_chan_new));
+            def("__tocin_chan_send", reinterpret_cast<void *>(&__tocin_chan_send));
+            def("__tocin_chan_recv", reinterpret_cast<void *>(&__tocin_chan_recv));
+            def("__tocin_go", reinterpret_cast<void *>(&__tocin_go));
+            def("__tocin_join_all", reinterpret_cast<void *>(&__tocin_join_all));
+            llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
+        }
+
         if (auto err = jit->addIRModule(
                 llvm::orc::ThreadSafeModule(std::move(module), std::move(context))))
         {
@@ -389,7 +501,13 @@ public:
     bool linkExecutable(const std::string& objPath, const std::string& exePath)
     {
         std::string cc = std::getenv("CC") ? std::getenv("CC") : "cc";
-        std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\" -lm -lpthread";
+        std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\"";
+        // Link the Tocin runtime (channels/goroutines) so programs that use
+        // concurrency resolve their __tocin_* calls.
+#ifdef TOCIN_RUNTIME_LIB
+        cmd += std::string(" \"") + TOCIN_RUNTIME_LIB + "\"";
+#endif
+        cmd += " -lm -lpthread -lstdc++";
         int rc = std::system(cmd.c_str());
         if (rc != 0)
         {

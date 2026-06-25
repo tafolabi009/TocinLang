@@ -1,0 +1,7 @@
+// expect: 42
+struct Counter { value: int; }
+impl Counter {
+    def get(self) -> int { return self.value; }
+    def doubled(self) -> int { return self.get() + self.get(); }
+}
+def main() { let c = Counter(21); return c.doubled(); }

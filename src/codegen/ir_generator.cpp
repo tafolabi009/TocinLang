@@ -222,6 +222,11 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
     {
         std::string typeName = simpleType->toString();
 
+        // Resolve active generic type-parameter bindings first (e.g. T -> i64).
+        auto bound = typeBindings.find(typeName);
+        if (bound != typeBindings.end())
+            return bound->second;
+
         // Check for basic type names
         if (typeName == "int" || typeName == "i64")
         {
@@ -280,27 +285,16 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         std::string baseName = genericType->name;
         const auto &typeArgs = genericType->typeArguments;
 
-        if (baseName == "list")
+        // Channels, lists and arrays are opaque heap handles (pointers).
+        // Arrays use the flat [i64 length][elems...] layout produced by
+        // visitListExpr, so a list/array value is just a pointer.
+        if (baseName == "channel" || baseName == "Channel" || baseName == "chan" ||
+            baseName == "list" || baseName == "array" || baseName == "List" ||
+            baseName == "Array")
+            return llvm::PointerType::get(context, 0);
+
+        if (false)
         {
-            // list<T> is represented as { int64 length, T* data }
-            if (!typeArgs.empty())
-            {
-                llvm::Type *elementType = getLLVMType(typeArgs[0]);
-                std::vector<llvm::Type *> fields = {
-                    llvm::Type::getInt64Ty(context),
-                    llvm::PointerType::get(context, 0) // opaque pointer for data array
-                };
-
-                // Create or get a struct type for this list
-                std::string mangledName = mangleGenericName("list", typeArgs);
-                llvm::StructType *listType = llvm::StructType::getTypeByName(context, mangledName);
-                if (!listType)
-                {
-                    listType = llvm::StructType::create(context, fields, mangledName);
-                }
-
-                return listType;
-            }
         }
         else if (baseName == "dict")
         {
@@ -611,6 +605,21 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     if (!vcls.empty())
         varClasses[stmt->name] = vcls;
 
+    // Track array element type so indexing into this variable loads/stores the
+    // right element type.
+    if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
+    {
+        varArrayElem[stmt->name] =
+            lst->elements.empty() ? llvm::Type::getInt64Ty(context)
+                                  : inferExprType(lst->elements[0], {});
+    }
+    else if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(stmt->initializer))
+    {
+        auto it = varArrayElem.find(v->name);
+        if (it != varArrayElem.end())
+            varArrayElem[stmt->name] = it->second;
+    }
+
     // If there's an initializer, store its value
     if (stmt->initializer)
     {
@@ -736,10 +745,19 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         return;
     }
 
-    // Handle generic functions
+    // Generic functions are templates: record them and instantiate lazily
+    // (monomorphize) when called with concrete argument types.
     if (stmt->isGeneric())
     {
-        // ... existing generic function implementation ...
+        genericFunctions[stmt->name] = stmt;
+        return;
+    }
+
+    // A body-less function is an external (C/FFI) declaration: emit only the
+    // prototype and let the linker/JIT resolve the real symbol.
+    if (!stmt->body)
+    {
+        declareFunctionProto(stmt);
         return;
     }
 
@@ -812,6 +830,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
                 arg.getType(), nullptr, stmt->parameters[idx].name);
             builder.CreateStore(&arg, alloca);
             namedValues[stmt->parameters[idx].name] = alloca;
+            recordArrayParam(stmt->parameters[idx].name, stmt->parameters[idx].type);
         }
         idx++;
     }
@@ -1013,6 +1032,95 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     {
         std::string funcName = varExpr->name;
 
+        // len(arr) reads the length stored in the array header (offset 0).
+        if (funcName == "len" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            llvm::Value *base = lastValue;
+            if (!base) return;
+            lastValue = builder.CreateLoad(llvm::Type::getInt64Ty(context), base, "len");
+            return;
+        }
+
+        // channel() creation -> __tocin_chan_new().
+        if (funcName == "__chan_new")
+        {
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Function *f = module->getFunction("__tocin_chan_new");
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(ptrTy, {}, false),
+                                           llvm::Function::ExternalLinkage, "__tocin_chan_new", *module);
+            lastValue = builder.CreateCall(f, {}, "chan");
+            return;
+        }
+
+        // Math standard library: unary libm functions (double -> double).
+        static const std::set<std::string> unaryMath = {
+            "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+            "exp", "log", "log2", "log10", "floor", "ceil", "round", "fabs"};
+        llvm::Type *dbl = llvm::Type::getDoubleTy(context);
+        if (unaryMath.count(funcName) && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            llvm::Value *x = lastValue;
+            if (x->getType()->isIntegerTy())
+                x = builder.CreateSIToFP(x, dbl, "tofp");
+            llvm::Function *f = module->getFunction(funcName);
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl}, false),
+                                           llvm::Function::ExternalLinkage, funcName, *module);
+            lastValue = builder.CreateCall(f, {x}, funcName);
+            return;
+        }
+        if (funcName == "pow" && expr->arguments.size() == 2)
+        {
+            expr->arguments[0]->accept(*this); llvm::Value *a = lastValue;
+            expr->arguments[1]->accept(*this); llvm::Value *b = lastValue;
+            if (!a || !b) return;
+            if (a->getType()->isIntegerTy()) a = builder.CreateSIToFP(a, dbl, "tofp");
+            if (b->getType()->isIntegerTy()) b = builder.CreateSIToFP(b, dbl, "tofp");
+            llvm::Function *f = module->getFunction("pow");
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl, dbl}, false),
+                                           llvm::Function::ExternalLinkage, "pow", *module);
+            lastValue = builder.CreateCall(f, {a, b}, "pow");
+            return;
+        }
+        if (funcName == "abs" && expr->arguments.size() == 1)
+        {
+            expr->arguments[0]->accept(*this);
+            if (!lastValue) return;
+            llvm::Value *x = lastValue;
+            if (x->getType()->isFloatingPointTy())
+            {
+                llvm::Value *neg = builder.CreateFNeg(x, "fneg");
+                llvm::Value *lt = builder.CreateFCmpOLT(x, llvm::ConstantFP::get(x->getType(), 0.0), "ltz");
+                lastValue = builder.CreateSelect(lt, neg, x, "fabs");
+            }
+            else
+            {
+                llvm::Value *neg = builder.CreateNeg(x, "neg");
+                llvm::Value *lt = builder.CreateICmpSLT(x, llvm::ConstantInt::get(x->getType(), 0), "ltz");
+                lastValue = builder.CreateSelect(lt, neg, x, "abs");
+            }
+            return;
+        }
+        if ((funcName == "min" || funcName == "max") && expr->arguments.size() == 2)
+        {
+            expr->arguments[0]->accept(*this); llvm::Value *a = lastValue;
+            expr->arguments[1]->accept(*this); llvm::Value *b = lastValue;
+            if (!a || !b) return;
+            bool wantMin = (funcName == "min");
+            llvm::Value *cmp;
+            if (a->getType()->isFloatingPointTy() || b->getType()->isFloatingPointTy())
+                cmp = wantMin ? builder.CreateFCmpOLT(a, b, "cmp") : builder.CreateFCmpOGT(a, b, "cmp");
+            else
+                cmp = wantMin ? builder.CreateICmpSLT(a, b, "cmp") : builder.CreateICmpSGT(a, b, "cmp");
+            lastValue = builder.CreateSelect(cmp, a, b, funcName);
+            return;
+        }
+
         // print()/println() are built-ins forwarded to printf. println appends
         // a newline. Two calling styles are supported:
         //   * format style: print("x = {}, y = {}", x, y)  (first arg is a
@@ -1102,6 +1210,53 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 format += "\n";
             printfArgs[0] = builder.CreateGlobalString(format, "fmt");
             lastValue = builder.CreateCall(printfFunc->getFunctionType(), printfFunc, printfArgs);
+            return;
+        }
+
+        // Generic function call: monomorphize for the concrete argument types.
+        auto git = genericFunctions.find(funcName);
+        if (git != genericFunctions.end())
+        {
+            ast::FunctionStmt *tmpl = git->second;
+            std::vector<llvm::Value *> argVals;
+            for (const auto &a : expr->arguments)
+            {
+                a->accept(*this);
+                if (!lastValue) return;
+                argVals.push_back(lastValue);
+            }
+            // Infer type-parameter bindings from argument types.
+            std::map<std::string, llvm::Type *> bindings;
+            std::set<std::string> tparams;
+            for (const auto &tp : tmpl->typeParameters)
+                tparams.insert(tp.getName());
+            for (size_t i = 0; i < tmpl->parameters.size() && i < argVals.size(); ++i)
+            {
+                std::string pt = tmpl->parameters[i].type ? tmpl->parameters[i].type->toString() : "";
+                if (tparams.count(pt) && !bindings.count(pt))
+                    bindings[pt] = argVals[i]->getType();
+            }
+            for (const auto &tp : tmpl->typeParameters)
+                if (!bindings.count(tp.getName()))
+                    bindings[tp.getName()] = llvm::Type::getInt64Ty(context);
+
+            llvm::Function *inst = emitGenericInstance(tmpl, bindings);
+            llvm::FunctionType *ift = inst->getFunctionType();
+            std::vector<llvm::Value *> callArgs;
+            for (size_t i = 0; i < argVals.size(); ++i)
+            {
+                llvm::Value *v = argVals[i];
+                if (i < ift->getNumParams() && v->getType() != ift->getParamType(i))
+                {
+                    llvm::Type *pt = ift->getParamType(i);
+                    if (v->getType()->isIntegerTy() && pt->isIntegerTy())
+                        v = builder.CreateIntCast(v, pt, true, "argcast");
+                    else if (v->getType()->isFloatingPointTy() && pt->isFloatingPointTy())
+                        v = builder.CreateFPCast(v, pt, "argcast");
+                }
+                callArgs.push_back(v);
+            }
+            lastValue = builder.CreateCall(ift, inst, callArgs);
             return;
         }
 
@@ -1755,101 +1910,51 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
 
 void IRGenerator::visitListExpr(ast::ListExpr *expr)
 {
-    // Use getType() method for type information
-    ast::TypePtr exprType = expr->getType();
-
-    if (expr->elements.empty())
-    {
-        // Create an empty list using the type info
-        createEmptyList(exprType);
-        return;
-    }
-
-    // Evaluate the first element to determine type
-    expr->elements[0]->accept(*this);
-    llvm::Value *firstElement = lastValue;
-    if (!firstElement)
-        return;
-
-    // Get element type
-    llvm::Type *elementType = firstElement->getType();
-
-    // Create list struct type: { int64_t length, elementType* data }
-    std::vector<llvm::Type *> listFields = {
-        llvm::Type::getInt64Ty(context),   // length
-        llvm::PointerType::get(context, 0) // opaque pointer for data
-    };
-    llvm::StructType *listStructType = llvm::StructType::get(context, listFields);
-
-    // Allocate list struct
-    llvm::AllocaInst *listAlloc = builder.CreateAlloca(listStructType, nullptr, "list");
-
-    // Set length
-    llvm::Value *lengthPtr = builder.CreateStructGEP(listStructType, listAlloc, 0, "list.length");
-    builder.CreateStore(llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), expr->elements.size()), lengthPtr);
-
-    // Allocate array for elements using the correct CreateMalloc signature
-    llvm::Value *arraySize = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), expr->elements.size());
-
-    // Calculate the size of each element
-    llvm::Value *elementSize = llvm::ConstantExpr::getSizeOf(elementType);
-
-    // Calculate total allocation size
-    llvm::Value *totalSize = builder.CreateMul(arraySize, elementSize);
-
-    // Call malloc
-    llvm::FunctionType *mallocType = llvm::FunctionType::get(
-        llvm::PointerType::get(context, 0),
-        {llvm::Type::getInt64Ty(context)},
-        false);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     llvm::Function *mallocFunc = getStdLibFunction("malloc");
-    if (!mallocFunc)
+
+    // Determine the element type from the first element (default to i64).
+    llvm::Type *elemTy = i64;
+    std::vector<llvm::Value *> elems;
+    for (auto &e : expr->elements)
     {
-        mallocFunc = llvm::Function::Create(
-            mallocType, llvm::Function::ExternalLinkage, "malloc", *module);
+        e->accept(*this);
+        if (!lastValue) return;
+        elems.push_back(lastValue);
     }
+    if (!elems.empty())
+        elemTy = elems[0]->getType();
 
-    llvm::Value *dataPtr = builder.CreateCall(mallocFunc, {totalSize}, "list.data");
+    // Layout: [ i64 length ][ elem0 ][ elem1 ]...  in one heap block.
+    llvm::Value *count = llvm::ConstantInt::get(i64, elems.size());
+    llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+    llvm::Value *header = llvm::ConstantInt::get(i64, 8);
+    llvm::Value *total = builder.CreateAdd(header, builder.CreateMul(count, elemSize), "arr.size");
+    llvm::Value *base = builder.CreateCall(mallocFunc->getFunctionType(), mallocFunc, {total}, "arr");
 
-    // Store data pointer
-    llvm::Value *dataStorePtr = builder.CreateStructGEP(listStructType, listAlloc, 1, "list.data_ptr");
-    builder.CreateStore(dataPtr, dataStorePtr);
+    // Store the length in the header.
+    builder.CreateStore(count, base);
 
-    // Store first element - bitcast to the right type first
-    llvm::Value *typedPtr = builder.CreateBitCast(dataPtr,
-                                                  llvm::PointerType::get(elementType, 0), "typed_data");
-
-    llvm::Value *elementPtr = builder.CreateGEP(elementType, typedPtr,
-                                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0),
-                                                "list.element");
-    builder.CreateStore(firstElement, elementPtr);
-
-    // Process rest of elements
-    for (size_t i = 1; i < expr->elements.size(); ++i)
+    // Store each element at offset 8 + i*sizeof(elem).
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    for (size_t i = 0; i < elems.size(); ++i)
     {
-        expr->elements[i]->accept(*this);
-        llvm::Value *element = lastValue;
-        if (!element)
-            return;
-
-        // Validate element type
-        if (element->getType() != elementType)
+        llvm::Value *v = elems[i];
+        if (v->getType() != elemTy)
         {
-            errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
-                                     "List elements must have the same type",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            return;
+            if (v->getType()->isIntegerTy() && elemTy->isIntegerTy())
+                v = builder.CreateIntCast(v, elemTy, true, "ecast");
+            else if (v->getType()->isFloatingPointTy() && elemTy->isFloatingPointTy())
+                v = builder.CreateFPCast(v, elemTy, "ecast");
         }
-
-        // Store element
-        elementPtr = builder.CreateGEP(elementType, typedPtr,
-                                       llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i),
-                                       "list.element");
-        builder.CreateStore(element, elementPtr);
+        llvm::Value *off = builder.CreateAdd(
+            header, builder.CreateMul(llvm::ConstantInt::get(i64, i), elemSize), "arr.off");
+        llvm::Value *slot = builder.CreateGEP(i8, base, off, "arr.slot");
+        builder.CreateStore(v, slot);
     }
 
-    // Return list
-    lastValue = listAlloc;
+    lastValue = base;
+    lastExprArrayElem = elemTy;
 }
 
 void IRGenerator::createEmptyList(ast::TypePtr listTypeArg)
@@ -2144,6 +2249,157 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
     return "";
 }
 
+void IRGenerator::recordArrayParam(const std::string &name, const ast::TypePtr &type)
+{
+    if (auto g = std::dynamic_pointer_cast<ast::GenericType>(type))
+    {
+        if ((g->name == "list" || g->name == "array" || g->name == "List" || g->name == "Array") &&
+            !g->typeArguments.empty())
+            varArrayElem[name] = getLLVMType(g->typeArguments[0]);
+    }
+}
+
+llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
+{
+    if (!expr)
+        return llvm::Type::getInt64Ty(context);
+    if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+    {
+        auto it = varArrayElem.find(var->name);
+        if (it != varArrayElem.end())
+            return it->second;
+    }
+    if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(expr))
+    {
+        if (!lst->elements.empty())
+            return inferExprType(lst->elements[0], {});
+    }
+    if (auto idx = std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+    {
+        // Nested arrays: element of an element is the same scalar type for now.
+        return getArrayElemType(idx->object);
+    }
+    return llvm::Type::getInt64Ty(context);
+}
+
+void IRGenerator::visitIndexExpr(ast::IndexExpr *expr)
+{
+    // Evaluate the array base pointer and the index.
+    expr->object->accept(*this);
+    llvm::Value *base = lastValue;
+    if (!base) return;
+    expr->index->accept(*this);
+    llvm::Value *index = lastValue;
+    if (!index) return;
+
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    if (!index->getType()->isIntegerTy(64))
+        index = builder.CreateIntCast(index, i64, true, "idx");
+
+    llvm::Type *elemTy = getArrayElemType(expr->object);
+    llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+    // Offset = 8 (length header) + index * sizeof(elem).
+    llvm::Value *off = builder.CreateAdd(
+        llvm::ConstantInt::get(i64, 8),
+        builder.CreateMul(index, elemSize), "idx.off");
+    llvm::Value *slot = builder.CreateGEP(i8, base, off, "idx.slot");
+    lastValue = builder.CreateLoad(elemTy, slot, "idx.val");
+}
+
+std::string IRGenerator::llvmTypeName(llvm::Type *t)
+{
+    if (t->isIntegerTy(1)) return "i1";
+    if (t->isIntegerTy(64)) return "i64";
+    if (t->isIntegerTy()) return "i" + std::to_string(t->getIntegerBitWidth());
+    if (t->isDoubleTy()) return "f64";
+    if (t->isFloatTy()) return "f32";
+    if (t->isPointerTy()) return "ptr";
+    return "t";
+}
+
+llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
+                                                const std::map<std::string, llvm::Type *> &bindings)
+{
+    // Mangle the instance name from the concrete type arguments.
+    std::string mangled = stmt->name;
+    for (const auto &tp : stmt->typeParameters)
+    {
+        auto it = bindings.find(tp.getName());
+        mangled += "$" + (it != bindings.end() ? llvmTypeName(it->second) : "t");
+    }
+    if (llvm::Function *existing = module->getFunction(mangled))
+        return existing;
+
+    // Save codegen state.
+    auto savedBindings = typeBindings;
+    auto savedNamed = namedValues;
+    auto savedVarClasses = varClasses;
+    auto savedArrayElem = varArrayElem;
+    llvm::Function *savedFunction = currentFunction;
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    typeBindings = bindings;
+
+    // Build the concrete signature (getLLVMType resolves type params).
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &p : stmt->parameters)
+    {
+        llvm::Type *t = getLLVMType(p.type);
+        paramTypes.push_back(t ? t : llvm::Type::getInt64Ty(context));
+    }
+    llvm::Type *retType = stmt->returnType ? getLLVMType(stmt->returnType)
+                                           : inferFunctionReturnType(stmt);
+    if (!retType)
+        retType = llvm::Type::getVoidTy(context);
+    auto *ft = llvm::FunctionType::get(retType, paramTypes, false);
+    auto *function = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, mangled, module.get());
+
+    // Generate the body.
+    auto *entry = llvm::BasicBlock::Create(context, "entry", function);
+    builder.SetInsertPoint(entry);
+    currentFunction = function;
+    namedValues.clear();
+    varClasses.clear();
+    varArrayElem.clear();
+    unsigned i = 0;
+    for (auto &arg : function->args())
+    {
+        const std::string &pname = stmt->parameters[i].name;
+        arg.setName(pname);
+        llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
+        builder.CreateStore(&arg, alloca);
+        namedValues[pname] = alloca;
+        recordArrayParam(pname, stmt->parameters[i].type);
+        ++i;
+    }
+    if (stmt->body)
+        stmt->body->accept(*this);
+    if (!builder.GetInsertBlock()->getTerminator())
+    {
+        if (retType->isVoidTy())
+            builder.CreateRetVoid();
+        else if (retType->isIntegerTy())
+            builder.CreateRet(llvm::ConstantInt::get(retType, 0));
+        else if (retType->isFloatingPointTy())
+            builder.CreateRet(llvm::ConstantFP::get(retType, 0.0));
+        else if (retType->isPointerTy())
+            builder.CreateRet(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(retType)));
+        else
+            builder.CreateRet(llvm::UndefValue::get(retType));
+    }
+    llvm::verifyFunction(*function);
+
+    // Restore state.
+    typeBindings = savedBindings;
+    namedValues = savedNamed;
+    varClasses = savedVarClasses;
+    varArrayElem = savedArrayElem;
+    currentFunction = savedFunction;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
+    return function;
+}
+
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
 {
     llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
@@ -2200,6 +2456,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
         llvm::AllocaInst *alloca = createEntryBlockAlloca(function, pname, arg.getType());
         builder.CreateStore(&arg, alloca);
         namedValues[pname] = alloca;
+        recordArrayParam(pname, method->parameters[ai].type);
         if (pname == "self")
             varClasses["self"] = className;
         ++ai;
@@ -2869,7 +3126,12 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     for (auto &s : stmts)
     {
         if (auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(s))
-            declareFunctionProto(fn.get());
+        {
+            if (fn->isGeneric())
+                genericFunctions[fn->name] = fn.get();  // record template for lazy instantiation
+            else
+                declareFunctionProto(fn.get());
+        }
         else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
         {
             auto cit = classTypes.find(cls->name);
@@ -2878,6 +3140,16 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
             for (auto &m : cls->methods)
                 if (auto method = std::dynamic_pointer_cast<ast::FunctionStmt>(m))
                     declareMethodProto(cls->name, cit->second.classType, method.get());
+        }
+        else if (auto impl = std::dynamic_pointer_cast<ast::ImplStmt>(s))
+        {
+            std::string typeName = impl->type ? impl->type->toString() : "";
+            auto cit = classTypes.find(typeName);
+            if (cit == classTypes.end())
+                continue;
+            for (auto &m : impl->methods)
+                if (m && m->body)
+                    declareMethodProto(typeName, cit->second.classType, m.get());
         }
     }
 }
@@ -2977,6 +3249,38 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
             lastValue = nullptr;
             return;
         }
+    }
+
+    // Handle indexed assignment (arr[i] = value)
+    if (auto idxExpr = std::dynamic_pointer_cast<ast::IndexExpr>(expr->target))
+    {
+        idxExpr->object->accept(*this);
+        llvm::Value *base = lastValue;
+        if (!base) return;
+        idxExpr->index->accept(*this);
+        llvm::Value *index = lastValue;
+        if (!index) return;
+
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+        if (!index->getType()->isIntegerTy(64))
+            index = builder.CreateIntCast(index, i64, true, "idx");
+        llvm::Type *elemTy = getArrayElemType(idxExpr->object);
+        if (rhs->getType() != elemTy)
+        {
+            if (rhs->getType()->isIntegerTy() && elemTy->isIntegerTy())
+                rhs = builder.CreateIntCast(rhs, elemTy, true, "ecast");
+            else if (rhs->getType()->isFloatingPointTy() && elemTy->isFloatingPointTy())
+                rhs = builder.CreateFPCast(rhs, elemTy, "ecast");
+        }
+        llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+        llvm::Value *off = builder.CreateAdd(
+            llvm::ConstantInt::get(i64, 8),
+            builder.CreateMul(index, elemSize), "idx.off");
+        llvm::Value *slot = builder.CreateGEP(i8, base, off, "idx.slot");
+        builder.CreateStore(rhs, slot);
+        lastValue = rhs;
+        return;
     }
 
     // Handle property assignment (obj.prop = value)
@@ -3707,170 +4011,121 @@ void IRGenerator::visitAwaitExpr(ast::AwaitExpr *expr)
 }
 
 void codegen::IRGenerator::visitGoStmt(ast::GoStmt* stmt) {
-    // Generate IR for goroutine launch (go statement)
-    
-    // First, generate IR for the expression (function call)
-    stmt->expression->accept(*this);
-    llvm::Value* functionCall = lastValue;
-    
-    if (!functionCall) {
+    // go f(args): run f(args) on a new OS thread. Arguments are packed into a
+    // heap struct; a thunk unpacks them and calls f, then frees the pack.
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->expression);
+    if (!call) {
         errorHandler.reportError(error::ErrorCode::C013_INVALID_SPAWN_OPERATION,
-                               "Invalid expression in go statement",
-                               std::string(stmt->token.filename), stmt->token.line, stmt->token.column,
-                               error::ErrorSeverity::ERROR);
+                                 "'go' requires a function call",
+                                 std::string(stmt->token.filename), stmt->token.line,
+                                 stmt->token.column, error::ErrorSeverity::ERROR);
         return;
     }
-    
-    // Get the function type
-    llvm::FunctionType* funcType = nullptr;
-    if (auto callInst = llvm::dyn_cast<llvm::CallInst>(functionCall)) {
-        funcType = callInst->getFunctionType();
-    } else {
+    auto calleeVar = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee);
+    llvm::Function *target = calleeVar ? module->getFunction(calleeVar->name) : nullptr;
+    if (!target) {
         errorHandler.reportError(error::ErrorCode::C013_INVALID_SPAWN_OPERATION,
-                               "Go statement requires a function call",
-                               std::string(stmt->token.filename), stmt->token.line, stmt->token.column,
-                               error::ErrorSeverity::ERROR);
+                                 "'go' target must be a known function",
+                                 std::string(stmt->token.filename), stmt->token.line,
+                                 stmt->token.column, error::ErrorSeverity::ERROR);
         return;
     }
-    
-    // Create a wrapper function that will be executed in a goroutine
-    std::string wrapperName = "goroutine_wrapper_" + std::to_string(getNextId());
-    llvm::Function* wrapperFunc = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false),
-        llvm::Function::InternalLinkage,
-        wrapperName,
-        module.get()
-    );
-    
-    // Create the wrapper function body
-    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", wrapperFunc);
-    builder.SetInsertPoint(entryBlock);
-    
-    // Call the original function
-    builder.CreateCall(funcType, functionCall);
-    
-    // Return void
+
+    // Evaluate arguments in the current function.
+    std::vector<llvm::Value *> args;
+    std::vector<llvm::Type *> argTypes;
+    for (auto &a : call->arguments) {
+        a->accept(*this);
+        if (!lastValue) return;
+        args.push_back(lastValue);
+        argTypes.push_back(lastValue->getType());
+    }
+
+    llvm::Function *mallocF = stdLibFunctions["malloc"];
+    llvm::Function *freeF = stdLibFunctions["free"];
+    llvm::StructType *packTy = llvm::StructType::get(context, argTypes);
+    llvm::Value *pack = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr));
+    if (!argTypes.empty()) {
+        llvm::Value *sz = llvm::ConstantExpr::getSizeOf(packTy);
+        pack = builder.CreateCall(mallocF->getFunctionType(), mallocF, {sz}, "gopack");
+        for (size_t i = 0; i < args.size(); ++i) {
+            llvm::Value *fp = builder.CreateStructGEP(packTy, pack, (unsigned)i, "go.arg");
+            builder.CreateStore(args[i], fp);
+        }
+    }
+
+    // Build the thunk: void thunk(ptr p) { args = unpack(p); f(args); free(p); }
+    std::string thunkName = "go_thunk_" + std::to_string(getNextId());
+    llvm::Function *thunk = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr}, false),
+        llvm::Function::InternalLinkage, thunkName, module.get());
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    llvm::Function *savedFn = currentFunction;
+    llvm::BasicBlock *entry = llvm::BasicBlock::Create(context, "entry", thunk);
+    builder.SetInsertPoint(entry);
+    currentFunction = thunk;
+    llvm::Value *p = thunk->getArg(0);
+    std::vector<llvm::Value *> callArgs;
+    for (size_t i = 0; i < argTypes.size(); ++i) {
+        llvm::Value *fp = builder.CreateStructGEP(packTy, p, (unsigned)i, "th.arg");
+        callArgs.push_back(builder.CreateLoad(argTypes[i], fp, "th.val"));
+    }
+    builder.CreateCall(target->getFunctionType(), target, callArgs);
+    if (!argTypes.empty() && freeF)
+        builder.CreateCall(freeF->getFunctionType(), freeF, {p});
     builder.CreateRetVoid();
-    
-    // Schedule the wrapper function to run in a goroutine
-    // This would typically call a runtime function to schedule the task
-    std::vector<llvm::Value*> args = {
-        llvm::ConstantExpr::getBitCast(wrapperFunc, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0))
-    };
-    
-    // Get the runtime scheduler function
-    llvm::Function* schedulerFunc = module->getFunction("runtime_schedule_goroutine");
-    if (!schedulerFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* schedulerType = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(context),
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
-            false
-        );
-        schedulerFunc = llvm::Function::Create(
-            schedulerType,
-            llvm::Function::ExternalLinkage,
-            "runtime_schedule_goroutine",
-            module.get()
-        );
-    }
-    
-    // Call the scheduler
-    builder.CreateCall(schedulerFunc, args);
-    
-    // Set the current value to void
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    builder.SetInsertPoint(savedBlock);
+    currentFunction = savedFn;
+
+    // __tocin_go(thunk, pack)
+    llvm::Function *goF = module->getFunction("__tocin_go");
+    if (!goF)
+        goF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr, ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_go", *module);
+    builder.CreateCall(goF, {thunk, pack});
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitChannelSendExpr(ast::ChannelSendExpr* expr) {
-    // Generate IR for channel send operation (channel <- value)
-    
-    // Generate IR for the channel
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     expr->channel->accept(*this);
-    llvm::Value* channel = lastValue;
-    
-    // Generate IR for the value
+    llvm::Value *ch = lastValue;
     expr->value->accept(*this);
-    llvm::Value* value = lastValue;
-    
-    if (!channel || !value) {
-        errorHandler.reportError(error::ErrorCode::C011_INVALID_CHANNEL_OPERATION,
-                               "Invalid channel or value in send operation",
-                               std::string(expr->token.filename), expr->token.line, expr->token.column,
-                               error::ErrorSeverity::ERROR);
-        return;
-    }
-    
-    // Get the runtime channel send function
-    llvm::Function* sendFunc = module->getFunction("runtime_channel_send");
-    if (!sendFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* sendType = llvm::FunctionType::get(
-            llvm::Type::getInt1Ty(context), // Returns bool (success/failure)
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0), llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // channel, value
-            false
-        );
-        sendFunc = llvm::Function::Create(
-            sendType,
-            llvm::Function::ExternalLinkage,
-            "runtime_channel_send",
-            module.get()
-        );
-    }
-    
-    // Cast channel and value to void pointers for the runtime call
-    llvm::Value* channelPtr = builder.CreateBitCast(channel, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    llvm::Value* valuePtr = builder.CreateBitCast(value, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    
-    // Call the runtime send function
-    std::vector<llvm::Value*> args = {channelPtr, valuePtr};
-    llvm::Value* result = builder.CreateCall(sendFunc, args);
-    
-    // Set the current value to the result
-    lastValue = result;
+    llvm::Value *v = lastValue;
+    if (!ch || !v) { lastValue = nullptr; return; }
+    // Normalize the value into a 64-bit slot.
+    if (v->getType()->isPointerTy())
+        v = builder.CreatePtrToInt(v, i64, "chv");
+    else if (v->getType()->isDoubleTy())
+        v = builder.CreateBitCast(v, i64, "chv");
+    else if (v->getType()->isFloatTy())
+        v = builder.CreateBitCast(builder.CreateFPExt(v, llvm::Type::getDoubleTy(context)), i64, "chv");
+    else if (v->getType()->isIntegerTy() && !v->getType()->isIntegerTy(64))
+        v = builder.CreateIntCast(v, i64, true, "chv");
+    llvm::Function *sendF = module->getFunction("__tocin_chan_send");
+    if (!sendF)
+        sendF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr, i64}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_send", *module);
+    builder.CreateCall(sendF, {ch, v});
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitChannelReceiveExpr(ast::ChannelReceiveExpr* expr) {
-    // Generate IR for channel receive operation (<-channel)
-    
-    // Generate IR for the channel
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     expr->channel->accept(*this);
-    llvm::Value* channel = lastValue;
-    
-    if (!channel) {
-        errorHandler.reportError(error::ErrorCode::C011_INVALID_CHANNEL_OPERATION,
-                               "Invalid channel in receive operation",
-                               std::string(expr->token.filename), expr->token.line, expr->token.column,
-                               error::ErrorSeverity::ERROR);
-        return;
-    }
-    
-    // Get the runtime channel receive function
-    llvm::Function* receiveFunc = module->getFunction("runtime_channel_receive");
-    if (!receiveFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* receiveType = llvm::FunctionType::get(
-            llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0), // Returns void* (received value)
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // channel
-            false
-        );
-        receiveFunc = llvm::Function::Create(
-            receiveType,
-            llvm::Function::ExternalLinkage,
-            "runtime_channel_receive",
-            module.get()
-        );
-    }
-    
-    // Cast channel to void pointer for the runtime call
-    llvm::Value* channelPtr = builder.CreateBitCast(channel, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    
-    // Call the runtime receive function
-    std::vector<llvm::Value*> args = {channelPtr};
-    llvm::Value* result = builder.CreateCall(receiveFunc, args);
-    
-    // Set the current value to the received value
-    lastValue = result;
+    llvm::Value *ch = lastValue;
+    if (!ch) { lastValue = nullptr; return; }
+    llvm::Function *recvF = module->getFunction("__tocin_chan_recv");
+    if (!recvF)
+        recvF = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_recv", *module);
+    lastValue = builder.CreateCall(recvF, {ch}, "recv");
 }
 
 void codegen::IRGenerator::visitSelectStmt(ast::SelectStmt* stmt) {
@@ -3963,36 +4218,31 @@ int IRGenerator::getNextId() {
 }
 
 void codegen::IRGenerator::visitTraitStmt(ast::TraitStmt* stmt) {
-    // Generate IR for trait statement
-    // Traits are compile-time constructs, so we mainly need to register them
-    
-    // For now, just visit all method signatures to ensure they're valid
-    for (const auto& method : stmt->methods) {
-        if (method) {
-            // Visit the method to ensure it's syntactically valid
-            // In practice, we would register the trait interface
-            method->accept(*this);
-        }
-    }
-    
-    // Trait statements don't generate runtime code
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    // Traits are interfaces: signature-only methods generate no code. Default
+    // methods (with bodies) are materialized per implementing type at the impl
+    // site, so nothing is emitted here.
+    (void)stmt;
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitImplStmt(ast::ImplStmt* stmt) {
-    // Generate IR for implementation statement
-    // This generates the actual method implementations for the trait
-    
-    // Visit all method implementations
-    for (const auto& method : stmt->methods) {
-        if (method) {
-            // Generate IR for each method implementation
-            method->accept(*this);
-        }
+    // An impl block adds methods to a concrete type. Generate each method as a
+    // method of that type (TypeName_methodName) so receiver.method(...) resolves.
+    std::string typeName = stmt->type ? stmt->type->toString() : "";
+    auto it = classTypes.find(typeName);
+    if (it == classTypes.end()) {
+        errorHandler.reportError(error::ErrorCode::T031_UNDEFINED_TYPE,
+                                 "impl target '" + typeName + "' is not a known type",
+                                 "", 0, 0, error::ErrorSeverity::ERROR);
+        lastValue = nullptr;
+        return;
     }
-    
-    // Implementation statements don't have a return value
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    llvm::StructType* st = it->second.classType;
+    for (const auto& method : stmt->methods) {
+        if (method && method->body)
+            generateMethod(typeName, st, method.get());
+    }
+    lastValue = nullptr;
 }
 
 llvm::Value *IRGenerator::getVariable(const std::string &name) {
