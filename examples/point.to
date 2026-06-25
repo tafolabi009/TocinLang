@@ -1,0 +1,16 @@
+// Classes: fields, methods, self, construction and mutation.
+//   tocin examples/point.to --run
+class Point {
+    x: int;
+    y: int;
+    def sum(self) -> int { return self.x + self.y; }
+    def manhattan(self, other: int) -> int { return (self.x + self.y) - other; }
+}
+
+def main() {
+    let p = Point(3, 4);
+    println("initial sum = {}", p.sum());   // 7
+    p.x = 10;                                // mutate a field
+    println("after p.x=10, sum = {}", p.sum()); // 14
+    return p.sum();
+}
