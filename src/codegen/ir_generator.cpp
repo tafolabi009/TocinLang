@@ -753,6 +753,14 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         return;
     }
 
+    // A body-less function is an external (C/FFI) declaration: emit only the
+    // prototype and let the linker/JIT resolve the real symbol.
+    if (!stmt->body)
+    {
+        declareFunctionProto(stmt);
+        return;
+    }
+
     // Handle regular functions
     std::string funcName = stmt->name;
     

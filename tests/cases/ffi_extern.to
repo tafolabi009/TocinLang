@@ -1,0 +1,6 @@
+// expect: 65
+// expect-output: A
+extern def putchar(c: int) -> int;
+def main() {
+    return putchar(65);   // prints 'A', returns 65
+}
