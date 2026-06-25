@@ -42,6 +42,7 @@ namespace lexer
         EQUAL_EQUAL,
         BANG,
         BANG_EQUAL,
+        BANG_BANG,
         NOT_EQUAL,
         LESS,
         LESS_EQUAL,

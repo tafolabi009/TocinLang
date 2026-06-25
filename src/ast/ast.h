@@ -413,11 +413,12 @@ namespace ast
     class GetExpr : public Expression
     {
     public:
-        GetExpr(const lexer::Token &token, ExprPtr object, const std::string &name)
-            : Expression(token), object(std::move(object)), name(name) {}
+        GetExpr(const lexer::Token &token, ExprPtr object, const std::string &name, bool isSafe = false)
+            : Expression(token), object(std::move(object)), name(name), isSafe(isSafe) {}
         void accept(Visitor &visitor) override;
         ExprPtr object;
         std::string name;
+        bool isSafe = false; // true when parsed from `?.` (safe navigation)
         TypePtr getType() const override { return object ? object->getType() : nullptr; }
     };
 
