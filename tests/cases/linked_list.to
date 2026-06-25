@@ -1,0 +1,7 @@
+// expect: 6
+class Node { val: int; next: Node; }
+def sum(n: Node) -> int { if n == None { return 0; } return n.val + sum(n.next); }
+def main() -> int {
+    let a = Node(1, None); let b = Node(2, a); let c = Node(3, b);
+    return sum(c);  // 1+2+3
+}

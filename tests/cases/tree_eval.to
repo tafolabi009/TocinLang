@@ -1,0 +1,14 @@
+// expect: 20
+class Tree { op: int; val: int; left: Tree; right: Tree; }
+def evalTree(t: Tree) -> int {
+    if t.op == 0 { return t.val; }
+    let l = evalTree(t.left); let r = evalTree(t.right);
+    if t.op == 1 { return l + r; }
+    return l * r;
+}
+def leaf(v: int) -> Tree { return Tree(0, v, None, None); }
+def main() -> int {
+    let add = Tree(1, 0, leaf(2), leaf(3));
+    let mul = Tree(2, 0, add, leaf(4));
+    return evalTree(mul);  // (2+3)*4 = 20
+}
