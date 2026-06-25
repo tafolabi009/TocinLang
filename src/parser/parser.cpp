@@ -324,7 +324,62 @@ namespace parser
             return goStmt();
         if (match(lexer::TokenType::SELECT))
             return selectStmt();
+        if (match(lexer::TokenType::TRY))
+            return tryStmt();
+        if (match(lexer::TokenType::THROW))
+            return throwStmt();
         return expressionStmt();
+    }
+
+    // try { ... } catch (e) { ... } finally { ... }
+    // The catch clause and finally clause are each optional, but at least one
+    // must be present. The catch variable is optional: `catch { ... }`.
+    ast::StmtPtr Parser::tryStmt()
+    {
+        lexer::Token keyword = previous();
+        consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after 'try'");
+        ast::StmtPtr tryBlock = blockStmt();
+
+        std::string catchVar;
+        ast::StmtPtr catchBlock = nullptr;
+        if (match(lexer::TokenType::CATCH))
+        {
+            // Optional `(name)` or bare `name` binding for the caught value.
+            if (match(lexer::TokenType::LEFT_PAREN))
+            {
+                if (check(lexer::TokenType::IDENTIFIER))
+                    catchVar = advance().value;
+                consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after catch variable");
+            }
+            else if (check(lexer::TokenType::IDENTIFIER))
+            {
+                catchVar = advance().value;
+            }
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after catch");
+            catchBlock = blockStmt();
+        }
+
+        ast::StmtPtr finallyBlock = nullptr;
+        if (match(lexer::TokenType::FINALLY))
+        {
+            consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after finally");
+            finallyBlock = blockStmt();
+        }
+
+        if (!catchBlock && !finallyBlock)
+            error(keyword, "'try' must be followed by 'catch' or 'finally'");
+
+        return std::make_shared<ast::TryStmt>(keyword, tryBlock, catchVar,
+                                              catchBlock, finallyBlock);
+    }
+
+    // throw <expr>;
+    ast::StmtPtr Parser::throwStmt()
+    {
+        lexer::Token keyword = previous();
+        ast::ExprPtr value = expression();
+        consume(lexer::TokenType::SEMI_COLON, "Expected ';' after thrown value");
+        return std::make_shared<ast::ThrowStmt>(keyword, value);
     }
 
     ast::StmtPtr Parser::expressionStmt()
