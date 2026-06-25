@@ -76,6 +76,8 @@ namespace parser
         ast::StmtPtr matchStmt();
         ast::StmtPtr goStmt();
         ast::StmtPtr selectStmt();
+        ast::StmtPtr tryStmt();
+        ast::StmtPtr throwStmt();
         ast::ExprPtr expression();
         ast::ExprPtr assignment();
         ast::ExprPtr orExpr();

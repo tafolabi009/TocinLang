@@ -1,0 +1,14 @@
+// expect: 7
+// The catch variable is bound to the thrown value and usable in the handler;
+// finally runs and does not change the result.
+def main() {
+    let x = 0;
+    try {
+        throw 7;
+    } catch (e) {
+        x = e;
+    } finally {
+        x = x + 0;
+    }
+    return x;
+}

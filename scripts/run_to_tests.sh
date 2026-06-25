@@ -76,6 +76,24 @@ if [ -z "${LLI_BIN}" ]; then
     exit 2
 fi
 
+# --- Locate the shared Tocin runtime (for channels/goroutines/exceptions) ---
+# lli resolves libc symbols from its own process, but the __tocin_* runtime
+# lives in our own library; -load it so programs using those features run.
+find_runtime_so() {
+    if [ -n "${TOCIN_RUNTIME_SO:-}" ] && [ -f "${TOCIN_RUNTIME_SO}" ]; then
+        echo "${TOCIN_RUNTIME_SO}"; return 0
+    fi
+    local bindir; bindir="$(dirname "${TOCIN_BIN}")"
+    for cand in \
+        "${bindir}/libtocin_runtime.so" \
+        "${bindir}/libtocin_runtime.dylib" \
+        "${REPO_ROOT}/build/libtocin_runtime.so"; do
+        if [ -f "${cand}" ]; then echo "${cand}"; return 0; fi
+    done
+    return 1
+}
+RUNTIME_SO="$(find_runtime_so || true)"
+
 if [ ! -d "${CASES_DIR}" ]; then
     echo "ERROR: cases directory not found: ${CASES_DIR}" >&2
     exit 2
@@ -84,8 +102,15 @@ fi
 echo "Tocin .to test runner"
 echo "  tocin : ${TOCIN_BIN}"
 echo "  lli   : ${LLI_BIN}"
+echo "  rtlib : ${RUNTIME_SO:-<none found; runtime-dependent tests may fail>}"
 echo "  cases : ${CASES_DIR}"
 echo "========================================================"
+
+# lli flag to load the runtime shared library, when available.
+LLI_LOAD_ARGS=()
+if [ -n "${RUNTIME_SO}" ]; then
+    LLI_LOAD_ARGS=(-load "${RUNTIME_SO}")
+fi
 
 # --- Work directory for generated IR ------------------------------------
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tocin_to_tests.XXXXXX")"
@@ -165,7 +190,7 @@ for tofile in "${CASE_FILES[@]}"; do
     fi
 
     # Execute the IR. Capture stdout and exit code.
-    actual_output="$(timeout "${TIMEOUT}" "${LLI_BIN}" "${ll}" 2>"${base}.run.err")"
+    actual_output="$(timeout "${TIMEOUT}" "${LLI_BIN}" "${LLI_LOAD_ARGS[@]}" "${ll}" 2>"${base}.run.err")"
     actual_exit=$?
 
     if [ "${actual_exit}" -eq 124 ]; then
