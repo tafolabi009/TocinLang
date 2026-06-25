@@ -20,6 +20,28 @@
 #include <unordered_map>
 #include <vector>
 
+// ===========================================================================
+// Memory: central allocator. When built with -DTOCIN_HAVE_GC and linked
+// against the Boehm-Demers-Weiser collector (libgc), every Tocin heap
+// allocation is garbage-collected — unreachable arrays, strings, closures,
+// and boxes are reclaimed automatically, so long-running programs do not leak.
+// Without GC it is a thin malloc wrapper (allocations leak unless freed).
+// ===========================================================================
+#ifdef TOCIN_HAVE_GC
+extern "C"
+{
+    void GC_init(void);
+    void *GC_malloc(size_t);
+    void *GC_realloc(void *, size_t);
+    void GC_free(void *);
+    void GC_allow_register_threads(void);
+    int GC_register_my_thread(void *);   // GC_stack_base *
+    int GC_unregister_my_thread(void);
+    int GC_get_stack_base(void *);        // GC_stack_base *
+}
+namespace { struct GC_stack_base { void *mem_base; void *reg_base; }; }
+#endif
+
 namespace
 {
     struct Channel
@@ -32,6 +54,43 @@ namespace
     // Track spawned goroutines so the program can wait for them to finish.
     std::mutex g_threadsMutex;
     std::vector<std::thread> g_threads;
+
+#ifdef TOCIN_HAVE_GC
+    std::once_flag g_gcInit;
+    void tocin_gc_ensure_init()
+    {
+        std::call_once(g_gcInit, [] {
+            GC_init();
+            GC_allow_register_threads();
+        });
+    }
+#endif
+}
+
+extern "C"
+{
+    // Central allocator used by both the compiler-emitted code and the runtime.
+    void *__tocin_alloc(int64_t size)
+    {
+        if (size < 0) size = 0;
+#ifdef TOCIN_HAVE_GC
+        tocin_gc_ensure_init();
+        return GC_malloc((size_t)size);
+#else
+        return std::malloc((size_t)size);
+#endif
+    }
+    // Resize a buffer obtained from __tocin_alloc.
+    void *__tocin_realloc(void *p, int64_t size)
+    {
+        if (size < 0) size = 0;
+#ifdef TOCIN_HAVE_GC
+        tocin_gc_ensure_init();
+        return GC_realloc(p, (size_t)size);
+#else
+        return std::realloc(p, (size_t)size);
+#endif
+    }
 }
 
 extern "C"
@@ -100,7 +159,20 @@ extern "C"
         static std::once_flag atexitFlag;
         std::call_once(atexitFlag, [] { std::atexit(__tocin_join_all); });
         std::lock_guard<std::mutex> lock(g_threadsMutex);
+#ifdef TOCIN_HAVE_GC
+        // Register the goroutine's stack with the collector so values it holds
+        // are treated as roots and not reclaimed while in use.
+        tocin_gc_ensure_init();
+        g_threads.emplace_back([fn, arg] {
+            GC_stack_base sb;
+            if (GC_get_stack_base(&sb) == 0)
+                GC_register_my_thread(&sb);
+            fn(arg);
+            GC_unregister_my_thread();
+        });
+#else
         g_threads.emplace_back(fn, arg);
+#endif
     }
 
     // Wait for all spawned goroutines to finish.
@@ -272,7 +344,7 @@ extern "C"
 {
     static char *tocin_str_empty()
     {
-        char *p = (char *)std::malloc(1);
+        char *p = (char *)__tocin_alloc(1);
         if (p) p[0] = '\0';
         return p;
     }
@@ -292,7 +364,7 @@ extern "C"
         if (start > n) start = n;
         if (len < 0) len = 0;
         if (start + len > n) len = n - start;
-        char *out = (char *)std::malloc((size_t)len + 1);
+        char *out = (char *)__tocin_alloc((size_t)len + 1);
         if (!out) return nullptr;
         std::memcpy(out, s + start, (size_t)len);
         out[len] = '\0';
@@ -323,7 +395,7 @@ extern "C"
         char buf[32];
         int len = std::snprintf(buf, sizeof(buf), "%lld", (long long)n);
         if (len < 0) return tocin_str_empty();
-        char *out = (char *)std::malloc((size_t)len + 1);
+        char *out = (char *)__tocin_alloc((size_t)len + 1);
         if (!out) return nullptr;
         std::memcpy(out, buf, (size_t)len + 1);
         return out;
@@ -331,7 +403,7 @@ extern "C"
     int64_t __tocin_str_to_int(const char *s) { return s ? (int64_t)std::atoll(s) : 0; }
     char *__tocin_char_to_str(int64_t c)
     {
-        char *out = (char *)std::malloc(2);
+        char *out = (char *)__tocin_alloc(2);
         if (!out) return nullptr;
         out[0] = (char)(unsigned char)c;
         out[1] = '\0';
@@ -342,7 +414,7 @@ extern "C"
         if (!a) a = "";
         if (!b) b = "";
         size_t la = std::strlen(a), lb = std::strlen(b);
-        char *out = (char *)std::malloc(la + lb + 1);
+        char *out = (char *)__tocin_alloc(la + lb + 1);
         if (!out) return nullptr;
         std::memcpy(out, a, la);
         std::memcpy(out + la, b, lb + 1);
@@ -354,7 +426,7 @@ extern "C"
     {
         if (!s) return tocin_str_empty();
         size_t n = std::strlen(s);
-        char *out = (char *)std::malloc(n + 1);
+        char *out = (char *)__tocin_alloc(n + 1);
         if (!out) return nullptr;
         for (size_t i = 0; i < n; ++i)
             out[i] = (char)std::toupper((unsigned char)s[i]);
@@ -365,7 +437,7 @@ extern "C"
     {
         if (!s) return tocin_str_empty();
         size_t n = std::strlen(s);
-        char *out = (char *)std::malloc(n + 1);
+        char *out = (char *)__tocin_alloc(n + 1);
         if (!out) return nullptr;
         for (size_t i = 0; i < n; ++i)
             out[i] = (char)std::tolower((unsigned char)s[i]);
@@ -397,8 +469,18 @@ extern "C"
         return std::strcmp(s + (ls - lf), suf) == 0 ? 1 : 0;
     }
 
-    // Explicit deallocation for programs that want to manage memory.
-    void __tocin_free(void *p) { if (p) std::free(p); }
+    // Explicit deallocation for programs that want to manage memory. Safe to
+    // call under GC (hint to the collector); a no-op-equivalent if already
+    // unreachable. Only free a buffer you own and never use it again.
+    void __tocin_free(void *p)
+    {
+        if (!p) return;
+#ifdef TOCIN_HAVE_GC
+        GC_free(p);
+#else
+        std::free(p);
+#endif
+    }
 }
 
 // ===========================================================================
@@ -417,7 +499,7 @@ extern "C"
         long sz = std::ftell(f);
         if (sz < 0) { std::fclose(f); return tocin_str_empty(); }
         std::rewind(f);
-        char *buf = (char *)std::malloc((size_t)sz + 1);
+        char *buf = (char *)__tocin_alloc((size_t)sz + 1);
         if (!buf) { std::fclose(f); return tocin_str_empty(); }
         size_t got = std::fread(buf, 1, (size_t)sz, f);
         std::fclose(f);
@@ -447,7 +529,7 @@ extern "C"
     char *__tocin_read_line()
     {
         size_t cap = 128, n = 0;
-        char *buf = (char *)std::malloc(cap);
+        char *buf = (char *)__tocin_alloc(cap);
         if (!buf) return tocin_str_empty();
         int c;
         while ((c = std::fgetc(stdin)) != EOF && c != '\n')
@@ -455,7 +537,7 @@ extern "C"
             if (n + 1 >= cap)
             {
                 cap *= 2;
-                char *nb = (char *)std::realloc(buf, cap);
+                char *nb = (char *)__tocin_realloc(buf, cap);
                 if (!nb) { std::free(buf); return tocin_str_empty(); }
                 buf = nb;
             }

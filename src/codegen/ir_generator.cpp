@@ -103,21 +103,26 @@ void IRGenerator::declareStdLibFunctions()
     // println - prints the message with a newline
     stdLibFunctions["println"] = printfFunc;
 
-    // Memory management functions
+    // Memory management functions. All compiler-emitted allocations go through
+    // __tocin_alloc, the runtime's central allocator: when the runtime is built
+    // with Boehm GC it returns collected memory (no leaks); otherwise it is a
+    // thin malloc wrapper. Keyed as "malloc" so existing call sites are unchanged.
     llvm::FunctionType *mallocType = llvm::FunctionType::get(
         llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0),
         {llvm::Type::getInt64Ty(context)},
         false);
     llvm::Function *mallocFunc = llvm::Function::Create(
-        mallocType, llvm::Function::ExternalLinkage, "malloc", *module);
+        mallocType, llvm::Function::ExternalLinkage, "__tocin_alloc", *module);
     stdLibFunctions["malloc"] = mallocFunc;
 
     llvm::FunctionType *freeType = llvm::FunctionType::get(
         llvm::Type::getVoidTy(context),
         {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
         false);
+    // Pair with __tocin_alloc: under GC this is GC_free, otherwise libc free.
+    // Calling libc free() on a GC pointer would abort ("invalid pointer").
     llvm::Function *freeFunc = llvm::Function::Create(
-        freeType, llvm::Function::ExternalLinkage, "free", *module);
+        freeType, llvm::Function::ExternalLinkage, "__tocin_free", *module);
     stdLibFunctions["free"] = freeFunc;
 
     // libc string helpers (used for string concatenation with '+').

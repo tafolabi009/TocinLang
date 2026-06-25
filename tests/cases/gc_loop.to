@@ -1,0 +1,13 @@
+// expect: 5
+// Allocates ~200k short-lived strings; with GC the heap stays bounded and the
+// program completes. Validates that collected allocations don't crash.
+def main() -> int {
+    let i = 0;
+    let acc = 0;
+    while i < 200000 {
+        let s = intToStr(i) + "-tail";
+        acc = strLen(s);
+        i = i + 1;
+    }
+    return acc - strLen(intToStr(199999));  // 7 ("-tail"=5 + 6digits) - 6 = ... compute below
+}
