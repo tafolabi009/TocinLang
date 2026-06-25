@@ -16,7 +16,7 @@ Tocin is a **statically typed, ahead-of-time compiled** language that lowers to 
 
 Semantics are **value semantics for scalars** (`int`, `float`, `bool` live in registers/stack slots) and **heap handles (opaque pointers) for everything else** — class/struct instances, strings (`char*`), arrays, dynamic collections (`vector`/`map`), channels, and `Option`/`Result` boxes. There is **no garbage collector and no automatic free**: heap allocations (class instances, arrays, string concatenations, `vector`/`map`, `Option`/`Result`) **leak** unless you explicitly free the few things that have a free function. This is fine for short-lived programs and scripts; be aware for long-running ones.
 
-The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). There is **no implicit numeric promotion** (you cannot add an `int` to a `float`), **no closures/captures**, and several keywords exist in the lexer but are **not implemented** in the parser/codegen (notably `break`, `continue`, `switch`, `defer`, most ownership keywords). Treat the verified feature set in this document as the real language.
+The compiler is **pragmatic, not a full type system**. Type inference is local and shallow: a `let` with an initializer infers the variable's LLVM type from that initializer's value; function parameters and return types are explicitly annotated (or the return type is inferred from the body). Mixed int/float arithmetic **does** auto-promote the int operand to `float` (e.g. `3.0 + 2` → `5.0`; `let x: float = 5;` → `5.0`). Lambdas **do** capture enclosing locals **by value** (a snapshot), and the resulting closures can be returned/escape with independent state. `break` and `continue` **work** in every loop form. Some keywords still exist in the lexer but are **not implemented** in the parser/codegen — notably `switch`, `defer`, and most ownership keywords. Treat the verified feature set in this document as the real language.
 
 Key runtime facts:
 - `int` = 64-bit signed (`i64`). `float` = 64-bit (`double`). `bool` = `i1`.
@@ -67,15 +67,19 @@ type           ::= "(" (type ("," type)*)? ")" "->" type            // function 
                  | IDENT ("|" type)*                                // union type (parsed; treated as opaque ptr)
 
 expression     ::= assignment
-assignment     ::= elvis ("=" assignment)?                          // target: var | obj.field | arr[i]
+assignment     ::= elvis (("="|"+="|"-="|"*="|"/="|"%=") assignment)?   // target: var | obj.field | arr[i]
 elvis          ::= or (("?:"|"??") or)*
-or             ::= and ("or" and)*
-and            ::= equality ("and" equality)*
+or             ::= and ("||" and)*
+and            ::= bitOr ("&&" bitOr)*
+bitOr          ::= bitXor ("|" bitXor)*
+bitXor         ::= bitAnd ("^" bitAnd)*
+bitAnd         ::= equality ("&" equality)*
 equality       ::= comparison (("=="|"!=") comparison)*
-comparison     ::= term (("<"|"<="|">"|">=") term)*
+comparison     ::= shift (("<"|"<="|">"|">=") shift)*
+shift          ::= term (("<<"|">>") term)*
 term           ::= factor (("+"|"-") factor)*
 factor         ::= unary (("*"|"/"|"%") unary)*
-unary          ::= ("!"|"-") unary | "await" unary | "new" newExpr | "delete" expr
+unary          ::= ("!"|"-"|"~") unary | "await" unary | "new" newExpr | "delete" expr
                  | "<-" unary               // channel receive (prefix)
                  | call
 call           ::= primary ( "(" args ")" | "." IDENT | "?." IDENT | "!!" | "[" expr "]" | "<-" expr )*
@@ -87,20 +91,24 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
                  | "lambda" "(" params ")" ("->" type)? expression    // lambda: body is ONE expression
 ```
 
-**Operator precedence**, lowest to highest (the recursive-descent chain above is authoritative; a separate Pratt table in `parser.cpp` for `**`, bitwise, and shift ops exists but those operators are **not used by the descent parser**, so in practice only the chain above applies):
+**Operator precedence**, lowest to highest (this is the recursive-descent chain in `parser.cpp` and is authoritative):
 
-1. `=` (assignment, right-assoc)
+1. `=` assignment, and compound assignment `+= -= *= /= %=` (right-assoc; compound desugars to `x = x OP y`)
 2. `?:` `??` (elvis / null-coalescing)
-3. `or`
-4. `and`
-5. `==` `!=`
-6. `<` `<=` `>` `>=`
-7. `+` `-`
-8. `*` `/` `%`
-9. unary `!` `-`, `await`, `new`, `delete`, prefix `<-`
-10. postfix: call `()`, member `.`, safe member `?.`, force-unwrap `!!`, index `[]`, channel send `<-`
+3. `||` or `or` (logical OR — both spellings work)
+4. `&&` or `and` (logical AND — both spellings work)
+5. `|` (bitwise OR)
+6. `^` (bitwise XOR)
+7. `&` (bitwise AND)
+8. `==` `!=`
+9. `<` `<=` `>` `>=`
+10. `<<` `>>` (bit shifts)
+11. `+` `-`
+12. `*` `/` `%`
+13. unary `!` `-` `~`, `await`, `new`, `delete`, prefix `<-`
+14. postfix: call `()`, member `.`, safe member `?.`, force-unwrap `!!`, index `[]`, channel send `<-`
 
-> There is **no `&&` / `||`** — use the keywords `and` / `or`. There is no ternary `?:` in the C sense; `?:` is the Kotlin-style elvis operator (null-coalescing).
+> Both symbolic (`&&` `||`) and keyword (`and` `or`) forms of the logical operators work and are equivalent. Logical NOT is `!` only — the word `not` is **not** an operator. There is no ternary `?:` in the C sense; `?:` is the Kotlin-style elvis operator (null-coalescing). The power operator `**` and `++`/`--` are not implemented.
 
 ---
 
@@ -127,8 +135,8 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 | `extern` | `extern def name(...)->T;` declares a C function (resolved from the process/libm). |
 | `true` / `false` | Boolean literals. |
 | `None` | The null pointer; the empty `Option`; matches `case None:`. |
-| `and` / `or` | Logical AND/OR (there is no `&&`/`||`). |
-| `lambda` | Anonymous function value (body is a single expression). **Non-capturing.** |
+| `and` / `or` | Logical AND/OR. The symbolic forms `&&` / `||` also work and are equivalent. (NOT: use `!`; the word `not` is not an operator.) |
+| `lambda` | Anonymous function value (body is a single expression). **Captures enclosing locals by value** (snapshot at creation); closures may be returned and escape. |
 | `self` | Method receiver (first parameter). |
 | `throw` / `try` / `catch` / `finally` | Exceptions (integer/handle payload via setjmp/longjmp). |
 | `go` | Spawn a goroutine (OS thread): `go f(args);`. |
@@ -140,7 +148,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 
 ### Lexer keywords that are NOT implemented (do NOT use — they will fail to compile)
 
-`break`, `continue`, `switch`, `defer`, `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers.
+`switch`, `defer`, `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break` and `continue` **are** implemented — see §loops.)
 
 > **`break`/`continue` are the most common trap.** They parse as expression statements and produce `error [S001]: Expected expression`. Restructure loops with a boolean flag or a `while` condition instead. **Use `None`, never `null`.**
 
@@ -148,12 +156,16 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 
 | Operator | Meaning | Notes |
 |---|---|---|
-| `+ - * /` | Arithmetic | `/` on ints truncates toward zero. `+` on two strings concatenates (heap-allocates). |
+| `+ - * /` | Arithmetic | `/` on ints truncates toward zero. `+` on two strings concatenates (heap-allocates). Mixed int/float auto-promotes the int to float (`3.0 + 2` → `5.0`, `10 / 4.0` → `2.5`). |
 | `%` | Modulo (integers) | |
-| `== !=` | Equality | Works on ints, floats, and pointer identity. For string *content*, use `strEq`. |
+| `+= -= *= /= %=` | Compound assignment | Desugar to `x = x OP y`. Target: variable, `obj.field`, or `arr[i]`. `s += "x"` concatenates strings. |
+| `== !=` | Equality | Ints, floats, and **strings by value** (`name == "Alice"` compares contents). Non-string pointers (class instances, `None`) compare by identity. |
 | `< <= > >=` | Comparison | Ints and floats. |
-| `and` `or` | Logical | Operands are truthy ints/bools. |
-| `!` | Logical not | `!x` where x is int/bool. |
+| `&& \|\|` or `and` `or` | Logical | Both spellings work and are equivalent. Operands are truthy ints/bools. |
+| `!` | Logical not | `!x` where x is int/bool. The word `not` is **not** an operator. |
+| `& \| ^` | Bitwise AND/OR/XOR | Integer operands. |
+| `<< >>` | Bit shifts | `>>` is arithmetic (sign-preserving). |
+| `~` | Bitwise NOT (unary) | `~0` → `-1`. |
 | unary `-` | Negation | int or float. |
 | `=` | Assignment | Target: variable, `obj.field`, or `arr[i]`. |
 | `a..b` | Range (exclusive of `b`) | Only in `for i in a..b`. `for i in 1..4` yields `1,2,3`. |
@@ -165,7 +177,9 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 | `[]` | Index | Array element read/write: `a[i]`, `a[i] = v`. |
 | `()` | Call | Function/method/constructor/lambda call. |
 
-> Tokens like `**` (power), `&` `|` `^` `<<` `>>` (bitwise/shift), `++`/`--`, `+=`/`-=` etc. are lexed but are **not wired into the expression parser** (the descent parser never consumes them). Do not use them; they will cause parse errors or be misparsed. `|` *is* used inside type annotations to write union types.
+> **Not implemented:** the power operator `**` and the increment/decrement operators `++`/`--`. (Bitwise `& | ^ << >> ~` and compound assignment `+= -= *= /= %=` **are** implemented — see the rows above.) `|` is also used inside type annotations to write union types.
+>
+> **Integer literals** support `0x` hex, `0o` octal, `0b` binary, and `_` digit separators: `0xFF`, `0o17`, `0b1010`, `1_000_000`.
 
 ### Comments
 
@@ -206,7 +220,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 - **`let x: T = expr;`** — `x` has the annotated type `T`; the initializer is cast if it's a compatible int↔int or float↔float, else a type-mismatch error.
 - **Function parameters** must be annotated: `def f(a: int, b: string)`. (Exception: a leading `self` needs no type.)
 - **Return type**: annotate with `-> T` or `: T`. If omitted, it is **inferred from the body's `return` expressions**. `def square(n: int) { return n * n; }` infers `-> int`.
-- **There is NO implicit numeric promotion.** `5 + 3.0` is a compile error (`Cannot add incompatible types`). Make both sides the same kind: write `5.0 + 3.0`, or feed the int through a math builtin (e.g. `sqrt(n)` converts `n` to float), or keep arithmetic within one numeric type.
+- **Mixed int/float arithmetic auto-promotes the int operand to `float`.** `5 + 3.0` → `8.0`, `10 / 4.0` → `2.5`, `2 * 3.5` → `7.0`. A `let x: float = 5;` also promotes the int literal. (Two ints stay int: `5 / 2` → `2`, truncating.)
 - **Comparisons/logical ops** produce `bool`.
 - **String `+` String** → a new heap string (concatenation). `int + int` → `int`. `float + float` → `float`. `ptr + int` → pointer arithmetic (rarely wanted).
 
@@ -648,25 +662,25 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 
 ## 8. GOTCHAS / PITFALLS (read before writing — each is verified)
 
-1. **`break` / `continue` do not exist.** They are reserved words with no parser support and cause `error [S001]: Expected expression`. Refactor with boolean flags or loop conditions. (Also unimplemented: `switch`, `defer`, `panic`, `assert`, `yield`, ownership keywords — see §3.)
+1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (Still unimplemented: `switch`, `defer`, `panic`, `assert`, `yield`, ownership keywords — see §3. Use `match`/`case` instead of `switch`.)
 2. **Use `None`, not `null`.** `null` is a reserved word the parser doesn't accept as a value (`Expected expression`). The empty value is `None` (the null pointer).
 3. **`len` is for array literals only.** `len("hello")` returns garbage (it reads the first 8 bytes of the string as an i64 "length"). For strings use **`strLen`**. `len` works on `[1,2,3]` and `list<int>` params; `vecLen` works on `vector` handles; `mapLen` on `map` handles.
-4. **No implicit int↔float promotion.** `5 + 3.0` is a compile error. Keep arithmetic within one numeric type; write float literals (`5.0`), or route through a math builtin that converts (`sqrt(intExpr)`).
+4. **Mixed int/float arithmetic auto-promotes the int to float.** `5 + 3.0` → `8.0`; `10 / 4.0` → `2.5`. Two ints stay int and `/` truncates (`5 / 2` → `2`). To force float division of two ints, make one a float (`x * 1.0 / y`).
 5. **Collection/map/channel handle parameters need an opaque annotation.** Untyped params are a parse error (every parameter must be `name: Type`). Annotate handles as `v: vector`, `m: map`, or `ch: channel<int>`. Any non-collection type name lowers to an opaque pointer, so `vector`/`map` are just conventions that happen to work.
-6. **Lambdas are non-capturing.** A lambda that references an enclosing local emits invalid IR ("Instruction does not dominate all uses"). Pass everything it needs as parameters. Lambda bodies are a **single expression**, not a block.
-7. **A function-valued local that you call needs an explicit function type.** `let f = picker(); f(6);` fails ("Called value is not a function"). Write `let f: (int) -> int = picker();`. Function-typed *parameters* are fine without extra annotation.
+6. **Lambdas capture enclosing locals BY VALUE** (a snapshot at creation). Mutating the original after capture does not change the captured copy, and a closure may be returned and outlive its defining scope with independent state. Captured variables are read-only inside the lambda for the purpose of affecting the outside. Lambda bodies are a **single expression**, not a block: `lambda (x: int) -> int x + n`.
+7. **Function-valued locals are usually callable without an annotation.** `let f = inc; f(6)`, `let f = lambda (x: int) -> int x+1; f(6)`, and `let f = makeAdder(10); f(7)` all work — the signature is recovered from the right-hand side (a named function, a lambda, or a function whose declared return type is itself a function type). An explicit `let f: (int) -> int = ...` is only needed when the initializer is too opaque for that inference.
 8. **Collection / Option / channel / thrown payloads are 64-bit slots.** They are designed for `int`. Pointers/strings stored *as elements* are bit-cast to/from `i64`; they round-trip as raw addresses but there is no element type tracking, so this is fragile (e.g. don't expect a string read back from a `vector` to format correctly without care). Prefer storing ints; for string-keyed lookups use the dedicated `mapPutStr`/`mapGetStr`.
 9. **`None` is a null pointer.** `?:`, `?.`, `!!`, and `case None:` all hinge on null. `x!!` on a null value calls `abort()` and kills the process. `?:`/`?.` only do anything meaningful when the left side is a pointer type (class/Option/string); on a non-pointer they are effectively identity.
 10. **Math builtins shadow same-named externs.** Declaring `extern def sqrt/abs/min/max/pow/...` will not give you the C function — the builtin handler intercepts the call. Pick different names if you truly need the libc version.
 11. **No garbage collection; memory leaks.** Class instances, arrays, string concatenations, `vector`/`map`, and `Option`/`Result` boxes are `malloc`'d and never auto-freed. Use `vecFree`/`mapFree` where it matters; for short programs, leaking is acceptable.
-12. **`finally` is skipped when `catch`/`try` exits via `return` (or re-throw).** `finally` only runs if control reaches the end of the block normally. If your `catch` block does `return e;`, the `finally` does **not** run. Likewise an early `return` inside the body path that completes normally runs finally, but a `return` *inside* `catch` bypasses it. Don't put required cleanup solely in `finally` if your handlers return early.
+12. **`finally` runs on early return** from `try` or `catch` (it unwinds through a finally stack), as well as on normal completion. Required cleanup in `finally` is honored even when a handler does `return e;`. (Re-throw propagation also runs finally before unwinding to the enclosing handler.)
 13. **Strings are NUL-terminated `char*`.** No length prefix. `strLen` walks to the NUL. Embedded NULs truncate. There are no `char` literals — use integer char codes (`charAt` returns one; `charToStr` builds a 1-char string).
-14. **`==` on strings compares pointers, not contents.** Two equal-looking string literals may or may not be the same pointer. Use `strEq(a, b) == 1` for content equality.
+14. **`==` / `!=` on strings compares contents** (the compiler detects string-typed operands and routes to a value comparison). `name == "Alice"`, `intToStr(42) == "42"`, and `("a"+"b") == "ab"` all behave as expected. Non-string pointers (class instances, `None`) still compare by identity. `strEq(a,b)` remains available and returns `1`/`0`.
 15. **No turbofish for generics.** `id<int>(x)` parses as `(id < int) > (x)` (comparisons → a bool) and fails type checking. Always let type args be inferred from arguments: `id(x)`.
 16. **Integer `/` truncates** toward zero; there is no separate integer-vs-float division operator — the operand types decide. `7 / 2` = `3`; `7.0 / 2.0` = `3.5`.
-17. **Nested functions (`def` inside `def`) are broken** — they generate invalid IR. Define all functions at the top level.
+17. **Nested functions (`def` inside `def`) work** but are **non-capturing** — they are lifted to module scope and see only their own parameters and globals, not the enclosing function's locals. If you need to capture, use a `lambda`. Two nested functions in different outer functions must not share a name (they share the module namespace).
 18. **`a..b` ranges are exclusive of `b`** and only valid in `for ... in`. `for i in 0..n` visits `0..n-1`. There is no standalone range value.
-19. **`++`, `--`, `+=`, `**`, bitwise `& | ^ << >>` are not usable in expressions.** They're lexed but the expression parser ignores them. Write `i = i + 1`, `x = x * x`, etc. (`|` is only meaningful inside a type annotation as a union.)
+19. **Compound assignment (`+= -= *= /= %=`) and bitwise (`& | ^ << >> ~`) ARE usable** — see §operators. Only the power operator `**` and the increment/decrement `++`/`--` are not implemented; write `x = x * x` and `i = i + 1` for those. (`|` also serves as the union separator inside type annotations.)
 20. **The `{ key: value }` dict literal and `dict<K,V>` type have limited support.** For key/value data, prefer the `map` builtins (`mapNew`, `mapPut`/`mapGet`, `mapPutStr`/`mapGetStr`).
 21. **`async`/`await` is thin.** It parses and wraps functions but is not a substitute for real concurrency — use goroutines + channels.
 22. **Non-blocking `select` (with `default`) is racy** if you expect a just-spawned goroutine to have produced a value. For determinism, use a blocking `select` (omit `default`) or pre-seed the channel.
@@ -678,18 +692,19 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 
 **Tocin can today:**
 - Compile to native code via LLVM, or JIT-run directly (`--run`).
-- Functions (incl. mutual recursion, forward references, inferred return types), first-class function values and function-typed parameters, single-expression lambdas (non-capturing).
+- Functions (incl. mutual recursion, forward references, inferred return types, **nested `def`** — non-capturing), first-class function values and function-typed parameters, and **capturing closures** (single-expression lambdas that capture enclosing locals by value and can escape their scope).
 - Classes/structs with fields, methods, `self`, implicit positional constructors, direct field mutation.
 - Generics: generic functions and generic classes, monomorphized by **inferred** type arguments.
 - Traits with `impl Trait for Type` and inherent `impl Type` methods.
 - Enums with integer values (auto and explicit, incl. negatives).
-- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `match` (value equality + `Some/Ok/Err/None` patterns with payload binding).
+- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match` (value equality + `Some/Ok/Err/None` patterns with payload binding).
 - Exceptions: `throw` / `try` / `catch` / `finally` (setjmp-based, integer/handle payload).
 - `Option`/`Result` boxes and null-safety operators `?:` `?.` `!!`.
 - Fixed array literals (`[..]`, `len`, indexing/assignment) and dynamic `vector` + `map` (int- and string-keyed) builtins.
 - A useful string library (`strLen`, `charAt`, `substring`, `intToStr`/`strToInt`, `strEq`/`strCmp`, `charToStr`, `indexOfChar`) and string `+` concatenation.
 - File I/O (`readFile`/`writeFile`/`appendFile`/`readLine`).
 - Math builtins (libm unaries, `pow`, `abs`, `min`, `max`) plus `std.math`/`std.list`/`std.linq` modules.
+- Arithmetic with auto int→float promotion, compound assignment (`+= -= *= /= %=`), bitwise/shift (`& | ^ << >> ~`), string `==`/`!=` by value, and `0x`/`0o`/`0b`/`_` integer literals.
 - Concurrency: `go` goroutines (OS threads), `channel<int>()`, `<-` send/receive, blocking & non-blocking `select`.
 - C FFI via `extern def`.
 - Token-level macros (`macro` / `name!(...)`).
@@ -697,15 +712,14 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - `print`/`println` with `{}` formatting.
 
 **Tocin cannot (yet):**
-- `break` / `continue` / `switch` / `defer` / `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented.
-- Closures that capture environment (lambdas are non-capturing); lambda bodies that are blocks.
-- Implicit numeric conversions; mixed int/float arithmetic without explicit typing.
-- Nested function definitions.
-- Turbofish / explicit generic type arguments.
-- A real generic-element collection type (collection payloads are i64 slots; string elements are fragile).
+- `switch` / `defer` / `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (Use `match`/`case` for `switch`.)
+- Capture **by reference** (capture is by value/snapshot); lambda bodies that are blocks (a lambda body is one expression); labeled `break`/`continue`.
+- Capture from nested `def` (those are non-capturing — use a lambda).
+- The power operator `**` and `++`/`--`.
+- Turbofish / explicit generic type arguments (let them be inferred).
+- A real generic-element collection type (collection payloads are i64 slots; string elements are fragile — use `mapPutStr`/`mapGetStr`).
 - Garbage collection / automatic memory management (manual `*Free` only; leaks otherwise).
 - Namespaced imports, visibility modifiers (`pub`/`priv`/...), `as`/`is`/`instanceof`/`typeof` operators.
-- Compound-assignment and increment operators, power/bitwise/shift operators in expressions.
 - Robust `dict` literals (use `map` builtins).
 
-When in doubt: keep types monomorphic and explicit at boundaries, store ints in collections, pass everything a lambda needs as a parameter, restructure loops without `break`/`continue`, use `None` not `null`, use `strLen` not `len` for strings, and `--run` to confirm. Every construct documented here has been compiled and executed successfully.
+When in doubt: keep types monomorphic and explicit at boundaries, store ints in collections, capture by value (read-only) in lambdas or pass state as parameters, use `None` not `null`, use `strLen` not `len` for strings, use `match`/`case` not `switch`, and `--run` to confirm. Every construct documented here has been compiled and executed successfully.

@@ -79,7 +79,7 @@ Identifiers start with a letter or `_` and continue with letters, digits, or
 
 | Literal | Examples | Notes |
 |---|---|---|
-| Integer | `0`, `42`, `1000`, `0xFF`, `0b1010`, `0o17` | Hex (`0x`), binary (`0b`), octal (leading `0` + nonzero digit). Always typed `int` (i64). Suffixes `u`/`l`/`L` are accepted and ignored. |
+| Integer | `0`, `42`, `1000`, `0xFF`, `0b1010`, `0o17`, `1_000_000` | Decimal, hex (`0x`), binary (`0b`), octal (`0o`). Underscores `_` may separate digits in any base (`1_000`, `0xFF_FF`, `0b1010_0101`) and are ignored. Always typed `int` (i64). Suffixes `u`/`l`/`L` are accepted and ignored. |
 | Float | `3.14`, `1.5`, `1e9`, `2.0e-3`, `1.5f` | Typed `float` (f64). A decimal point requires a digit on both sides (`1.0`, not `1.`). The `f`/`F` suffix marks a float. |
 | String | `"hello"`, `'hi'`, `"a\nb\t\"c\""` | Double or single quotes. Escapes: `\n \t \r \\ \" \'` plus Unicode `\u{...}`. A `char*` (NUL-terminated) at runtime. |
 | Boolean | `true`, `false` | Type `bool`. |
@@ -110,8 +110,11 @@ let const def async await class struct enum trait impl
 if elif else while for in return match case default
 import lambda new delete try catch finally throw
 go select channel and or true false None void self
-extern  break continue   (break/continue are reserved but NOT yet implemented)
+extern break continue
 ```
+
+`break` and `continue` are fully implemented and work in every loop form (see
+[§4](#4-statements)).
 
 The following are reserved by the lexer but **not** wired into the grammar/
 codegen and are best avoided as identifiers: `from switch interface pub priv
@@ -198,15 +201,25 @@ see [§5](#5-functions).
 
 | Category | Operators | Notes |
 |---|---|---|
-| Arithmetic | `+` `-` `*` `/` `%` | Integer ops on `int`, floating ops on `float`. `/` on two ints is truncating integer division. `%` follows C semantics (sign of dividend). |
-| Comparison | `==` `!=` `<` `<=` `>` `>=` | Result type `bool`. On `int`/`float` they compare values; on strings/references `==`/`!=` compare **identity (pointer)**, not contents — use `strEq` for string content equality. |
+| Arithmetic | `+` `-` `*` `/` `%` | Integer ops on `int`, floating ops on `float`. A mixed `int`/`float` operand is auto-promoted to `float` (see below). `/` on two ints is truncating integer division. `%` follows C semantics (sign of dividend). |
+| Comparison | `==` `!=` `<` `<=` `>` `>=` | Result type `bool`. On `int`/`float` they compare values. `==`/`!=` on `string` compare **by contents** (value equality). On other references (class instances, `Option`/`Result`, `None`) they compare **identity (pointer)**. |
+| Bitwise | `&` `\|` `^` `~` | Integer AND, OR, XOR, and unary NOT (one's complement). C-style precedence (see chain below). |
+| Shift | `<<` `>>` | Integer left / right shift. `>>` is an arithmetic (sign-propagating) shift on `int`. |
 | Logical | `and` / `&&`, `or` / `\|\|` | `and`/`&&` are the same operator; `or`/`\|\|` likewise. |
-| Unary | `-x`, `!x` | Numeric negation; boolean (and integer) logical-not. |
+| Unary | `-x`, `!x`, `~x` | Numeric negation; boolean (and integer) logical-not; integer bitwise-not. |
+| Compound assignment | `+=` `-=` `*=` `/=` `%=` | `x op= e` is shorthand for `x = x op e`. Valid on variables, array elements (`arr[i] += e`), and strings (`s += t` concatenates). |
 | Null safety | `?.`, `?:`, `!!` | Safe navigation, elvis/coalesce, force-unwrap. See [§12](#12-null-safety). |
 | Coalesce | `??` | Synonym for `?:`. |
 | Channel | `<-` | `ch <- v` sends; `<-ch` receives. See [§14](#14-concurrency). |
 | Grouping | `( … )` | Parentheses override precedence. |
 | Call / access | `f(...)`, `a.b`, `a[i]` | Function call, member access, indexing. |
+
+> **Mixed `int`/`float` arithmetic.** When one operand of `+ - * / %` (or a
+> comparison) is `int` and the other `float`, the `int` is automatically
+> promoted to `float` (LLVM `sitofp`) and the operation is floating-point.
+> Likewise an `int` initializer for a `float` binding is promoted: `let x:
+> float = 5;` yields `5.0`. So `3.0 + 2` is `5.0`, `10 / 4.0` is `2.5`, and
+> `2 * 3.5` is `7.0`.
 
 ### Actual precedence chain (lowest → highest binding)
 
@@ -215,16 +228,24 @@ This is the precedence as implemented by the recursive-descent parser
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 1 (loosest) | `=` (assignment) | right |
+| 1 (loosest) | `=` and compound `+= -= *= /= %=` (assignment) | right |
 | 2 | `?:`, `??` (elvis / coalesce) | left |
 | 3 | `or` / `\|\|` | left |
 | 4 | `and` / `&&` | left |
-| 5 | `==`, `!=` | left |
-| 6 | `<`, `<=`, `>`, `>=` | left |
-| 7 | `+`, `-` | left |
-| 8 | `*`, `/`, `%` | left |
-| 9 (prefix) | unary `-`, `!`, `<-` (receive), `await`, `new`, `delete` | right |
-| 10 (tightest) | call `f()`, member `.`, safe member `?.`, index `[]`, force-unwrap `!!` | left (postfix) |
+| 5 | `\|` (bitwise OR) | left |
+| 6 | `^` (bitwise XOR) | left |
+| 7 | `&` (bitwise AND) | left |
+| 8 | `==`, `!=` | left |
+| 9 | `<`, `<=`, `>`, `>=` | left |
+| 10 | `<<`, `>>` (shifts) | left |
+| 11 | `+`, `-` | left |
+| 12 | `*`, `/`, `%` | left |
+| 13 (prefix) | unary `-`, `!`, `~`, `<-` (receive), `await`, `new`, `delete` | right |
+| 14 (tightest) | call `f()`, member `.`, safe member `?.`, index `[]`, force-unwrap `!!` | left (postfix) |
+
+This is the standard C-style ordering: the bitwise operators bind looser than
+comparison, the shifts bind between comparison and `+`/`-`, and unary `~` binds
+with the other prefix operators.
 
 Verified consequences:
 
@@ -235,16 +256,42 @@ Verified consequences:
 1 + 2 == 3       // true (1) — comparison looser than +
 1 < 2 and 3 < 4  // true (1)
 1 > 2 or 3 < 4   // true (1)
+1 << 4 | 1       // 17  (shift tighter than |  -> (16) | 1)
+1 + 2 & 3        // 3   (additive tighter than & -> (3) & 3)
+4 & 6 | 1        // 5   (& tighter than | -> (4) | 1)
+5 & 3 == 1       // 0   (== tighter than & -> 5 & (3==1) = 5 & 0)
+~1 + 1           // -1  (unary ~ tighter than + -> (-2) + 1)
 ```
 
 > Comparisons are non-chaining: write `a < b and b < c`, not `a < b < c` (the
 > latter parses as `(a < b) < c` and is not meaningful).
 
-> **Not implemented as operators:** `**` (power), bitwise `& | ^ ~ << >>`, and
-> the compound-assignments `+= -= *= /= %=` are recognized by the lexer but are
-> **not accepted by the expression parser** and cause parse errors. Use the
-> `pow(...)` builtin instead of `**`, and `x = x + 1` instead of `x += 1`.
-> See [§20](#20-limitations--not-yet-supported).
+> **Still not implemented:** the power operator `**` and the increment/decrement
+> operators `++`/`--` are not provided. Use the `pow(...)` builtin for powers and
+> `x += 1` / `x -= 1` for stepping. See
+> [§20](#20-limitations--not-yet-supported).
+
+### Compound assignment
+
+`x op= e` is exactly `x = x op e` for `op` in `+ - * / %`, and works on any
+assignable target — a variable, an array element, or (for `+=`) a string:
+
+```tocin
+def main() -> int {
+    let a = 20;
+    a += 5;          // 25
+    a -= 3;          // 22
+    a *= 2;          // 44
+    a /= 4;          // 11
+    a %= 4;          // 3
+    let arr = [1, 2, 3];
+    arr[1] += 10;    // arr[1] == 12
+    let s = "ab";
+    s += "cd";       // "abcd"  (string concatenation)
+    println("{} {} {}", a, arr[1], s);   // 3 12 abcd
+    return 0;
+}
+```
 
 ---
 
@@ -310,8 +357,16 @@ for i in 0..15 {            // i = 0,1,...,14  (end exclusive)
 variable is an `int` local scoped to the loop. The range bounds may be any
 integer expressions.
 
-There is also a `for v in <array>` form that iterates an array's elements, but
-the range form is the well-exercised, recommended idiom.
+There is also a `for v in <array>` form that iterates an array's elements:
+
+```tocin
+let arr = [10, 20, 30];
+for v in arr {
+    println("{}", v);    // 10, 20, 30
+}
+```
+
+Both loop forms support `break` and `continue` (see below).
 
 ### `return`
 
@@ -330,11 +385,34 @@ println("hi");
 
 A bare `{ … }` block introduces a new scope.
 
-### `break` / `continue` — **not implemented**
+### `break` / `continue`
 
-`break` and `continue` are reserved keywords but the parser does **not** accept
-them; using either inside a loop produces a parse error (and the offending
-statement is dropped). Use a boolean guard / restructured condition instead.
+`break` exits the innermost enclosing loop immediately; `continue` skips to the
+next iteration. Both work in **all** loop forms — range `for`, for-each `for`,
+and `while` — and act on the innermost loop when loops are nested. In a range or
+for-each loop, `continue` still advances the iterator before the next iteration.
+
+```tocin
+def main() -> int {
+    let sum = 0;
+    for i in 0..100 {
+        if i == 5 { break; }          // stop at 5
+        if i % 2 == 0 { continue; }   // skip evens
+        sum = sum + i;                // 1 + 3 = 4
+    }
+
+    let c = 0;
+    let acc = 0;
+    while c < 6 {
+        c = c + 1;
+        if c == 3 { continue; }       // skip 3
+        acc = acc + c;                // 1+2+4+5+6 = 18
+    }
+
+    println("{} {}", sum, acc);       // 4 18
+    return sum + acc;                 // 22
+}
+```
 
 ---
 
@@ -406,38 +484,86 @@ lambda (x: int) -> int x * x
 ```
 
 A lambda has a parenthesized parameter list, an optional `-> ReturnType`, and a
-**single expression** body (no block). Lambdas are most useful passed directly
-to higher-order functions:
+**single expression** body (no block — the body is one expression, not a
+statement list). Lambdas are most useful passed directly to higher-order
+functions:
 
 ```tocin
 println("{}", apply(lambda (x: int) -> int x * x, 9));  // 81
 ```
 
-> Lambdas are **non-capturing**: the body can use its parameters and globals,
-> but it does not close over surrounding locals. See
-> [§20](#20-limitations--not-yet-supported).
+### Capturing closures
 
-### The function-typed-local rule
-
-A local that holds a function value and is **initialized from a call** must be
-given an explicit function-type annotation, so the compiler can recover the
-call signature for the later indirect call:
+A lambda **closes over the enclosing locals it references, capturing them by
+value** (a snapshot taken when the lambda is created). Because the capture is a
+copy, later mutations of the original variable do not change what the lambda
+sees, and the lambda cannot write back to the original:
 
 ```tocin
-let f: (int) -> int = chooser(1);   // OK — annotation supplies the signature
+def main() -> int {
+    let n = 5;
+    let add = lambda (x: int) -> int x + n;   // captures n (snapshot = 5)
+    println("{}", add(10));                   // 15
+    n = 100;
+    println("{}", add(10));                   // still 15 (by-value snapshot)
+    return 0;
+}
+```
+
+Closures may be returned from a function and **escape** their defining scope,
+each carrying its own captured state:
+
+```tocin
+def makeAdder(n: int) -> (int) -> int {
+    return lambda (x: int) -> int x + n;      // captures the parameter n
+}
+
+def main() -> int {
+    let add10 = makeAdder(10);
+    let add100 = makeAdder(100);
+    println("{} {}", add10(7), add100(7));    // 17 107
+    return 0;
+}
+```
+
+> Capture is **by value only** — there is no capture by reference. See
+> [§20](#20-limitations--not-yet-supported). If you need a non-capturing helper,
+> a nested `def` (below) is also available.
+
+### Function-typed locals
+
+A local can hold a function value, whether it comes from a function name, a
+lambda, or a call that returns a function. The signature is recovered
+automatically, so a later indirect call works with or without an explicit
+annotation:
+
+```tocin
+let g = inc;            // function name — signature known
+let h = chooser(1);     // result of a call returning (int) -> int
+let k = makeAdder(10);  // result of a call returning a lambda
+println("{} {} {}", g(5), h(10), k(7));   // 6 30 17
+```
+
+An explicit function-type annotation is still accepted and can document intent:
+
+```tocin
+let f: (int) -> int = chooser(1);   // annotation optional, but allowed
 println("{}", f(10));               // 30
 ```
 
-Without the annotation the call through the local fails:
+### Nested function definitions
+
+A `def` may be nested inside another `def`. A nested function is **lifted to
+module scope and is non-capturing** — it sees its own parameters and globals but
+not the enclosing function's locals. Use a lambda (above) when you need to
+capture.
 
 ```tocin
-let f = chooser(1);   // ERROR at the call site: "Called value is not a function"
-println("{}", f(10));
+def main() -> int {
+    def dbl(x: int) -> int { return x * 2; }
+    return dbl(21);   // 42
+}
 ```
-
-(When the initializer is itself a function name or another already-annotated
-function variable, the signature is propagated and no annotation is needed —
-e.g. `let g = inc;` works because `inc`'s signature is known.)
 
 ---
 
@@ -691,7 +817,28 @@ def main() {
   The catch variable is optional: `catch { … }` or `catch e { … }` are also
   accepted.
 * **`finally { … }`** runs on **all** paths: normal completion of the try body,
-  after a caught exception, and on the re-throw path.
+  after a caught exception, on the re-throw path, and **when the `try` or
+  `catch` block executes an early `return`** (the finally block runs before
+  control leaves the function):
+
+```tocin
+def run() -> int {
+    try {
+        throw 5;
+    } catch (e) {
+        return 1;        // early return out of the function...
+    } finally {
+        println("cleanup");   // ...but finally still runs first
+    }
+    return 99;
+}
+
+def main() -> int {
+    println("{}", run());   // prints "cleanup" then "1"
+    return 0;
+}
+```
+
 * **`try`/`finally` with no `catch`** runs the finally block and then
   **re-throws** to the next enclosing handler:
 
@@ -1065,8 +1212,11 @@ x86-64 SysV ABI — use `-> i32` if you need an exact C `int`.
   facilities are cleanest with `int` payloads, and why a value round-tripped
   through them must be used at a consistent type.
 * **Strings** are immutable `char*` (NUL-terminated). String concatenation with
-  `+` produces a new string; `==` on strings compares **pointers**, so use
-  `strEq` for content comparison.
+  `+` produces a new string. `==` / `!=` on strings compare **by contents**
+  (value equality) — the compiler emits a length-and-bytes comparison, not a
+  pointer comparison. (`strEq` remains available and is equivalent.) Only
+  non-string references — class instances, `Option`/`Result`, `None` — compare
+  by identity.
 
 ---
 
@@ -1104,15 +1254,18 @@ The exit code equals the integer returned by `main` (truncated to the OS's
 
 Known gaps in the current implementation (verified against the compiler):
 
-* **`break` / `continue`** are reserved but **not parsed**; using them is a
-  parse error. ([§4](#4-statements))
-* **Power `**`, bitwise `& | ^ ~ << >>`, and compound assignments
-  `+= -= *= /= %=`** are lexed but **not accepted by the expression parser**.
-  Use `pow()` and explicit `x = x + 1`. ([§3](#3-operators--precedence))
-* **Lambdas are non-capturing** and have **single-expression bodies** only;
-  they do not close over surrounding locals. ([§5](#5-functions))
-* **A function-typed local initialized from a call requires an explicit
-  function-type annotation.** ([§5](#5-functions))
+* **No power operator `**` and no increment/decrement `++` / `--`.** Use the
+  `pow()` builtin and `x += 1` / `x -= 1`. ([§3](#3-operators--precedence))
+* **`switch` and `defer` are not implemented.** Use `match` / `case` for
+  multi-way branching ([§10](#10-pattern-matching)); there is no `defer`
+  facility (use `try`/`finally` for cleanup). ([§11](#11-error-handling))
+* **Closures capture by value (snapshot), not by reference.** Mutating the
+  original after capture does not change the captured copy, and the lambda
+  cannot write back to the original. Lambda bodies are a **single expression**
+  (no block). ([§5](#5-functions))
+* **Nested `def` functions are non-capturing** — they are lifted to module
+  scope and cannot see the enclosing function's locals; use a lambda to
+  capture. ([§5](#5-functions))
 * **`Option`/`Result` and channel payloads are 64-bit slots** — typed/object
   payloads are reinterpreted as `i64`; integer payloads are the supported case.
   ([§13](#13-option--result), [§18](#18-memory-model--abi))
@@ -1123,19 +1276,19 @@ Known gaps in the current implementation (verified against the compiler):
   no trait-object dynamic dispatch. Generics have **no explicit type-argument
   syntax** (turbofish) — types are inferred. ([§7](#7-traits--impl),
   [§8](#8-generics))
-* **`string ==` compares identity, not contents** — use `strEq`.
-  ([§3](#3-operators--precedence), [§18](#18-memory-model--abi))
-* **No garbage collection**; most heap allocations leak for the process
-  lifetime. ([§18](#18-memory-model--abi))
+* **No garbage collection**; heap allocations (strings from concatenation,
+  closures, array/list literals, `Option`/`Result`, vectors, maps, channels)
+  are **not freed automatically** and leak for the process lifetime. Manual
+  `vecFree` / `mapFree` exist for the dynamic collections. ([§18](#18-memory-model--abi))
 * **`const` is not enforced** (behaves like `let`). ([§2](#2-types))
 * **Dictionary literals** construct a value, but there is no rich, ergonomic
   dict API at the language level; the `map*` builtins are the practical
   key/value store. ([§21](#21-built-in-function-reference))
 * **Python / JavaScript FFI are not functional** — only the C path works.
   ([§17](#17-ffi))
-* Many lexer keywords (`switch`, `interface`, `defer`, `yield`, `async`/`await`
-  beyond parsing, etc.) are reserved but not implemented end-to-end; avoid them
-  as identifiers and don't rely on them.
+* Many lexer keywords (`interface`, `yield`, `async`/`await` beyond parsing,
+  etc.) are reserved but not implemented end-to-end; avoid them as identifiers
+  and don't rely on them.
 
 ---
 

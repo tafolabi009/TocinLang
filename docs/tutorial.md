@@ -116,6 +116,151 @@ In `println`, each `{}` is replaced, in order, by the following arguments.
 Use `len(...)` to get the length of an **array** (we'll see `strLen` for strings
 and `vecLen` for vectors later — they are different functions).
 
+### Integer literals: hex, octal, binary, and digit separators
+
+Integers can be written in several bases, and you may use underscores anywhere
+inside a number as digit separators to make long values easier to read. They are
+purely cosmetic — `1_000_000` is exactly `1000000`.
+
+```tocin
+def main() {
+    let hex = 0xFF;          // hexadecimal -> 255
+    let oct = 0o17;          // octal       -> 15
+    let bin = 0b1010;        // binary      -> 10
+    let big = 1_000_000;     // underscores are ignored
+    println("{} {} {} {}", hex, oct, bin, big);
+    return 0;
+}
+```
+
+Output:
+
+```
+255 15 10 1000000
+```
+
+Underscores work in any base (e.g. `0b1010_1010`, `0xDE_AD_BE_EF`).
+
+### Mixing `int` and `float` in arithmetic
+
+When an expression mixes an `int` and a `float`, the `int` is automatically
+promoted to `float`, and the whole expression is a `float`. The same promotion
+happens when you assign an `int` to a `float` variable. You never need an
+explicit conversion for this.
+
+```tocin
+def main() {
+    let a = 3.0 + 2;      // 2 is promoted -> 5.0 (a float)
+    let b = 10 / 4.0;     // float division -> 2.5
+    let c = 2 * 3.5;      // -> 7.0
+    let d: float = 5;     // int 5 stored as 5.0
+    println("{} {} {} {}", a, b, c, d);
+    return 0;
+}
+```
+
+Output:
+
+```
+5 2.5 7 5
+```
+
+> **Note:** a `float` whose value is a whole number prints without a decimal
+> point (`5.0` shows as `5`), while a fractional value like `2.5` prints with
+> one. Either way the value is a `float`. This is why `10 / 4.0` gives `2.5`
+> but plain integer `10 / 4` would give `2` (integer division).
+
+### Compound assignment: `+= -= *= /= %=`
+
+Instead of writing `x = x + 1`, you can update a variable in place with a
+compound assignment operator. These work on plain variables, on array elements,
+and — for `+=` — on strings (where it concatenates).
+
+```tocin
+def main() {
+    let a = 10;
+    a += 5;            // a = a + 5  -> 15
+    a -= 3;            // -> 12
+    a *= 2;            // -> 24
+    a /= 4;            // -> 6
+    a %= 4;            // -> 2
+    println("a = {}", a);
+
+    let arr = [1, 2, 3];
+    arr[1] += 10;      // update an array element in place -> 12
+    println("arr[1] = {}", arr[1]);
+
+    let s = "hello";
+    s += " world";     // string concatenation
+    println("s = {}", s);
+    return 0;
+}
+```
+
+Output:
+
+```
+a = 2
+arr[1] = 12
+s = hello world
+```
+
+### Bitwise operators
+
+Tocin has the usual C-style bitwise operators on integers: `&` (and), `|` (or),
+`^` (xor), `<<` (left shift), `>>` (right shift), and the unary `~` (bitwise
+NOT). They follow C precedence (for example `&` binds tighter than `|`, and the
+shifts bind tighter than `+`).
+
+```tocin
+def main() {
+    println("and = {}", 12 & 10);   // 8
+    println("or  = {}", 12 | 10);   // 14
+    println("xor = {}", 12 ^ 10);   // 6
+    println("shl = {}", 1 << 4);    // 16
+    println("shr = {}", 256 >> 2);  // 64
+    println("not = {}", ~0);        // -1
+    return 0;
+}
+```
+
+Output:
+
+```
+and = 8
+or  = 14
+xor = 6
+shl = 16
+shr = 64
+not = -1
+```
+
+A common use is treating an integer as a set of bit flags:
+
+```tocin
+def main() {
+    let READ  = 1 << 0;            // 1
+    let WRITE = 1 << 1;            // 2
+    let EXEC  = 1 << 2;            // 4
+    let perms = READ | WRITE;      // combine flags
+    println("perms     = {}", perms);              // 3
+    println("can read? {}", (perms & READ) != 0);  // 1
+    println("can exec? {}", (perms & EXEC) != 0);  // 0
+    return 0;
+}
+```
+
+Output:
+
+```
+perms     = 3
+can read? 1
+can exec? 0
+```
+
+(For the full precedence ordering of every operator, see the language
+reference.)
+
 ---
 
 ## 4. Functions
@@ -154,6 +299,30 @@ add(3, 4)     = 7
 square(9)     = 81
 factorial(5)  = 120
 ```
+
+### Nested functions
+
+You can define a `def` *inside* another function. This is handy for a small
+helper that is only meaningful within its parent.
+
+```tocin
+def main() {
+    def dbl(x: int) -> int { return x * 2; }
+    println("dbl(21) = {}", dbl(21));   // 42
+    return 0;
+}
+```
+
+Output:
+
+```
+dbl(21) = 42
+```
+
+A nested `def` is an ordinary function that just happens to be written inside
+another — it **cannot capture** its parent's local variables. If you need to
+reference surrounding locals, use a capturing `lambda` instead (see
+[First-class functions and lambdas](#13-first-class-functions-and-lambdas)).
 
 ---
 
@@ -220,6 +389,45 @@ two
 Two things to remember: `for i in a..b` iterates `a, a+1, ..., b-1` (the upper
 bound is **excluded**), and a `match` uses `case VALUE: { ... }` arms with an
 optional `default: { ... }`.
+
+### Breaking out of and skipping loop iterations
+
+Inside any loop you can use `break` to stop the loop early and `continue` to
+skip the rest of the current iteration and move on to the next one. Both work in
+`while`, `for ... in` over a range, and `for ... in` over an array, and they
+always affect the innermost enclosing loop.
+
+```tocin
+def main() {
+    // Search a list and stop as soon as we find the value.
+    let nums = [4, 8, 15, 16, 23, 42];
+    let target = 16;
+    let foundAt = -1;
+    for i in 0..len(nums) {
+        if nums[i] == target {
+            foundAt = i;
+            break;                  // leave the loop immediately
+        }
+    }
+    println("found {} at index {}", target, foundAt);
+
+    // Sum only the odd numbers, skipping evens with `continue`.
+    let total = 0;
+    for i in 0..10 {
+        if i % 2 == 0 { continue; } // jump to the next iteration
+        total = total + i;
+    }
+    println("sum of odds 0..9 = {}", total);
+    return 0;
+}
+```
+
+Output:
+
+```
+found 16 at index 3
+sum of odds 0..9 = 25
+```
 
 The classic FizzBuzz puts these together:
 
@@ -396,6 +604,47 @@ A couple of notes:
 - `substring(s, start, length)` takes a start index and a *length*, not an end
   index.
 - Other handy string builtins include `strEq(a, b)` and `indexOfChar(s, code)`.
+
+### Comparing strings with `==` and `!=`
+
+You can compare two strings for equality directly with `==` and `!=`, and they
+compare **by value** (by contents), not by memory address. This works for string
+literals, parameters, the results of `+` concatenation, and the values returned
+by string builtins like `intToStr`.
+
+```tocin
+def greet(name: string) -> int {
+    if name == "Alice" { return 1; }
+    return 0;
+}
+
+def main() {
+    println("alice? {}", greet("Alice"));      // 1
+    println("bob?   {}", greet("Bob"));        // 0
+
+    let a = "hello";
+    let b = "hel" + "lo";                       // a different object, same text
+    println("concat equal? {}", a == b);        // 1 (compared by value)
+    println("not world?    {}", a != "world");  // 1
+
+    println("intToStr(42) == \"42\"? {}", intToStr(42) == "42");  // 1
+    return 0;
+}
+```
+
+Output:
+
+```
+alice? 1
+bob?   0
+concat equal? 1
+not world?    1
+intToStr(42) == "42"? 1
+```
+
+> **Note:** value comparison applies to strings. Other reference values (class
+> instances, or `None`) still compare by identity with `==` — i.e. whether they
+> are the *same* object — so you can use `obj == None` to test for null.
 
 > **Gotcha:** calling `len("hello")` does **not** return `5` — `len` is for
 > arrays, and on a string it produces a meaningless number. Always use
@@ -579,6 +828,38 @@ cleanup done
 The thrown value propagates out of called functions until something catches it,
 so you can throw deep in a call stack and handle it higher up.
 
+A `finally` block runs even when the `try` or `catch` body **returns early** —
+not only when control falls off the end of the block. This makes `finally` a
+reliable place for cleanup that must happen no matter how the block exits:
+
+```tocin
+def attempt() -> int {
+    try {
+        throw 5;
+    } catch (e) {
+        return 1;            // early return out of catch...
+    } finally {
+        println("cleanup");  // ...but this still runs first
+    }
+    return 0;
+}
+
+def main() {
+    println("result = {}", attempt());
+    return 0;
+}
+```
+
+Output:
+
+```
+cleanup
+result = 1
+```
+
+The `finally` block executes, printing `cleanup`, and only then does the early
+`return 1` take effect.
+
 ---
 
 ## 11. Option, Result, and pattern matching
@@ -706,7 +987,8 @@ def chooser(positive: int) -> (int) -> int {
 def main() {
     println("apply(inc, 5)  = {}", apply(inc, 5));   // 6
 
-    // A local initialized by a CALL needs an explicit function-type annotation.
+    // Storing a returned function in a local. An explicit function-type
+    // annotation is optional here, but it documents the intent:
     let f: (int) -> int = chooser(1);
     println("chooser(1)(10) = {}", f(10));           // 30
 
@@ -748,18 +1030,67 @@ Output:
 sum of squares = 14
 ```
 
-Two limitations worth knowing up front:
+### Capturing closures
 
-> **Gotcha 1 — annotate function locals initialized by a call.** When a local
-> variable gets its value from a *function call that returns a function*, you
-> must annotate it: `let f: (int) -> int = chooser(1);`. Without the annotation
-> the compiler reports `error [T006]: Called value is not a function`. (When the
-> initializer is a plain function name or a lambda, inference is fine, but the
-> explicit annotation always works and is the safe habit.)
+A lambda can use the local variables of the function it is defined in, not just
+its own parameters — this makes it a *closure*. The capture is **by value**: the
+lambda takes a snapshot of each captured variable at the moment it is created.
+Changing the original variable afterwards does not change what the lambda saw.
+
+```tocin
+def main() {
+    let n = 5;
+    let add = lambda (x: int) -> int x + n;   // captures n = 5
+    println("add(10) = {}", add(10));         // 15
+
+    n = 100;                                   // change the original n
+    println("still   = {}", add(10));          // still 15 (snapshot of 5)
+    return 0;
+}
+```
+
+Output:
+
+```
+add(10) = 15
+still   = 15
+```
+
+Because the snapshot lives with the lambda, a closure can be **returned** from a
+function and keep working after that function has finished — each one carries its
+own captured state:
+
+```tocin
+def makeAdder(n: int) -> (int) -> int {
+    return lambda (x: int) -> int x + n;       // captures this call's n
+}
+
+def main() {
+    let add10  = makeAdder(10);
+    let add100 = makeAdder(100);
+    println("add10(1)  = {}", add10(1));        // 11
+    println("add100(1) = {}", add100(1));       // 101
+    return 0;
+}
+```
+
+Output:
+
+```
+add10(1)  = 11
+add100(1) = 101
+```
+
+A few things worth knowing:
+
+> **Capture is by value, not by reference.** A closure can read the snapshot it
+> captured, but it cannot reach back and mutate the caller's variable, and
+> later changes to that variable are not seen by the closure. If you need shared
+> mutable state, pass it explicitly (for example a `vector` handle).
 >
-> **Gotcha 2 — lambdas don't capture.** A lambda can use only its own
-> parameters; it cannot reference local variables from the surrounding function.
-> Pass the data you need in as arguments instead.
+> **A function-typed local may be annotated, but doesn't have to be.** Storing a
+> returned function in `let f = chooser(1);` works with or without the
+> `: (int) -> int` annotation; the annotation is just documentation.
 
 ---
 
@@ -986,13 +1317,23 @@ practical limitations in mind:
 
 - `bool` prints as `1`/`0`, and many library predicates return `1`/`0` rather
   than `true`/`false`.
+- A `float` whose value is whole prints without a decimal point (`5.0` as `5`).
 - Strings use `strLen`/`charAt`/`substring` — `len` is only for arrays, and
   using it on a string yields a garbage number.
 - Collection handles are opaque: annotate parameters with the type names
   `vector` and `map`, and use the `vec*`/`map*` functions to work with them.
-- Lambdas are **non-capturing** — pass everything they need as arguments.
-- A function-typed local initialized by a *call* needs an explicit annotation,
-  e.g. `let f: (int) -> int = makeFn();`.
+- Lambdas **capture by value** — they snapshot the surrounding locals they use,
+  so mutating the original afterwards (or trying to mutate it from inside the
+  lambda) has no effect. For shared mutable state, pass a handle explicitly.
+- Nested `def` functions **cannot capture** their parent's locals; use a
+  `lambda` when you need capture.
+- There is **no automatic memory management (no GC)** yet: heap allocations such
+  as concatenated strings, array literals, closures, vectors, and maps are not
+  freed automatically, so long-running programs leak. Free vectors and maps
+  manually with `vecFree`/`mapFree` when you can.
+- `switch` and `defer` are **not** implemented — use `match` / `case` for
+  multi-way branching. There is also no `**` power operator and no `++`/`--`;
+  use `pow`/`x * x` and `x += 1` / `x -= 1` instead.
 
 When in doubt, do what this tutorial did: write the smallest program that
 exercises the feature, run it with `--run`, and check the output.
