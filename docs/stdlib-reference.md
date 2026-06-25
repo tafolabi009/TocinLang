@@ -25,6 +25,31 @@ exit code. Examples below show `main` only where the behavior depends on it.
 
 ---
 
+## Integer literals
+
+Integer literals may be written in decimal or with a base prefix, and digit
+groups may be separated with underscores (`_`) for readability in any base:
+
+| Form | Example | Value |
+|---|---|---|
+| Decimal | `42`, `1_000_000` | 42, 1000000 |
+| Hex (`0x`) | `0xFF`, `0xDE_AD` | 255, 57005 |
+| Octal (`0o`) | `0o17` | 15 |
+| Binary (`0b`) | `0b1010`, `0b1111_0000` | 10, 240 |
+
+```to
+def main() {
+    println("{} {} {} {}", 0xFF, 0o17, 0b1010, 1_000_000); // 255 15 10 1000000
+    return 0;
+}
+```
+
+The underscores are ignored by the lexer; they only group digits. Compound
+assignment (`+= -= *= /= %=`) and the bitwise operators (`& | ^ << >> ~`) work on
+integers as expected.
+
+---
+
 ## Memory & ABI notes (read first)
 
 These properties recur throughout and are not repeated in every entry:
@@ -203,18 +228,30 @@ Strings are NUL-terminated `char*`. Index/length operations are **byte**-based
 `malloc`'d buffer (it never aliases the input), which leaks unless your program
 exits. `NULL` inputs are tolerated by the runtime.
 
+**Equality compares by value.** For strings, `==` and `!=` compare the *contents*
+(byte-for-byte), not the pointer addresses — so `"hel" + "lo" == "hello"` is true.
+Use plain `==`/`!=` for simple equality; `strEq` is still available and does the
+same thing, while `strCmp` is for *ordering* (less/equal/greater). (Value
+comparison applies only to strings; other pointer types — class instances, null —
+still compare by identity.)
+
+**Compound assignment works on strings.** `s += "x"` appends (it is sugar for
+`s = s + "x"`, allocating a fresh concatenated buffer).
+
 | Function | Signature | Description |
 |---|---|---|
 | `strLen` | `strLen(s: string) -> int` | Length in bytes (0 for null). |
 | `charAt` | `charAt(s: string, i: int) -> int` | Byte value at index `i`; `-1` if out of range. |
 | `substring` | `substring(s: string, start: int, len: int) -> string` | Up to `len` bytes from `start`; bounds clamped. |
-| `strEq` | `strEq(a: string, b: string) -> int` | `1` if equal, else `0`. |
-| `strCmp` | `strCmp(a: string, b: string) -> int` | `-1`/`0`/`1` (lexicographic, like C `strcmp` normalized). |
+| `strEq` | `strEq(a: string, b: string) -> int` | `1` if equal, else `0`. (Or just use `==`.) |
+| `strCmp` | `strCmp(a: string, b: string) -> int` | `-1`/`0`/`1` (lexicographic, like C `strcmp` normalized). Use for **ordering**. |
 | `indexOfChar` | `indexOfChar(s: string, c: int) -> int` | Index of first byte equal to `c`, else `-1`. |
 | `intToStr` | `intToStr(n: int) -> string` | Decimal text of `n` (fresh buffer). |
 | `strToInt` | `strToInt(s: string) -> int` | Parse leading integer; `0` if not numeric. |
 | `charToStr` | `charToStr(c: int) -> string` | 1-byte string holding byte `c` (fresh buffer). |
+| `==` / `!=` (operator) | `string == string -> int` | Value (content) equality / inequality; `1`/`0`. |
 | `+` (operator) | `string + string -> string` | Concatenation (fresh buffer). |
+| `+=` (operator) | `s += string` | Append in place (`s = s + ...`). |
 
 Verified example:
 
@@ -243,12 +280,29 @@ def main() {
     println("charToStr(65)={}", charToStr(65));    // A
     let cat = "foo" + "bar" + "!";
     println("concat={}", cat);                     // foobar!
+
+    let built = "hel" + "lo";
+    println("eq by value={}", strEq(built, "hello")); // 1
+    if built == "hello" { println("== works"); }   // == works   (value comparison)
+    if built != "world" { println("!= works"); }   // != works
+    if intToStr(42) == "42" { println("intToStr=="); } // intToStr==
+
+    let s = "foo";
+    s += "bar";                                    // compound append
+    s += "!";
+    println("appended={} len={}", s, strLen(s));   // appended=foobar! len=7
     return 0;
 }
 ```
 
 **Edge cases / gotchas**
 
+- **`==` / `!=` on strings compare by value** (contents), not pointer identity,
+  so `("a"+"b") == "ab"` is `1`. Use plain `==`/`!=` for equality; `strEq` is the
+  same and `strCmp` is for ordering. (Only strings get value comparison; other
+  pointer types still compare by address.)
+- **`+=` appends to a string** (`s += "x"` ⇒ `s = s + "x"`), allocating a fresh
+  buffer each time (these accumulate / leak in a loop).
 - `charAt` returns a **byte value** (0–255), not a 1-char string. Out-of-range
   (including negative) returns `-1`. Use `charToStr(charAt(s, i))` to get a
   string.
