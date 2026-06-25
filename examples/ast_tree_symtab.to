@@ -1,0 +1,27 @@
+// Binary tree (AST-shaped) with recursive evaluation + a string-keyed symbol table.
+class Tree { op: int; val: int; left: Tree; right: Tree; }
+// op: 0=leaf(val), 1=+, 2=*
+
+def evalTree(t: Tree) -> int {
+    if t.op == 0 { return t.val; }
+    let l = evalTree(t.left);
+    let r = evalTree(t.right);
+    if t.op == 1 { return l + r; }
+    return l * r;
+}
+def leaf(v: int) -> Tree { return Tree(0, v, None, None); }
+
+def main() -> int {
+    // (2 + 3) * 4
+    let add = Tree(1, 0, leaf(2), leaf(3));
+    let mul = Tree(2, 0, add, leaf(4));
+    println("treeEval={}", evalTree(mul));    // 20
+
+    // symbol table: name -> value
+    let syms = mapNew();
+    mapPutStr(syms, "x", 10);
+    mapPutStr(syms, "y", 32);
+    println("x+y={}", mapGetStr(syms, "x") + mapGetStr(syms, "y"));  // 42
+    println("hasZ={}", mapHasStr(syms, "z"));                         // 0
+    return evalTree(mul);
+}

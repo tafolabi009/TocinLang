@@ -1,0 +1,22 @@
+// Recursive data structure: singly-linked list of ints.
+class Node { val: int; next: Node; }
+
+def sum(n: Node) -> int {
+    if n == None { return 0; }
+    return n.val + sum(n.next);
+}
+def length(n: Node) -> int {
+    let len = 0;
+    let cur = n;
+    while cur != None { len = len + 1; cur = cur.next; }
+    return len;
+}
+def main() -> int {
+    // build 3 -> 2 -> 1 -> None
+    let a = Node(1, None);
+    let b = Node(2, a);
+    let c = Node(3, b);
+    println("len={}", length(c));   // 3
+    println("sum={}", sum(c));      // 6
+    return sum(c);
+}
