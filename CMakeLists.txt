@@ -300,6 +300,9 @@ list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp")
 # Exclude the driver main() from the core library; it is linked into the
 # tocin executable directly so the same core can be reused by the test binary.
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+# The concurrency runtime is a small, LLVM-free static library so it can be
+# linked into both the compiler (for the JIT) and AOT-produced executables.
+list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp")
 
 # Find all header files
 file(GLOB_RECURSE HEADERS
@@ -448,7 +451,21 @@ endif()
 # Propagate all library dependencies through the core library so both the
 # tocin executable and the test binary inherit them automatically.
 target_link_libraries(tocin_core PUBLIC ${LINK_LIBS})
-target_link_libraries(tocin PRIVATE tocin_core)
+# Standalone Tocin runtime (channels/goroutines) — no LLVM dependency, so it
+# can be linked into native executables produced by the AOT path.
+add_library(tocin_runtime STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp)
+set_target_properties(tocin_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(tocin_runtime PUBLIC Threads::Threads)
+
+target_link_libraries(tocin PRIVATE tocin_core tocin_runtime)
+# Tell the driver where to find the runtime archive when linking AOT binaries.
+target_compile_definitions(tocin PRIVATE TOCIN_RUNTIME_LIB="$<TARGET_FILE:tocin_runtime>")
+
+# Export symbols dynamically so the JIT can resolve the Tocin runtime
+# (channels, goroutines, etc.) from within the running compiler process.
+if(NOT WIN32)
+    target_link_options(tocin PRIVATE -rdynamic)
+endif()
 
 # -------------------------
 # Compiler Flags & Optimizations

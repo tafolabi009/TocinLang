@@ -31,6 +31,18 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Support/CodeGen.h>
 #include <cstdlib>
+#include <cstdint>
+
+// The Tocin runtime (channels/goroutines) lives in the static core library.
+// Declared here so the JIT can register their addresses; referencing them in
+// runJIT also forces the runtime objects to be linked into the compiler.
+extern "C" {
+    void *__tocin_chan_new();
+    void __tocin_chan_send(void *, int64_t);
+    int64_t __tocin_chan_recv(void *);
+    void __tocin_go(void (*)(void *), void *);
+    void __tocin_join_all();
+}
 
 // Conditionally include Python
 #ifdef WITH_PYTHON
@@ -313,6 +325,22 @@ public:
             jit->getMainJITDylib().addGenerator(std::move(*gen));
         }
 
+        // Register the Tocin runtime (channels/goroutines) so JIT'd code can
+        // call it. Taking the addresses also forces these symbols to be linked.
+        {
+            llvm::orc::SymbolMap rt;
+            auto def = [&](const char *name, void *addr) {
+                rt[jit->mangleAndIntern(name)] = llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(addr), llvm::JITSymbolFlags::Exported);
+            };
+            def("__tocin_chan_new", reinterpret_cast<void *>(&__tocin_chan_new));
+            def("__tocin_chan_send", reinterpret_cast<void *>(&__tocin_chan_send));
+            def("__tocin_chan_recv", reinterpret_cast<void *>(&__tocin_chan_recv));
+            def("__tocin_go", reinterpret_cast<void *>(&__tocin_go));
+            def("__tocin_join_all", reinterpret_cast<void *>(&__tocin_join_all));
+            llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
+        }
+
         if (auto err = jit->addIRModule(
                 llvm::orc::ThreadSafeModule(std::move(module), std::move(context))))
         {
@@ -389,7 +417,13 @@ public:
     bool linkExecutable(const std::string& objPath, const std::string& exePath)
     {
         std::string cc = std::getenv("CC") ? std::getenv("CC") : "cc";
-        std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\" -lm -lpthread";
+        std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\"";
+        // Link the Tocin runtime (channels/goroutines) so programs that use
+        // concurrency resolve their __tocin_* calls.
+#ifdef TOCIN_RUNTIME_LIB
+        cmd += std::string(" \"") + TOCIN_RUNTIME_LIB + "\"";
+#endif
+        cmd += " -lm -lpthread -lstdc++";
         int rc = std::system(cmd.c_str());
         if (rc != 0)
         {
