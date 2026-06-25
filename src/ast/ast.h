@@ -737,6 +737,11 @@ namespace ast
         void accept(Visitor &visitor) override;
         ExprPtr value;
         std::vector<std::pair<ExprPtr, StmtPtr>> cases;
+        // Per-case constructor-pattern metadata, index-aligned with `cases`.
+        // caseCtor: "Some"/"None"/"Ok"/"Err" for a constructor pattern, else "".
+        // caseBind: payload variable bound by the pattern (e.g. "x"), else "".
+        std::vector<std::string> caseCtor;
+        std::vector<std::string> caseBind;
         StmtPtr defaultCase;
     };
 

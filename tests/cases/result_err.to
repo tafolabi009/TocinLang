@@ -1,0 +1,9 @@
+// expect: 13
+// Ok and Err are distinguished by tag; Err binds its payload.
+def main() {
+    match Err(13) {
+        case Ok(v): { return v; }
+        case Err(e): { return e; }
+    }
+    return 99;
+}

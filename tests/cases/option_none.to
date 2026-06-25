@@ -1,0 +1,9 @@
+// expect: 7
+// None matches the None arm (None is the nil literal / null).
+def main() {
+    match None {
+        case Some(x): { return x; }
+        case None: { return 7; }
+    }
+    return 99;
+}
