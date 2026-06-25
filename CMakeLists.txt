@@ -1,8 +1,8 @@
 ﻿cmake_minimum_required(VERSION 3.16)
 project(Tocin LANGUAGES C CXX)
 
-# Set C++ standard to C++17 for better compatibility
-set(CMAKE_CXX_STANDARD 17)
+# Set C++ standard to C++20 (modern features: concepts, ranges, <bit>, designated inits)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -297,6 +297,9 @@ file(GLOB_RECURSE SOURCES
 
 # Exclude test files that have their own main function
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp")
+# Exclude the driver main() from the core library; it is linked into the
+# tocin executable directly so the same core can be reused by the test binary.
+list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 # Find all header files
 file(GLOB_RECURSE HEADERS
@@ -338,10 +341,19 @@ set(FEATURE_SOURCES
 list(APPEND HEADERS ${FEATURE_HEADERS})
 list(APPEND SOURCES ${FEATURE_SOURCES})
 
+# Core compiler library (everything except the driver main()).
+# Both the `tocin` executable and the `tocin_tests` binary link against this so
+# the compiler internals are compiled exactly once and fully testable.
+add_library(tocin_core STATIC ${SOURCES})
+
+target_include_directories(tocin_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${LLVM_INCLUDE_DIRS}
+    ${ZLIB_INCLUDE_DIRS}
+)
+
 # Create executable
-add_executable(tocin ${SOURCES}
-        src/error/error_handler.cpp
-        src/main.cpp)
+add_executable(tocin src/main.cpp)
 
 # Include Project Headers
 target_include_directories(tocin PRIVATE
@@ -433,30 +445,10 @@ if(zstd_FOUND)
     list(APPEND LINK_LIBS ${zstd_LIBRARIES})
 endif()
 
-target_link_libraries(tocin PRIVATE ${LINK_LIBS})
-
-# -------------------------
-# Custom IR Generator Build
-# -------------------------
-add_custom_target(ir_generator_direct
-    COMMAND ${CMAKE_CXX_COMPILER}
-    -c ${CMAKE_SOURCE_DIR}/src/codegen/ir_generator.cpp
-    -o ${CMAKE_BINARY_DIR}/ir_generator.o
-    -I${CMAKE_SOURCE_DIR}/src
-    -std=c++17
-    -I${LLVM_INCLUDE_DIRS}
-    -I${CMAKE_SOURCE_DIR}/src/ast
-    -I${CMAKE_SOURCE_DIR}/src/lexer
-    -I${CMAKE_SOURCE_DIR}/src/type
-    -I${CMAKE_SOURCE_DIR}/src/error
-    -I${CMAKE_SOURCE_DIR}/src/runtime
-    -I${CMAKE_SOURCE_DIR}/src/compiler
-    ${LLVM_DEFINITIONS}
-    COMMENT "Building IR generator directly with g++"
-)
-
-# Add this to the main target dependencies
-add_dependencies(tocin ir_generator_direct)
+# Propagate all library dependencies through the core library so both the
+# tocin executable and the test binary inherit them automatically.
+target_link_libraries(tocin_core PUBLIC ${LINK_LIBS})
+target_link_libraries(tocin PRIVATE tocin_core)
 
 # -------------------------
 # Compiler Flags & Optimizations
@@ -504,8 +496,9 @@ if(ENABLE_TESTING)
         ${CMAKE_SOURCE_DIR}/tests
         ${LLVM_INCLUDE_DIRS}
     )
-    
-    target_link_libraries(tocin_tests PRIVATE ${LINK_LIBS})
+
+    # Link the full compiler core so tests can exercise real lexer/parser/etc.
+    target_link_libraries(tocin_tests PRIVATE tocin_core)
     
     # Register tests with CTest
     add_test(NAME LexerTests COMMAND tocin_tests --filter=Lexer)
