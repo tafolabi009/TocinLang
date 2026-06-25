@@ -1,0 +1,8 @@
+// expect: 25
+// Macros may invoke other macros; expansion iterates to a fixed point.
+macro square(x) { x * x }
+macro sumsq(a, b) { square!(a) + square!(b) }
+
+def main() {
+    return sumsq!(3, 4);   // 9 + 16
+}
