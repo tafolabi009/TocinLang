@@ -1,0 +1,12 @@
+// expect-output: cleanup
+// finally runs even when the try body throws and the exception is caught.
+def main() {
+    try {
+        throw 1;
+    } catch (e) {
+        print("");
+    } finally {
+        println("cleanup");
+    }
+    return 0;
+}

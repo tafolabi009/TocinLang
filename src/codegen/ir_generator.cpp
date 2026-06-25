@@ -2400,6 +2400,165 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     return function;
 }
 
+void IRGenerator::visitEnumStmt(ast::EnumStmt *stmt)
+{
+    // Enum members are integer constants, registered both bare (Red) and
+    // qualified (Color.Red) for use in expressions.
+    for (const auto &m : stmt->members)
+    {
+        enumConstants[m.first] = m.second;
+        enumConstants[stmt->name + "." + m.first] = m.second;
+    }
+    lastValue = nullptr;
+}
+
+void IRGenerator::visitThrowStmt(ast::ThrowStmt *stmt)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *voidTy = llvm::Type::getVoidTy(context);
+
+    llvm::Value *val = nullptr;
+    if (stmt->value)
+    {
+        stmt->value->accept(*this);
+        val = lastValue;
+    }
+    if (!val)
+        val = llvm::ConstantInt::get(i64, 0);
+
+    // Normalize the thrown value into a 64-bit slot (matching the channel ABI).
+    if (val->getType()->isPointerTy())
+        val = builder.CreatePtrToInt(val, i64, "throwv");
+    else if (val->getType()->isDoubleTy())
+        val = builder.CreateBitCast(val, i64, "throwv");
+    else if (val->getType()->isIntegerTy() && val->getType() != i64)
+        val = builder.CreateSExt(val, i64, "throwv");
+
+    llvm::Function *throwF = module->getFunction("__tocin_throw");
+    if (!throwF)
+        throwF = llvm::Function::Create(
+            llvm::FunctionType::get(voidTy, {i64}, false),
+            llvm::Function::ExternalLinkage, "__tocin_throw", *module);
+    builder.CreateCall(throwF, {val});
+    // __tocin_throw never returns (it longjmps); terminate the block.
+    builder.CreateUnreachable();
+    lastValue = nullptr;
+}
+
+void IRGenerator::visitTryStmt(ast::TryStmt *stmt)
+{
+    llvm::Function *function = builder.GetInsertBlock()->getParent();
+    llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+    llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Type *voidTy = llvm::Type::getVoidTy(context);
+
+    // Runtime helpers.
+    auto getFn = [&](const char *name, llvm::FunctionType *ty) {
+        llvm::Function *f = module->getFunction(name);
+        if (!f)
+            f = llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, *module);
+        return f;
+    };
+    llvm::Function *regF = getFn("__tocin_try_register",
+                                 llvm::FunctionType::get(voidTy, {ptr}, false));
+    llvm::Function *popF = getFn("__tocin_try_pop",
+                                 llvm::FunctionType::get(voidTy, {}, false));
+    llvm::Function *excValF = getFn("__tocin_exc_value",
+                                    llvm::FunctionType::get(i64, {}, false));
+    llvm::Function *throwF = getFn("__tocin_throw",
+                                   llvm::FunctionType::get(voidTy, {i64}, false));
+    // libc setjmp; the call site must be marked returns_twice.
+    llvm::Function *setjmpF = module->getFunction("setjmp");
+    if (!setjmpF)
+    {
+        setjmpF = llvm::Function::Create(
+            llvm::FunctionType::get(i32, {ptr}, false),
+            llvm::Function::ExternalLinkage, "setjmp", *module);
+        setjmpF->addFnAttr(llvm::Attribute::ReturnsTwice);
+    }
+
+    // jmp_buf storage (256 bytes covers glibc's jmp_buf), in the entry block.
+    llvm::ArrayType *bufTy = llvm::ArrayType::get(i8, 256);
+    llvm::AllocaInst *buf = createEntryBlockAlloca(function, "try.jmpbuf", bufTy);
+
+    // Emits the finally block (if present) inline. Returns true if the current
+    // block is still open (not terminated) afterward.
+    auto emitFinally = [&]() -> bool {
+        if (stmt->finallyBlock)
+        {
+            createEnvironment();
+            stmt->finallyBlock->accept(*this);
+            restoreEnvironment();
+        }
+        return builder.GetInsertBlock()->getTerminator() == nullptr;
+    };
+
+    // Register the handler and arm setjmp.
+    builder.CreateCall(regF, {buf});
+    llvm::CallInst *sj = builder.CreateCall(setjmpF, {buf}, "sj");
+    sj->addFnAttr(llvm::Attribute::ReturnsTwice);
+    llvm::Value *isExc = builder.CreateICmpNE(sj, llvm::ConstantInt::get(i32, 0), "is.exc");
+
+    llvm::BasicBlock *tryBB = llvm::BasicBlock::Create(context, "try.body", function);
+    llvm::BasicBlock *excBB = llvm::BasicBlock::Create(context, "try.land", function);
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "try.cont", function);
+
+    builder.CreateCondBr(isExc, excBB, tryBB);
+
+    // --- try body (setjmp returned 0) ---
+    builder.SetInsertPoint(tryBB);
+    createEnvironment();
+    if (stmt->tryBlock)
+        stmt->tryBlock->accept(*this);
+    restoreEnvironment();
+    if (!builder.GetInsertBlock()->getTerminator())
+    {
+        builder.CreateCall(popF, {});       // handler consumed: normal completion
+        if (emitFinally())
+            builder.CreateBr(contBB);
+    }
+
+    // --- landing pad (setjmp returned non-zero: an exception unwound here) ---
+    // __tocin_throw has already popped this handler.
+    builder.SetInsertPoint(excBB);
+    if (stmt->catchBlock)
+    {
+        auto savedNamed = namedValues;
+        createEnvironment();
+        if (!stmt->catchVar.empty())
+        {
+            llvm::Value *exc = builder.CreateCall(excValF, {}, "exc.val");
+            llvm::AllocaInst *slot = builder.CreateAlloca(i64, nullptr, stmt->catchVar);
+            builder.CreateStore(exc, slot);
+            namedValues[stmt->catchVar] = slot;
+        }
+        stmt->catchBlock->accept(*this);
+        restoreEnvironment();
+        namedValues = savedNamed;
+        if (!builder.GetInsertBlock()->getTerminator())
+        {
+            if (emitFinally())
+                builder.CreateBr(contBB);
+        }
+    }
+    else
+    {
+        // No catch: run finally, then re-propagate to the enclosing handler.
+        if (emitFinally())
+        {
+            llvm::Value *exc = builder.CreateCall(excValF, {}, "exc.val");
+            builder.CreateCall(throwF, {exc});
+            builder.CreateUnreachable();
+        }
+    }
+
+    // --- continuation ---
+    builder.SetInsertPoint(contBB);
+    lastValue = nullptr;
+}
+
 void IRGenerator::generateMethod(const std::string &className, llvm::StructType *classType, ast::FunctionStmt *method)
 {
     llvm::Type *opaquePtr = llvm::PointerType::get(context, 0);
@@ -2522,6 +2681,17 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
 void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 {
+    // Qualified enum access: EnumName.Member -> integer constant.
+    if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr->object))
+    {
+        auto e = enumConstants.find(v->name + "." + expr->name);
+        if (e != enumConstants.end())
+        {
+            lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
+            return;
+        }
+    }
+
     // Evaluate the object expression
     expr->object->accept(*this);
     if (!lastValue)
@@ -3117,10 +3287,15 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     else
         stmts.push_back(ast);
 
-    // Register class types first (so signatures can reference them).
+    // Register class types and enum constants first (so they can be referenced
+    // regardless of declaration order).
     for (auto &s : stmts)
+    {
         if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
             registerClassType(cls.get());
+        else if (auto en = std::dynamic_pointer_cast<ast::EnumStmt>(s))
+            visitEnumStmt(en.get());
+    }
 
     // Then forward-declare free functions and method prototypes.
     for (auto &s : stmts)
@@ -3868,6 +4043,13 @@ void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
 
 void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
 {
+    // Enum members resolve to their integer constant.
+    auto e = enumConstants.find(expr->name);
+    if (e != enumConstants.end())
+    {
+        lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
+        return;
+    }
     // Look up variable in current scope
     llvm::AllocaInst *alloca = lookupVariable(expr->name);
     if (alloca)
@@ -3890,7 +4072,17 @@ void IRGenerator::visitBlockStmt(ast::BlockStmt *stmt)
     enterScope();
     for (auto &statement : stmt->statements)
     {
-        if (statement) statement->accept(*this);
+        if (!statement)
+            continue;
+        // Stop at the first terminator within the current function: statements
+        // after a return/throw are unreachable, and emitting them would place
+        // instructions after a block terminator (invalid IR). The parent check
+        // avoids tripping at the top level, where the builder is left pointing
+        // at the previous function's (terminated) block between declarations.
+        if (auto *bb = builder.GetInsertBlock())
+            if (bb->getTerminator() && currentFunction && bb->getParent() == currentFunction)
+                break;
+        statement->accept(*this);
     }
     exitScope();
 }

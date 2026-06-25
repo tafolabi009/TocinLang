@@ -116,3 +116,25 @@ TEST(Parser, ParsesMultipleTopLevelDeclarations) {
     auto stmts = topLevel(root);
     ASSERT_TRUE(stmts.size() >= 2);
 }
+
+TEST(Parser, ParsesTryCatchFinally) {
+    auto root = parseProgram(
+        "def m() { try { throw 1; } catch (e) { return e; } finally { return 0; } }");
+    auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(topLevel(root)[0]);
+    auto body = std::dynamic_pointer_cast<ast::BlockStmt>(fn->body);
+    auto tryStmt = std::dynamic_pointer_cast<ast::TryStmt>(body->statements[0]);
+    ASSERT_TRUE(tryStmt != nullptr);
+    ASSERT_TRUE(tryStmt->tryBlock != nullptr);
+    ASSERT_EQ(std::string("e"), tryStmt->catchVar);
+    ASSERT_TRUE(tryStmt->catchBlock != nullptr);
+    ASSERT_TRUE(tryStmt->finallyBlock != nullptr);
+}
+
+TEST(Parser, ParsesThrowStatement) {
+    auto root = parseProgram("def m() { throw 42; }");
+    auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(topLevel(root)[0]);
+    auto body = std::dynamic_pointer_cast<ast::BlockStmt>(fn->body);
+    auto thr = std::dynamic_pointer_cast<ast::ThrowStmt>(body->statements[0]);
+    ASSERT_TRUE(thr != nullptr);
+    ASSERT_TRUE(thr->value != nullptr);
+}

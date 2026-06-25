@@ -1,0 +1,7 @@
+// expect: 6
+enum Color { Red, Green, Blue }
+enum Code { A = 10, B = 20 }
+def main() {
+    // Red=0, Green=1, Blue=2 -> 0+1+2=3 ; plus Color.Blue=2 ; plus 1 = 6
+    return Red + Green + Blue + Color.Blue + 1;
+}

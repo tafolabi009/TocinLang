@@ -63,6 +63,7 @@ namespace parser
         ast::StmtPtr classDeclaration();
         ast::StmtPtr traitDeclaration();
         ast::StmtPtr implDeclaration();
+        ast::StmtPtr enumDeclaration();
         std::shared_ptr<ast::FunctionStmt> methodDeclaration(bool allowNoBody);
         ast::StmtPtr statement();
         ast::StmtPtr expressionStmt();
@@ -75,6 +76,8 @@ namespace parser
         ast::StmtPtr matchStmt();
         ast::StmtPtr goStmt();
         ast::StmtPtr selectStmt();
+        ast::StmtPtr tryStmt();
+        ast::StmtPtr throwStmt();
         ast::ExprPtr expression();
         ast::ExprPtr assignment();
         ast::ExprPtr orExpr();
