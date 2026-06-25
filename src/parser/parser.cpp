@@ -613,6 +613,45 @@ namespace parser
                                      "Invalid assignment target", equals,
                                      error::ErrorSeverity::ERROR);
         }
+        else if (check(lexer::TokenType::PLUS_EQUAL) || check(lexer::TokenType::MINUS_EQUAL) ||
+                 check(lexer::TokenType::STAR_EQUAL) || check(lexer::TokenType::SLASH_EQUAL) ||
+                 check(lexer::TokenType::PERCENT_EQUAL))
+        {
+            // Compound assignment desugars `target OP= value` into
+            // `target = target OP value`.
+            lexer::Token compound = advance();
+            lexer::Token opTok = compound;
+            switch (compound.type)
+            {
+            case lexer::TokenType::PLUS_EQUAL:    opTok.type = lexer::TokenType::PLUS;    break;
+            case lexer::TokenType::MINUS_EQUAL:   opTok.type = lexer::TokenType::MINUS;   break;
+            case lexer::TokenType::STAR_EQUAL:    opTok.type = lexer::TokenType::STAR;    break;
+            case lexer::TokenType::SLASH_EQUAL:   opTok.type = lexer::TokenType::SLASH;   break;
+            case lexer::TokenType::PERCENT_EQUAL: opTok.type = lexer::TokenType::PERCENT; break;
+            default: break;
+            }
+            ast::ExprPtr value = assignment();
+            ast::ExprPtr combined =
+                std::make_shared<ast::BinaryExpr>(opTok, expr, opTok, value);
+
+            if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+            {
+                return std::make_shared<ast::AssignExpr>(compound, var->name, combined);
+            }
+            else if (auto get = std::dynamic_pointer_cast<ast::GetExpr>(expr))
+            {
+                return std::make_shared<ast::SetExpr>(
+                    compound, get->object, get->name, combined);
+            }
+            else if (std::dynamic_pointer_cast<ast::IndexExpr>(expr))
+            {
+                return std::make_shared<ast::AssignExpr>(compound, expr, combined);
+            }
+
+            errorHandler.reportError(error::ErrorCode::S005_INVALID_ASSIGNMENT_TARGET,
+                                     "Invalid assignment target", compound,
+                                     error::ErrorSeverity::ERROR);
+        }
 
         return expr;
     }
