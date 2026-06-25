@@ -167,6 +167,8 @@ namespace codegen
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
+        std::map<std::string, ast::ClassStmt *> genericClasses;                  // name -> generic class template
+        std::map<const ast::CallExpr *, std::string> genericCtorClass;           // generic constructor call -> mangled class name
         std::map<std::string, int64_t> enumConstants;                           // EnumName.Member and Member -> value
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
@@ -267,6 +269,10 @@ namespace codegen
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,
                                             const std::map<std::string, llvm::Type *> &bindings);
+        // Monomorphize a generic class: build the concrete struct + methods for a
+        // set of type bindings and register it. Returns the mangled class name.
+        std::string instantiateGenericClass(ast::ClassStmt *stmt,
+                                             const std::map<std::string, llvm::Type *> &bindings);
         std::string llvmTypeName(llvm::Type *t);
     };
 

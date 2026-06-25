@@ -138,3 +138,22 @@ TEST(Parser, ParsesThrowStatement) {
     ASSERT_TRUE(thr != nullptr);
     ASSERT_TRUE(thr->value != nullptr);
 }
+
+TEST(Parser, ParsesGenericClassWithTypeParameters) {
+    auto root = parseProgram(
+        "class Box<T> { value: T; def get(self) -> T { return self.value; } }");
+    auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(topLevel(root)[0]);
+    ASSERT_TRUE(cls != nullptr);
+    ASSERT_EQ(std::string("Box"), cls->name);
+    ASSERT_TRUE(cls->isGeneric());
+    ASSERT_EQ(size_t(1), cls->typeParameters.size());
+    ASSERT_EQ(std::string("T"), cls->typeParameters[0].getName());
+}
+
+TEST(Parser, ParsesGenericClassWithMultipleTypeParameters) {
+    auto root = parseProgram("class Pair<A, B> { first: A; second: B; }");
+    auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(topLevel(root)[0]);
+    ASSERT_TRUE(cls != nullptr);
+    ASSERT_TRUE(cls->isGeneric());
+    ASSERT_EQ(size_t(2), cls->typeParameters.size());
+}

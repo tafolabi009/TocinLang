@@ -173,6 +173,9 @@ namespace type_checker
         // True only while visiting the program-root block/module so its direct
         // children share the global environment (top-level scope).
         bool atProgramRoot_ = false;
+        // Type-parameter names of the enclosing generic class (if any); methods
+        // treat these as abstract types and check permissively.
+        std::unordered_set<std::string> classTypeParams_;
 
         // Module related methods
         bool loadModule(const std::string &moduleName);
