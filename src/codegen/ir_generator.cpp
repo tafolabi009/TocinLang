@@ -285,6 +285,10 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         std::string baseName = genericType->name;
         const auto &typeArgs = genericType->typeArguments;
 
+        // Channels are opaque runtime handles.
+        if (baseName == "channel" || baseName == "Channel" || baseName == "chan")
+            return llvm::PointerType::get(context, 0);
+
         if (baseName == "list")
         {
             // list<T> is represented as { int64 length, T* data }
@@ -1041,6 +1045,18 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Value *base = lastValue;
             if (!base) return;
             lastValue = builder.CreateLoad(llvm::Type::getInt64Ty(context), base, "len");
+            return;
+        }
+
+        // channel() creation -> __tocin_chan_new().
+        if (funcName == "__chan_new")
+        {
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Function *f = module->getFunction("__tocin_chan_new");
+            if (!f)
+                f = llvm::Function::Create(llvm::FunctionType::get(ptrTy, {}, false),
+                                           llvm::Function::ExternalLinkage, "__tocin_chan_new", *module);
+            lastValue = builder.CreateCall(f, {}, "chan");
             return;
         }
 
@@ -3989,170 +4005,121 @@ void IRGenerator::visitAwaitExpr(ast::AwaitExpr *expr)
 }
 
 void codegen::IRGenerator::visitGoStmt(ast::GoStmt* stmt) {
-    // Generate IR for goroutine launch (go statement)
-    
-    // First, generate IR for the expression (function call)
-    stmt->expression->accept(*this);
-    llvm::Value* functionCall = lastValue;
-    
-    if (!functionCall) {
+    // go f(args): run f(args) on a new OS thread. Arguments are packed into a
+    // heap struct; a thunk unpacks them and calls f, then frees the pack.
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->expression);
+    if (!call) {
         errorHandler.reportError(error::ErrorCode::C013_INVALID_SPAWN_OPERATION,
-                               "Invalid expression in go statement",
-                               std::string(stmt->token.filename), stmt->token.line, stmt->token.column,
-                               error::ErrorSeverity::ERROR);
+                                 "'go' requires a function call",
+                                 std::string(stmt->token.filename), stmt->token.line,
+                                 stmt->token.column, error::ErrorSeverity::ERROR);
         return;
     }
-    
-    // Get the function type
-    llvm::FunctionType* funcType = nullptr;
-    if (auto callInst = llvm::dyn_cast<llvm::CallInst>(functionCall)) {
-        funcType = callInst->getFunctionType();
-    } else {
+    auto calleeVar = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee);
+    llvm::Function *target = calleeVar ? module->getFunction(calleeVar->name) : nullptr;
+    if (!target) {
         errorHandler.reportError(error::ErrorCode::C013_INVALID_SPAWN_OPERATION,
-                               "Go statement requires a function call",
-                               std::string(stmt->token.filename), stmt->token.line, stmt->token.column,
-                               error::ErrorSeverity::ERROR);
+                                 "'go' target must be a known function",
+                                 std::string(stmt->token.filename), stmt->token.line,
+                                 stmt->token.column, error::ErrorSeverity::ERROR);
         return;
     }
-    
-    // Create a wrapper function that will be executed in a goroutine
-    std::string wrapperName = "goroutine_wrapper_" + std::to_string(getNextId());
-    llvm::Function* wrapperFunc = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false),
-        llvm::Function::InternalLinkage,
-        wrapperName,
-        module.get()
-    );
-    
-    // Create the wrapper function body
-    llvm::BasicBlock* entryBlock = llvm::BasicBlock::Create(context, "entry", wrapperFunc);
-    builder.SetInsertPoint(entryBlock);
-    
-    // Call the original function
-    builder.CreateCall(funcType, functionCall);
-    
-    // Return void
+
+    // Evaluate arguments in the current function.
+    std::vector<llvm::Value *> args;
+    std::vector<llvm::Type *> argTypes;
+    for (auto &a : call->arguments) {
+        a->accept(*this);
+        if (!lastValue) return;
+        args.push_back(lastValue);
+        argTypes.push_back(lastValue->getType());
+    }
+
+    llvm::Function *mallocF = stdLibFunctions["malloc"];
+    llvm::Function *freeF = stdLibFunctions["free"];
+    llvm::StructType *packTy = llvm::StructType::get(context, argTypes);
+    llvm::Value *pack = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr));
+    if (!argTypes.empty()) {
+        llvm::Value *sz = llvm::ConstantExpr::getSizeOf(packTy);
+        pack = builder.CreateCall(mallocF->getFunctionType(), mallocF, {sz}, "gopack");
+        for (size_t i = 0; i < args.size(); ++i) {
+            llvm::Value *fp = builder.CreateStructGEP(packTy, pack, (unsigned)i, "go.arg");
+            builder.CreateStore(args[i], fp);
+        }
+    }
+
+    // Build the thunk: void thunk(ptr p) { args = unpack(p); f(args); free(p); }
+    std::string thunkName = "go_thunk_" + std::to_string(getNextId());
+    llvm::Function *thunk = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr}, false),
+        llvm::Function::InternalLinkage, thunkName, module.get());
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    llvm::Function *savedFn = currentFunction;
+    llvm::BasicBlock *entry = llvm::BasicBlock::Create(context, "entry", thunk);
+    builder.SetInsertPoint(entry);
+    currentFunction = thunk;
+    llvm::Value *p = thunk->getArg(0);
+    std::vector<llvm::Value *> callArgs;
+    for (size_t i = 0; i < argTypes.size(); ++i) {
+        llvm::Value *fp = builder.CreateStructGEP(packTy, p, (unsigned)i, "th.arg");
+        callArgs.push_back(builder.CreateLoad(argTypes[i], fp, "th.val"));
+    }
+    builder.CreateCall(target->getFunctionType(), target, callArgs);
+    if (!argTypes.empty() && freeF)
+        builder.CreateCall(freeF->getFunctionType(), freeF, {p});
     builder.CreateRetVoid();
-    
-    // Schedule the wrapper function to run in a goroutine
-    // This would typically call a runtime function to schedule the task
-    std::vector<llvm::Value*> args = {
-        llvm::ConstantExpr::getBitCast(wrapperFunc, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0))
-    };
-    
-    // Get the runtime scheduler function
-    llvm::Function* schedulerFunc = module->getFunction("runtime_schedule_goroutine");
-    if (!schedulerFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* schedulerType = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(context),
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
-            false
-        );
-        schedulerFunc = llvm::Function::Create(
-            schedulerType,
-            llvm::Function::ExternalLinkage,
-            "runtime_schedule_goroutine",
-            module.get()
-        );
-    }
-    
-    // Call the scheduler
-    builder.CreateCall(schedulerFunc, args);
-    
-    // Set the current value to void
-    lastValue = llvm::Constant::getNullValue(llvm::Type::getVoidTy(context));
+    builder.SetInsertPoint(savedBlock);
+    currentFunction = savedFn;
+
+    // __tocin_go(thunk, pack)
+    llvm::Function *goF = module->getFunction("__tocin_go");
+    if (!goF)
+        goF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr, ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_go", *module);
+    builder.CreateCall(goF, {thunk, pack});
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitChannelSendExpr(ast::ChannelSendExpr* expr) {
-    // Generate IR for channel send operation (channel <- value)
-    
-    // Generate IR for the channel
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     expr->channel->accept(*this);
-    llvm::Value* channel = lastValue;
-    
-    // Generate IR for the value
+    llvm::Value *ch = lastValue;
     expr->value->accept(*this);
-    llvm::Value* value = lastValue;
-    
-    if (!channel || !value) {
-        errorHandler.reportError(error::ErrorCode::C011_INVALID_CHANNEL_OPERATION,
-                               "Invalid channel or value in send operation",
-                               std::string(expr->token.filename), expr->token.line, expr->token.column,
-                               error::ErrorSeverity::ERROR);
-        return;
-    }
-    
-    // Get the runtime channel send function
-    llvm::Function* sendFunc = module->getFunction("runtime_channel_send");
-    if (!sendFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* sendType = llvm::FunctionType::get(
-            llvm::Type::getInt1Ty(context), // Returns bool (success/failure)
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0), llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // channel, value
-            false
-        );
-        sendFunc = llvm::Function::Create(
-            sendType,
-            llvm::Function::ExternalLinkage,
-            "runtime_channel_send",
-            module.get()
-        );
-    }
-    
-    // Cast channel and value to void pointers for the runtime call
-    llvm::Value* channelPtr = builder.CreateBitCast(channel, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    llvm::Value* valuePtr = builder.CreateBitCast(value, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    
-    // Call the runtime send function
-    std::vector<llvm::Value*> args = {channelPtr, valuePtr};
-    llvm::Value* result = builder.CreateCall(sendFunc, args);
-    
-    // Set the current value to the result
-    lastValue = result;
+    llvm::Value *v = lastValue;
+    if (!ch || !v) { lastValue = nullptr; return; }
+    // Normalize the value into a 64-bit slot.
+    if (v->getType()->isPointerTy())
+        v = builder.CreatePtrToInt(v, i64, "chv");
+    else if (v->getType()->isDoubleTy())
+        v = builder.CreateBitCast(v, i64, "chv");
+    else if (v->getType()->isFloatTy())
+        v = builder.CreateBitCast(builder.CreateFPExt(v, llvm::Type::getDoubleTy(context)), i64, "chv");
+    else if (v->getType()->isIntegerTy() && !v->getType()->isIntegerTy(64))
+        v = builder.CreateIntCast(v, i64, true, "chv");
+    llvm::Function *sendF = module->getFunction("__tocin_chan_send");
+    if (!sendF)
+        sendF = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {ptr, i64}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_send", *module);
+    builder.CreateCall(sendF, {ch, v});
+    lastValue = nullptr;
 }
 
 void codegen::IRGenerator::visitChannelReceiveExpr(ast::ChannelReceiveExpr* expr) {
-    // Generate IR for channel receive operation (<-channel)
-    
-    // Generate IR for the channel
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     expr->channel->accept(*this);
-    llvm::Value* channel = lastValue;
-    
-    if (!channel) {
-        errorHandler.reportError(error::ErrorCode::C011_INVALID_CHANNEL_OPERATION,
-                               "Invalid channel in receive operation",
-                               std::string(expr->token.filename), expr->token.line, expr->token.column,
-                               error::ErrorSeverity::ERROR);
-        return;
-    }
-    
-    // Get the runtime channel receive function
-    llvm::Function* receiveFunc = module->getFunction("runtime_channel_receive");
-    if (!receiveFunc) {
-        // Create the runtime function declaration if it doesn't exist
-        llvm::FunctionType* receiveType = llvm::FunctionType::get(
-            llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0), // Returns void* (received value)
-            {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // channel
-            false
-        );
-        receiveFunc = llvm::Function::Create(
-            receiveType,
-            llvm::Function::ExternalLinkage,
-            "runtime_channel_receive",
-            module.get()
-        );
-    }
-    
-    // Cast channel to void pointer for the runtime call
-    llvm::Value* channelPtr = builder.CreateBitCast(channel, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
-    
-    // Call the runtime receive function
-    std::vector<llvm::Value*> args = {channelPtr};
-    llvm::Value* result = builder.CreateCall(receiveFunc, args);
-    
-    // Set the current value to the received value
-    lastValue = result;
+    llvm::Value *ch = lastValue;
+    if (!ch) { lastValue = nullptr; return; }
+    llvm::Function *recvF = module->getFunction("__tocin_chan_recv");
+    if (!recvF)
+        recvF = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {ptr}, false),
+            llvm::Function::ExternalLinkage, "__tocin_chan_recv", *module);
+    lastValue = builder.CreateCall(recvF, {ch}, "recv");
 }
 
 void codegen::IRGenerator::visitSelectStmt(ast::SelectStmt* stmt) {

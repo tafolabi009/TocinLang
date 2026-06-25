@@ -546,9 +546,12 @@ namespace parser
         {
             return deleteExpr();
         }
-        if (match(lexer::TokenType::CHANNEL_RECEIVE))
+        // A `<-` (or `-<`) in prefix position is a channel receive: `<-ch`.
+        if (match(lexer::TokenType::CHANNEL_RECEIVE) || match(lexer::TokenType::CHANNEL_SEND))
         {
-            return channelReceiveExpr();
+            lexer::Token op = previous();
+            auto ch = unary();
+            return std::make_shared<ast::ChannelReceiveExpr>(op, ch);
         }
         return call();
     }
@@ -627,6 +630,21 @@ namespace parser
         {
             return std::make_shared<ast::VariableExpr>(previous(), previous().value);
         }
+        if (match(lexer::TokenType::CHANNEL))
+        {
+            // channel<T>() or channel() -> a new channel handle.
+            lexer::Token tok = previous();
+            if (match(lexer::TokenType::LESS))
+            {
+                parseType();
+                consume(lexer::TokenType::GREATER, "Expected '>' after channel element type");
+            }
+            consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after channel");
+            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after channel(");
+            return std::make_shared<ast::CallExpr>(
+                tok, std::make_shared<ast::VariableExpr>(tok, "__chan_new"),
+                std::vector<ast::ExprPtr>{});
+        }
         if (match(lexer::TokenType::LEFT_PAREN))
         {
             auto expr = expression();
@@ -686,7 +704,10 @@ namespace parser
 
     ast::TypePtr Parser::parseType()
     {
-        auto token = consume(lexer::TokenType::IDENTIFIER, "Expected type name");
+        // Accept the `channel` keyword as a type name (channel<T>).
+        lexer::Token token = (check(lexer::TokenType::CHANNEL))
+                                 ? advance()
+                                 : consume(lexer::TokenType::IDENTIFIER, "Expected type name");
         if (match(lexer::TokenType::LESS))
         {
             std::vector<ast::TypePtr> typeArgs;
@@ -1043,14 +1064,9 @@ namespace parser
     ast::StmtPtr Parser::goStmt()
     {
         auto keyword = previous();
-        consume(lexer::TokenType::LEFT_PAREN, "Expected '(' after 'go'");
-        
-        // Parse the function call or expression to be executed in goroutine
+        // Accept both `go f(args);` and `go (f(args));`.
         auto expr = expression();
-        
-        consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after goroutine expression");
         consume(lexer::TokenType::SEMI_COLON, "Expected ';' after goroutine statement");
-        
         return std::make_shared<ast::GoStmt>(keyword, expr);
     }
 
