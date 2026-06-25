@@ -282,6 +282,13 @@ namespace type_checker
         currentType_ = nullptr;
     }
 
+    void TypeChecker::visitDeferStmt(ast::DeferStmt *stmt)
+    {
+        if (stmt->body)
+            stmt->body->accept(*this);
+        currentType_ = nullptr;
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op

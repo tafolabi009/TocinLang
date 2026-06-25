@@ -1,0 +1,7 @@
+// expect-output: cleanup
+def f(x: int) -> int {
+    defer println("cleanup");
+    if x > 0 { return 1; }
+    return 2;
+}
+def main() { let r = f(5); return 0; }

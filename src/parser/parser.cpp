@@ -344,6 +344,13 @@ namespace parser
             match(lexer::TokenType::SEMI_COLON); // optional ';'
             return std::make_shared<ast::ContinueStmt>(kw);
         }
+        // `defer <statement>` — runs the statement at function return.
+        if (match(lexer::TokenType::DEFER))
+        {
+            lexer::Token kw = previous();
+            ast::StmtPtr body = statement();
+            return std::make_shared<ast::DeferStmt>(kw, body);
+        }
         return expressionStmt();
     }
 
@@ -1098,6 +1105,7 @@ namespace parser
             case lexer::TokenType::SWITCH:
             case lexer::TokenType::GO:
             case lexer::TokenType::SELECT:
+            case lexer::TokenType::DEFER:
                 return;
             default:
                 advance();
