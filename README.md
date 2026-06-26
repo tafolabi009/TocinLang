@@ -86,6 +86,9 @@ clear what is implemented versus planned.
 - **Freestanding / kernel mode** — `--freestanding` emits a relocatable object
   with no libc/GC/runtime (links with `-nostdlib`), for OS/kernel/bare-metal;
   inline `asm` and raw memory remain available.
+- **Opt-in borrow checker** — `--borrow-check` adds Rust-like compile-time move /
+  use-after-move enforcement on owned (class) values, on top of the GC's
+  always-on safety. Off by default (instances alias freely under GC).
 - **Native performance** — default `-O2` (the full LLVM pipeline); a compute
   benchmark runs within ~9% of the equivalent C at `-O2`.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.

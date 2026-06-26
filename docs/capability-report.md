@@ -69,11 +69,14 @@ language (networking, crypto, OS APIs): call the C library.
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is
    fragile. Use `mapPutStr`/`mapGetStr` for string-keyed data.
-4. **Ownership (`move`/`borrow`), generators, the power operator `**`, and
-   `++`/`--` are not implemented.** There is no borrow checker, so no
-   Rust-style compile-time memory safety — but memory is GC-managed (safe by
-   default) and `defer` + RAII destructors (`__del__`) give deterministic
-   cleanup. (`switch` and `defer` *are* implemented.)
+4. **Generators, the power operator `**`, and `++`/`--` are not implemented.**
+   Memory safety has two layers: GC by default (always safe — no use-after-free
+   regardless), plus an **opt-in borrow checker** (`--borrow-check`) that adds
+   Rust-like compile-time move / use-after-move enforcement on owned values.
+   `defer` + RAII destructors (`__del__`) give deterministic cleanup. The borrow
+   checker is move-only for now — `&`/`&mut` reference borrows and lifetimes are
+   the remaining Rust-parity items (the move analysis is the foundation they
+   build on).
 5. **No standard networking / HTTP / async-I/O library.** Reach for C FFI.
 6. **Python/JavaScript FFI are scaffolding only** — the C path is the working
    one.
