@@ -158,6 +158,8 @@ namespace ast
         const std::vector<std::shared_ptr<TraitType>> &getConstraints() const { return constraints; }
         const lexer::Token &getToken() const { return token; }
 
+        std::string bound; // optional trait bound name from `<T: Bound>` ("" if none)
+
     private:
         lexer::Token token;
         std::string name;

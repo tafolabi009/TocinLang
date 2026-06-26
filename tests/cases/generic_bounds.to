@@ -1,0 +1,13 @@
+// expect: 42
+// A generic with a trait bound `<T: Show>` accepts any type implementing the
+// trait, and trait-method calls on the bounded type parameter resolve to the
+// concrete monomorphized type.
+trait Show { def show(self) -> int; }
+class A { v: int; }
+impl Show for A { def show(self) -> int { return self.v; } }
+
+def reveal<T: Show>(x: T) -> int { return x.show(); }
+
+def main() -> int {
+    return reveal(A(42)); // 42
+}

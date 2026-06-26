@@ -31,6 +31,14 @@ for f in "$DIR"/*.to; do
                 echo "FAIL  $name  (no __tocin_oob bounds check in IR)"; fail=$((fail+1))
             fi
             ;;
+        *bound*)
+            out="$("$TOCIN" "$f" -o "$TMP/g.ll" 2>&1)"; rc=$?
+            if [[ $rc -ne 0 && "$out" == *T016* ]]; then
+                echo "PASS  $name  (rejected: T016 unsatisfied trait bound)"; pass=$((pass+1))
+            else
+                echo "FAIL  $name  (should be REJECTED with T016): rc=$rc $out"; fail=$((fail+1))
+            fi
+            ;;
     esac
 done
 echo "========================================================"

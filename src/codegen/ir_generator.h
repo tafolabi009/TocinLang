@@ -222,6 +222,7 @@ namespace codegen
         std::map<std::string, std::string> varTraitType;                       // local/param name -> trait type it is declared as
         std::map<std::string, std::string> varArrayElemTrait;                  // array var -> trait type of its elements (for trait-object vectors)
         std::string pendingElemTrait;                                          // when building a list<Trait> literal, box each element as this trait
+        std::map<std::string, std::string> pendingBindingClasses;              // type-param name -> concrete class, threaded into the next generic instantiation
         llvm::StructType *traitObjTy = nullptr;                                 // { i64 typeId, ptr data }
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions

@@ -2043,7 +2043,45 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 if (!bindings.count(tp.getName()))
                     bindings[tp.getName()] = llvm::Type::getInt64Ty(context);
 
+            // Enforce trait bounds `<T: Bound>`: if the type argument is a known
+            // class that does not implement the required trait, reject the call.
+            // Conservative — only fires when the concrete type is certainly a
+            // class lacking the impl (primitives/unknowns pass).
+            for (const auto &tp : tmpl->typeParameters)
+            {
+                if (tp.bound.empty() || !traitNames.count(tp.bound)) continue;
+                for (size_t i = 0; i < tmpl->parameters.size() && i < expr->arguments.size(); ++i)
+                {
+                    std::string pt = tmpl->parameters[i].type ? tmpl->parameters[i].type->toString() : "";
+                    if (pt != tp.getName()) continue;
+                    std::string argCls = getExprClassName(expr->arguments[i]);
+                    if (argCls.empty() || !classTypes.count(argCls)) continue;
+                    if (!traitImpls.count(tp.bound) || !traitImpls[tp.bound].count(argCls))
+                        errorHandler.reportError(
+                            error::ErrorCode::T016_INVALID_GENERIC_TYPE,
+                            "Type '" + argCls + "' does not satisfy the bound '" +
+                                tp.getName() + ": " + tp.bound + "' (it does not implement trait '" +
+                                tp.bound + "')",
+                            std::string(expr->token.filename), expr->token.line, expr->token.column,
+                            error::ErrorSeverity::FATAL);
+                }
+            }
+
+            // Thread each type parameter's concrete class name into the
+            // instantiation so method calls on a `<T>` param resolve to the
+            // monomorphized concrete type's methods.
+            pendingBindingClasses.clear();
+            for (size_t i = 0; i < tmpl->parameters.size() && i < expr->arguments.size(); ++i)
+            {
+                std::string pt = tmpl->parameters[i].type ? tmpl->parameters[i].type->toString() : "";
+                if (tparams.count(pt))
+                {
+                    std::string cn = getExprClassName(expr->arguments[i]);
+                    if (!cn.empty()) pendingBindingClasses[pt] = cn;
+                }
+            }
             llvm::Function *inst = emitGenericInstance(tmpl, bindings);
+            pendingBindingClasses.clear();
             llvm::FunctionType *ift = inst->getFunctionType();
             std::vector<llvm::Value *> callArgs;
             for (size_t i = 0; i < argVals.size(); ++i)
@@ -4053,6 +4091,12 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
         // method calls on it dispatch dynamically.
         std::string ptrait = traitNameOf(stmt->parameters[i].type);
         if (!ptrait.empty()) varTraitType[pname] = ptrait;
+        // A parameter typed as a type parameter `<T>` is, in this instance, a
+        // concrete class — record it so `x.method()` resolves to that class.
+        std::string ptName = stmt->parameters[i].type ? stmt->parameters[i].type->toString() : "";
+        auto bc = pendingBindingClasses.find(ptName);
+        if (bc != pendingBindingClasses.end() && classTypes.count(bc->second))
+            varClasses[pname] = bc->second;
         ++i;
     }
     if (stmt->body)

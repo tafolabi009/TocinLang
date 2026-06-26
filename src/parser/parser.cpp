@@ -140,10 +140,16 @@ namespace parser
             do
             {
                 auto tpName = consume(lexer::TokenType::IDENTIFIER, "Expected type parameter name");
-                // Optional constraint `: SomeTrait` is parsed and ignored for now.
+                // Optional trait bound `: SomeTrait` — captured so the type
+                // argument can be checked against it at instantiation.
+                std::string bound;
                 if (match(lexer::TokenType::COLON))
-                    parseType();
+                {
+                    auto bt = parseType();
+                    if (bt) bound = bt->toString();
+                }
                 typeParams.emplace_back(tpName, tpName.value);
+                typeParams.back().bound = bound;
             } while (match(lexer::TokenType::COMMA));
             consume(lexer::TokenType::GREATER, "Expected '>' after type parameters");
         }

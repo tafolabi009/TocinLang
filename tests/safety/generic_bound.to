@@ -1,0 +1,12 @@
+// `B` does not implement `Show`, so calling a `<T: Show>` generic with it must
+// be REJECTED with a T016 unsatisfied-bound diagnostic.
+trait Show { def show(self) -> int; }
+class A { v: int; }
+impl Show for A { def show(self) -> int { return self.v; } }
+class B { v: int; }   // no `impl Show for B`
+
+def reveal<T: Show>(x: T) -> int { return 1; }
+
+def main() -> int {
+    return reveal(B(5));  // error: B does not satisfy T: Show
+}
