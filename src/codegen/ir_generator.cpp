@@ -2104,15 +2104,58 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         return;
     }
 
-    // Direct call.
+    // Direct call. A variadic callee `f(a, rest...)` packs the trailing
+    // arguments into a fresh [i64 length][slot...] array passed as the last
+    // parameter (elements are 64-bit slots, matching the collection ABI).
+    std::string calleeName;
+    if (auto cv = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+        calleeName = cv->name;
+    auto vit = calleeName.empty() ? funcVariadic.end() : funcVariadic.find(calleeName);
+
     std::vector<llvm::Value *> args;
-    for (size_t i = 0; i < expr->arguments.size(); ++i)
+    if (vit != funcVariadic.end())
     {
-        expr->arguments[i]->accept(*this);
-        if (!lastValue)
-            return;
-        llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
-        args.push_back(coerceArg(lastValue, pt));
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+        size_t fixed = (size_t)vit->second;
+        for (size_t i = 0; i < fixed && i < expr->arguments.size(); ++i)
+        {
+            expr->arguments[i]->accept(*this);
+            if (!lastValue) return;
+            llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+            args.push_back(coerceArg(lastValue, pt));
+        }
+        // Collect and pack the variadic tail into an array of i64 slots.
+        std::vector<llvm::Value *> rest;
+        for (size_t i = fixed; i < expr->arguments.size(); ++i)
+        {
+            expr->arguments[i]->accept(*this);
+            if (!lastValue) return;
+            rest.push_back(normalizeToSlot(lastValue));
+        }
+        llvm::Function *mallocFn = getStdLibFunction("malloc");
+        llvm::Value *n = llvm::ConstantInt::get(i64, (int64_t)rest.size());
+        llvm::Value *total = llvm::ConstantInt::get(i64, (int64_t)(8 + rest.size() * 8));
+        llvm::Value *buf = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {total}, "varargs");
+        builder.CreateStore(n, buf);
+        for (size_t i = 0; i < rest.size(); ++i)
+        {
+            llvm::Value *off = llvm::ConstantInt::get(i64, (int64_t)(8 + i * 8));
+            llvm::Value *slot = builder.CreateGEP(i8, buf, off, "va.slot");
+            builder.CreateStore(rest[i], slot);
+        }
+        args.push_back(buf);
+    }
+    else
+    {
+        for (size_t i = 0; i < expr->arguments.size(); ++i)
+        {
+            expr->arguments[i]->accept(*this);
+            if (!lastValue)
+                return;
+            llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+            args.push_back(coerceArg(lastValue, pt));
+        }
     }
     lastValue = builder.CreateCall(funcType, callee, args);
 }
@@ -4919,6 +4962,10 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
             // checks funcReturnClass[name] for a direct call.
             if (fn->returnType && classTypes.count(fn->returnType->toString()))
                 funcReturnClass[fn->name] = fn->returnType->toString();
+            // Record a trailing variadic parameter so call sites can pack the
+            // extra arguments into an array.
+            if (!fn->parameters.empty() && fn->parameters.back().isVariadic)
+                funcVariadic[fn->name] = (int)fn->parameters.size() - 1;
         }
         else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
         {

@@ -49,7 +49,7 @@ implDecl       ::= "impl" (IDENT "for")? IDENT typeParams? "{" funcDecl* "}"
 importStmt     ::= "import" (STRING | IDENT ("." IDENT)*) ";"?
 
 typeParams     ::= "<" IDENT (":" type)? ("," IDENT (":" type)?)* ">"               // constraint parsed, ignored
-params         ::= ( ("self" (":" type)?) | (IDENT ":" type) ) ("," ...)*           // every non-self param MUST have a type
+params         ::= ( ("self" (":" type)?) | (IDENT ":" type "..."?) ) ("," ...)*     // every non-self param MUST have a type; trailing "..." = variadic
 retType        ::= ("->" | ":") type
 
 statement      ::= ifStmt | whileStmt | forStmt | "{" block "}" | returnStmt
