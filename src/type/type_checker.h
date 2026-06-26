@@ -103,6 +103,7 @@ namespace type_checker
         void visitBreakStmt(ast::BreakStmt *stmt) override;
         void visitContinueStmt(ast::ContinueStmt *stmt) override;
         void visitDeferStmt(ast::DeferStmt *stmt) override;
+        void visitDestructureStmt(ast::DestructureStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;

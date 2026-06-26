@@ -707,6 +707,38 @@ instantiation is a separate type behind the scenes.
 
 ---
 
+## 8a. Tuples & multiple return
+
+A tuple groups a fixed number of values: `(a, b, c)`. A function can return one
+to hand back several results at once, and a `let` can destructure it:
+
+```tocin
+def divmod(a: int, b: int) -> (int, int) {   // tuple return type
+    return (a / b, a % b);                    // tuple literal
+}
+
+def main() -> int {
+    let (q, r) = divmod(17, 5);   // destructuring: q = 3, r = 2
+    let t = (q, r, 100);
+    return t.0 * 10 + t.1;        // positional access: 32
+}
+```
+
+* **Literal:** `(a, b, …)` (two or more elements; `(x)` is just a grouped
+  expression).
+* **Type:** `(T1, T2, …)` — distinct from a function type `(T1) -> R`.
+* **Access:** `t.0`, `t.1`, … by position.
+* **Destructuring:** `let (x, y) = expr;` (also `const`). Patterns infer their
+  types — no `: T` annotation on the pattern itself.
+
+A tuple is a heap buffer of 64-bit slots (see [§18](#18-memory-model--abi)).
+Destructuring a tuple **literal** is lossless — each name keeps its element's
+native type (int/float/string/class ref). Destructuring a tuple returned from a
+call binds each name as a 64-bit slot (ideal for `int`/reference elements),
+matching the runtime ABI.
+
+---
+
 ## 9. Enums
 
 An `enum` defines named integer constants. Members auto-increment from `0`; an

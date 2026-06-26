@@ -99,6 +99,24 @@ namespace parser
     ast::StmtPtr Parser::varDeclaration()
     {
         bool isConstant = previous().type == lexer::TokenType::CONST;
+
+        // Tuple destructuring: `let (a, b, ...) = expr;`
+        if (check(lexer::TokenType::LEFT_PAREN))
+        {
+            lexer::Token lp = advance();
+            std::vector<std::string> names;
+            do
+            {
+                names.push_back(consume(lexer::TokenType::IDENTIFIER,
+                                        "Expected name in tuple pattern").value);
+            } while (match(lexer::TokenType::COMMA));
+            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after tuple pattern");
+            consume(lexer::TokenType::EQUAL, "Expected '=' in destructuring declaration");
+            auto init = expression();
+            consume(lexer::TokenType::SEMI_COLON, "Expected ';' after destructuring declaration");
+            return std::make_shared<ast::DestructureStmt>(lp, std::move(names), init, isConstant);
+        }
+
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected variable name");
         ast::TypePtr type = nullptr;
         if (match(lexer::TokenType::COLON))
@@ -883,8 +901,23 @@ namespace parser
             }
             else if (match(lexer::TokenType::DOT))
             {
-                auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
-                expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+                // Numeric field after '.' is a tuple index: t.0, t.1 -> lowered
+                // to a `__tupleGet(t, N)` builtin call.
+                if (check(lexer::TokenType::INT))
+                {
+                    auto idxTok = advance();
+                    std::vector<ast::ExprPtr> args{
+                        expr,
+                        std::make_shared<ast::LiteralExpr>(
+                            idxTok, idxTok.value, ast::LiteralExpr::LiteralType::INTEGER)};
+                    expr = std::make_shared<ast::CallExpr>(
+                        idxTok, std::make_shared<ast::VariableExpr>(idxTok, "__tupleGet"), args);
+                }
+                else
+                {
+                    auto name = consume(lexer::TokenType::IDENTIFIER, "Expected property name after '.'");
+                    expr = std::make_shared<ast::GetExpr>(name, expr, name.value);
+                }
             }
             else if (match(lexer::TokenType::SAFE_ACCESS))
             {
@@ -966,7 +999,22 @@ namespace parser
         }
         if (match(lexer::TokenType::LEFT_PAREN))
         {
+            lexer::Token lp = previous();
             auto expr = expression();
+            // A comma turns `(a, b, ...)` into a tuple literal, lowered to a
+            // `__tuple(...)` builtin call. Otherwise it is a parenthesized group.
+            if (check(lexer::TokenType::COMMA))
+            {
+                std::vector<ast::ExprPtr> elems{expr};
+                while (match(lexer::TokenType::COMMA))
+                {
+                    if (check(lexer::TokenType::RIGHT_PAREN)) break; // trailing comma
+                    elems.push_back(expression());
+                }
+                consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after tuple");
+                return std::make_shared<ast::CallExpr>(
+                    lp, std::make_shared<ast::VariableExpr>(lp, "__tuple"), elems);
+            }
             consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after expression");
             return std::make_shared<ast::GroupingExpr>(expr->token, expr);
         }
@@ -1023,22 +1071,28 @@ namespace parser
 
     ast::TypePtr Parser::parseType()
     {
-        // Function type with no leading name: (T1, T2, ...) -> R
+        // Parenthesized type list: either a function type `(T1, T2) -> R` or a
+        // tuple type `(T1, T2, ...)` when no arrow follows.
         if (check(lexer::TokenType::LEFT_PAREN))
         {
             lexer::Token lp = advance();
-            std::vector<ast::TypePtr> paramTypes;
+            std::vector<ast::TypePtr> elemTypes;
             if (!check(lexer::TokenType::RIGHT_PAREN))
             {
                 do
                 {
-                    paramTypes.push_back(parseType());
+                    elemTypes.push_back(parseType());
                 } while (match(lexer::TokenType::COMMA));
             }
-            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' in function type");
-            consume(lexer::TokenType::ARROW, "Expected '->' in function type");
-            auto returnType = parseType();
-            return std::make_shared<ast::FunctionType>(lp, paramTypes, returnType);
+            consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' in type");
+            if (match(lexer::TokenType::ARROW))
+            {
+                auto returnType = parseType();
+                return std::make_shared<ast::FunctionType>(lp, elemTypes, returnType);
+            }
+            // Tuple type: represented as a generic `tuple<...>` (an opaque heap
+            // pointer at the LLVM level).
+            return std::make_shared<ast::GenericType>(lp, "tuple", elemTypes);
         }
 
         // Accept the `channel` keyword as a type name (channel<T>).

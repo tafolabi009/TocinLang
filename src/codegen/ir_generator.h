@@ -132,6 +132,7 @@ namespace codegen
         void visitBreakStmt(ast::BreakStmt *stmt) override;
         void visitContinueStmt(ast::ContinueStmt *stmt) override;
         void visitDeferStmt(ast::DeferStmt *stmt) override;
+        void visitDestructureStmt(ast::DestructureStmt *stmt) override;
         void visitMoveExpr(void *expr) override;
         void visitGoExpr(void *expr) override;
         void visitRuntimeChannelSendExpr(void *expr) override;
@@ -344,6 +345,10 @@ namespace codegen
         // `args` are the already-evaluated payload values (each normalized to a
         // 64-bit slot). Returns an opaque pointer to the buffer.
         llvm::Value *makeADT(const ADTVariant &v, const std::vector<llvm::Value *> &args);
+
+        // Construct a tuple on the heap as a flat i64-slot buffer [slot0][slot1]…
+        // `slots` are already normalized to 64-bit slots. Returns an opaque ptr.
+        llvm::Value *makeTuple(const std::vector<llvm::Value *> &slots);
 
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,

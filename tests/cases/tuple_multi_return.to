@@ -1,0 +1,9 @@
+// expect: 32
+// Multiple return values via a tuple, taken apart with destructuring `let`.
+def divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b);
+}
+def main() -> int {
+    let (q, r) = divmod(17, 5); // q = 3, r = 2
+    return q * 10 + r;          // 32
+}

@@ -1,0 +1,6 @@
+// expect: 2
+// Tuple literals and positional `.0`/`.1`/`.2` element access.
+def main() -> int {
+    let t = (7, 35, 100);
+    return t.0 + t.1 - t.2 + 60; // 7 + 35 - 100 + 60 = 2
+}

@@ -75,6 +75,7 @@ namespace ast
     class BreakStmt;
     class ContinueStmt;
     class DeferStmt;
+    class DestructureStmt;
 
     // Define shared pointers for common types - Type is already defined in types.h
     using ExprPtr = std::shared_ptr<Expression>;
@@ -127,6 +128,7 @@ namespace ast
         virtual void visitBreakStmt(BreakStmt *stmt) = 0;
         virtual void visitContinueStmt(ContinueStmt *stmt) = 0;
         virtual void visitDeferStmt(DeferStmt *stmt) = 0;
+        virtual void visitDestructureStmt(DestructureStmt *stmt) = 0;
         virtual void visitTraitStmt(TraitStmt *stmt) = 0;
         virtual void visitImplStmt(ImplStmt *stmt) = 0;
 
@@ -1008,6 +1010,24 @@ namespace ast
             : Statement(token), body(std::move(body)) {}
         void accept(Visitor &visitor) override { visitor.visitDeferStmt(this); }
         StmtPtr body;
+    };
+
+    /**
+     * @brief Tuple-destructuring binding: `let (a, b, ...) = initializer;`.
+     * Binds each name to the corresponding tuple element. `isConst` mirrors the
+     * `const` vs `let` keyword.
+     */
+    class DestructureStmt : public Statement
+    {
+    public:
+        DestructureStmt(const lexer::Token &token, std::vector<std::string> names,
+                        ExprPtr initializer, bool isConst)
+            : Statement(token), names(std::move(names)),
+              initializer(std::move(initializer)), isConst(isConst) {}
+        void accept(Visitor &visitor) override { visitor.visitDestructureStmt(this); }
+        std::vector<std::string> names;
+        ExprPtr initializer;
+        bool isConst;
     };
 
     /**

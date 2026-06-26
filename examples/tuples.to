@@ -1,0 +1,38 @@
+// tuples.to — tuples and multiple return values.
+//
+// A tuple `(a, b, ...)` groups several values into one. Functions use them to
+// return more than one result, and `let (x, y) = ...` takes them apart. Tuple
+// elements are 64-bit slots (like the rest of Tocin's runtime ABI), so they
+// hold ints and references directly; a destructured literal keeps each element's
+// native type (so a string element stays a string).
+//
+// Run it:
+//   tocin examples/tuples.to --run
+// The exit code is gcd(48, 36) = 12.
+
+// Return two values at once: the quotient and remainder.
+def divmod(a: int, b: int) -> (int, int) {
+    return (a / b, a % b);
+}
+
+// Euclid's algorithm, using divmod's second result each step.
+def gcd(a: int, b: int) -> int {
+    while b != 0 {
+        let (q, r) = divmod(a, b);  // q is unused; r is the remainder
+        a = b;
+        b = r;
+    }
+    return a;
+}
+
+def main() -> int {
+    // Positional access with .0 / .1 also works:
+    let pair = divmod(17, 5);
+    let _check = pair.0 * 10 + pair.1; // 32 (just to show .N access)
+
+    // Heterogeneous tuples keep each element's type when destructured:
+    let (label, value) = ("gcd(48, 36) = ", gcd(48, 36));
+    print(label);
+
+    return value; // 12
+}

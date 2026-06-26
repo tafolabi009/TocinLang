@@ -36,6 +36,7 @@ declaration    ::= varDecl | funcDecl | externDecl | classDecl | enumDecl
                  | traitDecl | implDecl | importStmt | statement
 
 varDecl        ::= ("let" | "const") IDENT (":" type)? ("=" expression)? ";"
+                 | ("let" | "const") "(" IDENT ("," IDENT)* ")" "=" expression ";"  // tuple destructuring
 funcDecl       ::= ("def" | "async" "def") IDENT typeParams? "(" params ")" retType? "{" block "}"
 externDecl     ::= "extern" "def" IDENT typeParams? "(" params ")" retType? ";"     // no body
 classDecl      ::= ("class" | "struct") IDENT typeParams? "{" classMember* "}"
@@ -86,10 +87,12 @@ factor         ::= unary (("*"|"/"|"%") unary)*
 unary          ::= ("!"|"-"|"~") unary | "await" unary | "new" newExpr | "delete" expr
                  | "<-" unary               // channel receive (prefix)
                  | call
-call           ::= primary ( "(" args ")" | "." IDENT | "?." IDENT | "!!" | "[" expr "]" | "<-" expr )*
+call           ::= primary ( "(" args ")" | "." IDENT | "." INT | "?." IDENT | "!!" | "[" expr "]" | "<-" expr )*
+                 // "." INT is tuple element access: t.0, t.1
 primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
                  | "channel" ("<" type ">")? "(" ")"   // new channel
                  | "(" expression ")"                  // grouping
+                 | "(" expression ("," expression)+ ")" // tuple literal
                  | "[" (expression ("," expression)*)? "]"            // array/list literal
                  | "{" (expression ":" expression ("," ...)*)? "}"    // dict literal (limited support)
                  | "lambda" "(" params ")" ("->" type)? expression    // lambda: body is ONE expression
@@ -437,6 +440,19 @@ def main() -> int {
 }
 ```
 Construct a variant by calling it (`Num(2)`, `Add(x, y)`); nullary variants are written bare (`Empty`). `match` binds each payload field to a single identifier, denormalized to its declared type. A value is a heap `[i64 tag][slots…]` buffer. This is the canonical way to build an AST — see `examples/adt_interpreter.to`.
+
+### Tuples and multiple return values
+```tocin
+def divmod(a: int, b: int) -> (int, int) {   // a tuple return type
+    return (a / b, a % b);                    // a tuple literal
+}
+def main() -> int {
+    let (q, r) = divmod(17, 5);               // destructuring: q=3, r=2
+    let t = (q, r, 100);
+    return t.0 * 10 + t.1;                    // positional access: 32
+}
+```
+A tuple `(a, b, …)` is a heap buffer of 64-bit slots. Destructuring a tuple **literal** (`let (x, y) = (e0, e1)`) is lossless — each name keeps its element's native type (ints, floats, strings, class refs). Destructuring the result of a call binds each name as a 64-bit slot (`int`/reference), matching the runtime ABI. Access elements positionally with `.0`, `.1`, …. Destructuring patterns infer types (no `: T` annotation on the pattern).
 
 ### Error handling (throw / try / catch / finally)
 ```tocin
