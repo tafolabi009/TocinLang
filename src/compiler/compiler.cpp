@@ -239,7 +239,12 @@ namespace compiler
 
         // Look up the target
         std::string error;
+        // LLVM 21 changed TargetRegistry::lookupTarget to accept an llvm::Triple.
+#if LLVM_VERSION_MAJOR >= 21
+        auto target = llvm::TargetRegistry::lookupTarget(llvm::Triple(targetTriple), error);
+#else
         auto target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
+#endif
 
         if (!target)
         {

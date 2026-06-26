@@ -212,7 +212,9 @@ extern "C"
 // ---------------------------------------------------------------------------
 namespace
 {
-    thread_local std::vector<std::jmp_buf *> g_handlerStack;
+    // Stored as void* (not std::jmp_buf*) so jmp_buf's alignment attributes are
+    // not dropped on a template argument (-Wignored-attributes); cast back at use.
+    thread_local std::vector<void *> g_handlerStack;
     thread_local int64_t g_excValue = 0;
 }
 
@@ -221,7 +223,7 @@ extern "C"
     // Register a setjmp buffer as the innermost active exception handler.
     void __tocin_try_register(void *buf)
     {
-        g_handlerStack.push_back(static_cast<std::jmp_buf *>(buf));
+        g_handlerStack.push_back(buf);
     }
 
     // Remove the innermost handler (try body completed without throwing).
@@ -249,7 +251,7 @@ extern "C"
                          static_cast<long long>(value));
             std::abort();
         }
-        std::jmp_buf *buf = g_handlerStack.back();
+        std::jmp_buf *buf = static_cast<std::jmp_buf *>(g_handlerStack.back());
         g_handlerStack.pop_back();
         std::longjmp(*buf, 1);
     }

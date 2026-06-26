@@ -644,7 +644,12 @@ public:
 #endif
 
         std::string error;
+        // LLVM 21 changed TargetRegistry::lookupTarget to accept an llvm::Triple.
+#if LLVM_VERSION_MAJOR >= 21
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), error);
+#else
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);
+#endif
         if (!target)
         {
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
