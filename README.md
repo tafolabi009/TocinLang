@@ -78,6 +78,14 @@ clear what is implemented versus planned.
 - **`switch`** — C-style `switch`/`case`/`default` (alias of `match`).
 - **`defer`** — `defer <statement>` runs cleanup at function return (LIFO, every
   return path); pairs with `free`/`vecFree` for deterministic resource release.
+- **Operator overloading** — classes define `__add__`, `__eq__`, `__lt__`, … as
+  ordinary methods; binary operators on instances dispatch to them.
+- **RAII destructors** — a class with `__del__(self)` runs it automatically when
+  a constructor-initialized local leaves scope (LIFO, every return path),
+  for deterministic cleanup on top of the GC.
+- **Freestanding / kernel mode** — `--freestanding` emits a relocatable object
+  with no libc/GC/runtime (links with `-nostdlib`), for OS/kernel/bare-metal;
+  inline `asm` and raw memory remain available.
 - **Native performance** — default `-O2` (the full LLVM pipeline); a compute
   benchmark runs within ~9% of the equivalent C at `-O2`.
 - **Formatted output** — `print` / `println`, including `println("x = {}", x)`.
