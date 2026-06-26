@@ -693,9 +693,10 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 ## 9. Capabilities and limitations summary
 
 **Tocin can today:**
-- Compile to native code via LLVM, or JIT-run directly (`--run`).
+- Compile to native code via LLVM (default `-O2`, ~9% of C on compute), or JIT-run directly (`--run`).
+- **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), char predicates, and `asm("...")` are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
 - Functions (incl. mutual recursion, forward references, inferred return types, **nested `def`** — non-capturing), first-class function values and function-typed parameters, and **capturing closures** (single-expression lambdas that capture enclosing locals by value and can escape their scope).
-- Classes/structs with fields, methods, `self`, implicit positional constructors, direct field mutation.
+- Classes/structs with fields, methods, `self`, implicit positional constructors, direct field mutation, **operator overloading** (define `__add__`/`__sub__`/`__mul__`/`__div__`/`__mod__` and `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__` as methods — binary operators on instances dispatch to them), and **RAII destructors** (`__del__(self)` runs automatically when a constructor-initialized local leaves scope, LIFO, on every return path).
 - Generics: generic functions and generic classes, monomorphized by **inferred** type arguments.
 - Traits with `impl Trait for Type` and inherent `impl Type` methods.
 - Enums with integer values (auto and explicit, incl. negatives).

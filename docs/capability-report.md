@@ -16,7 +16,7 @@ Last updated: this build. Test suite: 108/108 `.to` programs passing.
 | Write CLI tools, parsers, data processors, batch jobs? | **Yes.** |
 | Write a simple VCS / low-level file tool? | **Yes** — file I/O + bitwise + raw memory builtins (`alloc`/`memcpy`/`memset`/`load*`/`store*`) + optional C FFI for hashing. |
 | Write a long-running microservice / server? | **Yes now** — a garbage collector (Boehm GC) reclaims unreachable memory, so long-lived processes no longer grow without bound (2M allocations that would leak >128 MB peak at ~8 MB). Networking still goes through C FFI. |
-| OS / kernel / bare-metal work? | **Partially** — inline assembly (`asm("...")`) and raw pointer/memory builtins are available for CPU control and memory layout; true freestanding builds (no libc/GC) would need a `-ffreestanding` mode. |
+| OS / kernel / bare-metal work? | **Yes** — `--freestanding` emits a relocatable object with NO libc/GC/runtime (a pure arithmetic/raw-memory/asm program has zero undefined symbols; one using `alloc` references only the user-provided `__tocin_alloc`). Inline assembly and raw pointer/memory builtins give CPU and layout control. Verified end-to-end with a `-nostdlib` static binary. |
 | Self-host (write the Tocin compiler in Tocin)? | **A subset is achievable now** (a Tocin→C or Tocin→LLVM-text backend); a full LLVM-API self-host is a large project blocked by tooling (LLVM bindings), not by language gaps. Memory is no longer a blocker. |
 | C++-level optimizations? | **Yes for compute.** Native code runs LLVM's full `-O2`/`-O3` pipeline (same optimizer as clang). A compute benchmark (recursive fib + 100M-iteration loop) runs in **0.149 s vs C `-O2` at 0.137 s — within ~9 %**. Allocation-bound code now pays GC cost rather than leaking. |
 
@@ -69,10 +69,11 @@ language (networking, crypto, OS APIs): call the C library.
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is
    fragile. Use `mapPutStr`/`mapGetStr` for string-keyed data.
-4. **`switch`, `defer`, ownership (`move`/`borrow`), generators, the power
-   operator `**`, and `++`/`--` are not implemented.** Use `match`/`case` for
-   `switch`; there is no borrow checker (so no Rust-style compile-time memory
-   safety).
+4. **Ownership (`move`/`borrow`), generators, the power operator `**`, and
+   `++`/`--` are not implemented.** There is no borrow checker, so no
+   Rust-style compile-time memory safety — but memory is GC-managed (safe by
+   default) and `defer` + RAII destructors (`__del__`) give deterministic
+   cleanup. (`switch` and `defer` *are* implemented.)
 5. **No standard networking / HTTP / async-I/O library.** Reach for C FFI.
 6. **Python/JavaScript FFI are scaffolding only** — the C path is the working
    one.
