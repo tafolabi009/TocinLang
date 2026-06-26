@@ -92,7 +92,7 @@ void IRGenerator::declareStdLibFunctions()
     // Print function for debugging
     llvm::FunctionType *printfType = llvm::FunctionType::get(
         llvm::Type::getInt32Ty(context),
-        {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
+        {llvm::PointerType::get(context, 0)},
         true);
     llvm::Function *printfFunc = llvm::Function::Create(
         printfType, llvm::Function::ExternalLinkage, "printf", *module);
@@ -109,7 +109,7 @@ void IRGenerator::declareStdLibFunctions()
     // with Boehm GC it returns collected memory (no leaks); otherwise it is a
     // thin malloc wrapper. Keyed as "malloc" so existing call sites are unchanged.
     llvm::FunctionType *mallocType = llvm::FunctionType::get(
-        llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0),
+        llvm::PointerType::get(context, 0),
         {llvm::Type::getInt64Ty(context)},
         false);
     llvm::Function *mallocFunc = llvm::Function::Create(
@@ -118,7 +118,7 @@ void IRGenerator::declareStdLibFunctions()
 
     llvm::FunctionType *freeType = llvm::FunctionType::get(
         llvm::Type::getVoidTy(context),
-        {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
+        {llvm::PointerType::get(context, 0)},
         false);
     // Pair with __tocin_alloc: under GC this is GC_free, otherwise libc free.
     // Calling libc free() on a GC pointer would abort ("invalid pointer").
@@ -145,7 +145,7 @@ void IRGenerator::declareStdLibFunctions()
 
     // Example: Promise_create
     llvm::FunctionType *promiseCreateType = llvm::FunctionType::get(
-        llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0), // Opaque promise pointer
+        llvm::PointerType::get(context, 0), // Opaque promise pointer
         {},
         false);
     llvm::Function *promiseCreateFunc = llvm::Function::Create(
@@ -154,8 +154,8 @@ void IRGenerator::declareStdLibFunctions()
 
     // Example: Promise_getFuture
     llvm::FunctionType *promiseGetFutureType = llvm::FunctionType::get(
-        llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0),   // Opaque future pointer
-        {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // Promise pointer
+        llvm::PointerType::get(context, 0),   // Opaque future pointer
+        {llvm::PointerType::get(context, 0)}, // Promise pointer
         false);
     llvm::Function *promiseGetFutureFunc = llvm::Function::Create(
         promiseGetFutureType, llvm::Function::ExternalLinkage, "Promise_getFuture", *module);
@@ -164,7 +164,7 @@ void IRGenerator::declareStdLibFunctions()
     // Example: Future_get
     llvm::FunctionType *futureGetType = llvm::FunctionType::get(
         llvm::Type::getInt8Ty(context),                              // Generic return type, will be cast
-        {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)}, // Future pointer
+        {llvm::PointerType::get(context, 0)}, // Future pointer
         false);
     llvm::Function *futureGetFunc = llvm::Function::Create(
         futureGetType, llvm::Function::ExternalLinkage, "Future_get", *module);
@@ -3247,8 +3247,8 @@ void IRGenerator::visitDictionaryExpr(ast::DictionaryExpr *expr)
     // { int64_t size, keyType* keys, valueType* values }
     std::vector<llvm::Type *> dictFields = {
         llvm::Type::getInt64Ty(context),        // size
-        llvm::PointerType::getUnqual(keyType),  // keys
-        llvm::PointerType::getUnqual(valueType) // values
+        llvm::PointerType::getUnqual(context),  // keys
+        llvm::PointerType::getUnqual(context) // values
     };
     llvm::StructType *dictType = llvm::StructType::get(context, dictFields);
 
@@ -3278,7 +3278,7 @@ void IRGenerator::visitDictionaryExpr(ast::DictionaryExpr *expr)
 
     // Call malloc for keys
     llvm::Value *keysPtr = builder.CreateCall(mallocFunc, {totalKeysSize}, "dict.keys");
-    llvm::Value *typedKeysPtr = builder.CreateBitCast(keysPtr, llvm::PointerType::get(keyType, 0), "typed_keys");
+    llvm::Value *typedKeysPtr = builder.CreateBitCast(keysPtr, llvm::PointerType::get(context, 0), "typed_keys");
 
     // Calculate size for values
     llvm::Value *valueSize = llvm::ConstantExpr::getSizeOf(valueType);
@@ -3286,7 +3286,7 @@ void IRGenerator::visitDictionaryExpr(ast::DictionaryExpr *expr)
 
     // Call malloc for values
     llvm::Value *valuesPtr = builder.CreateCall(mallocFunc, {totalValuesSize}, "dict.values");
-    llvm::Value *typedValuesPtr = builder.CreateBitCast(valuesPtr, llvm::PointerType::get(valueType, 0), "typed_values");
+    llvm::Value *typedValuesPtr = builder.CreateBitCast(valuesPtr, llvm::PointerType::get(context, 0), "typed_values");
 
     // Store pointers
     llvm::Value *keysStorePtr = builder.CreateStructGEP(dictType, dictAlloc, 1, "dict.keys_ptr");
@@ -3362,15 +3362,15 @@ void IRGenerator::createEmptyDictionary(ast::TypePtr dictType)
     if (!keyType || !valueType)
     {
         // Default to string->int if unable to determine
-        keyType = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)); // string
+        keyType = llvm::PointerType::getUnqual(context); // string
         valueType = llvm::Type::getInt64Ty(context);                            // int
     }
 
     // Create dictionary struct type
     std::vector<llvm::Type *> dictFields = {
         llvm::Type::getInt64Ty(context),        // size
-        llvm::PointerType::getUnqual(keyType),  // keys
-        llvm::PointerType::getUnqual(valueType) // values
+        llvm::PointerType::getUnqual(context),  // keys
+        llvm::PointerType::getUnqual(context) // values
     };
     llvm::StructType *dictStructType = llvm::StructType::get(context, dictFields);
 
@@ -3383,10 +3383,10 @@ void IRGenerator::createEmptyDictionary(ast::TypePtr dictType)
 
     // Set pointers to null
     llvm::Value *keysStorePtr = builder.CreateStructGEP(dictStructType, dictAlloc, 1, "dict.keys_ptr");
-    builder.CreateStore(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(keyType)), keysStorePtr);
+    builder.CreateStore(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context)), keysStorePtr);
 
     llvm::Value *valuesStorePtr = builder.CreateStructGEP(dictStructType, dictAlloc, 2, "dict.values_ptr");
-    builder.CreateStore(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(valueType)), valuesStorePtr);
+    builder.CreateStore(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context)), valuesStorePtr);
 
     // Return dictionary
     lastValue = dictAlloc;
@@ -5679,7 +5679,7 @@ void IRGenerator::declarePrintFunction()
     // Declare printf function
     llvm::FunctionType *printfType = llvm::FunctionType::get(
         llvm::Type::getInt32Ty(context),
-        {llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0)},
+        {llvm::PointerType::get(context, 0)},
         true);
     
     llvm::Function *printfFunc = llvm::Function::Create(
@@ -5887,7 +5887,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
             };
             if (const ast::LiteralExpr *ls = strLit(expr->left))
                 if (const ast::LiteralExpr *rs = strLit(expr->right)) {
-                    lastValue = builder.CreateGlobalStringPtr(ls->value + rs->value, "cstr");
+                    lastValue = builder.CreateGlobalString(ls->value + rs->value, "cstr");
                     break;
                 }
             // String concatenation: malloc(strlen(a)+strlen(b)+1); strcpy; strcat.

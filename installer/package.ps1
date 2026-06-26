@@ -1,4 +1,4 @@
-# package.ps1 — build a self-contained Tocin distribution zip on Windows:
+# package.ps1 - build a self-contained Tocin distribution zip on Windows:
 #
 #   dist\tocin-<version>-windows-x86_64.zip
 #

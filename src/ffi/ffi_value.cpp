@@ -93,6 +93,14 @@ void FFIValue::cleanup() {
     errorMessage_.clear();
 }
 
+// GCC's -O3 optimizer raises a spurious -Wfree-nonheap-object when the
+// std::variant<..., std::string, std::vector<uint8_t>, ...> copy-assignment
+// below is inlined: it mis-models the variant's internal heap buffer as a
+// stack object. The variant copy is correct; silence only this diagnostic.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
+#endif
 void FFIValue::copyFrom(const FFIValue& other) {
     type_ = other.type_;
     value_ = other.value_;
@@ -101,6 +109,9 @@ void FFIValue::copyFrom(const FFIValue& other) {
     functionCallback_ = other.functionCallback_;
     errorMessage_ = other.errorMessage_;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 void FFIValue::moveFrom(FFIValue&& other) {
     type_ = other.type_;

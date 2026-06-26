@@ -185,11 +185,15 @@ $name  = "tocin-$ver-windows-x86_64"
 $stage = Join-Path $dist $name
 Info "staging $name"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-foreach ($d in @("bin","libexec","lib","stdlib","share\docs","share\examples")) {
+foreach ($d in @("bin","libexec","stdlib","share\docs","share\examples")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage $d) | Out-Null
 }
 
-# Compiler goes in libexec; a bin\ shim is written by install.ps1 on the target.
+# Compiler and ALL its DLLs go together in libexec; a bin\ shim is written by
+# install.ps1 on the target. Co-locating the DLLs with tocin.exe is what makes
+# the binary self-contained: Windows always searches the executable's own
+# directory for dependencies first, so it runs whether launched directly, via
+# the bin\ shim, or via a shortcut - from any working directory.
 Copy-Item $exe (Join-Path $stage "libexec\tocin.exe")
 
 # Runtime shared library (name varies by toolchain).
@@ -197,7 +201,7 @@ $rtCopied = $false
 foreach ($rt in @("tocin_runtime_shared.dll","libtocin_runtime_shared.dll","libtocin_runtime.dll","tocin_runtime.dll")) {
     $p = Join-Path $build $rt
     if (Test-Path $p) {
-        Copy-Item $p (Join-Path $stage "lib\tocin_runtime.dll")
+        Copy-Item $p (Join-Path $stage "libexec\tocin_runtime.dll")
         $rtCopied = $true
         break
     }
@@ -220,7 +224,8 @@ if (Test-Path (Join-Path $repo "INSTALL.md")) {
 if (-not $NoBundle) {
     Info "bundling dependent DLLs (self-contained)"
     $mingwBinDir = Join-Path $Msys2Root "mingw64\bin"
-    $libOut = Join-Path $stage "lib"
+    # Bundle next to tocin.exe (libexec) so the loader finds them automatically.
+    $dllOut = Join-Path $stage "libexec"
     $bundled = @{}
     # Copy a DLL out of mingw64\bin by name (only mingw DLLs live there, so
     # system DLLs like KERNEL32.dll are naturally skipped).
@@ -228,7 +233,7 @@ if (-not $NoBundle) {
         if ($bundled.ContainsKey($fname)) { return }
         $srcDll = Join-Path $mingwBinDir $fname
         if (Test-Path $srcDll) {
-            Copy-Item $srcDll $libOut -Force
+            Copy-Item $srcDll $dllOut -Force
             $bundled[$fname] = $true
         }
     }
@@ -250,7 +255,7 @@ if (-not $NoBundle) {
         "libgc-1.dll","libgc.dll","zlib1.dll","libzstd.dll","liblzma-5.dll",
         "libiconv-2.dll","libxml2-2.dll")) { Copy-MingwDll $n }
 
-    Info ("bundled " + $bundled.Count + " DLL(s) into lib")
+    Info ("bundled " + $bundled.Count + " DLL(s) into libexec")
     if ($bundled.Count -eq 0) { Warn "no DLLs bundled - check the mingw64 toolchain under $mingwBinDir" }
 } else {
     Info "skipping DLL bundling (-NoBundle): package will require MSYS2/mingw64 on PATH"

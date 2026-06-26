@@ -123,6 +123,24 @@ extern "C" {
     void __tocin_oob(int64_t, int64_t);
 }
 
+#if defined(_WIN32) && defined(__GNUC__)
+// On Windows/mingw the backend emits references to a few libgcc/CRT helper
+// symbols in generated code: __main (CRT init, called at the top of main) and a
+// stack-probe routine (___chkstk_ms / ___chkstk / __chkstk, depending on the
+// toolchain) for functions with large stack frames. These are statically linked
+// into this executable but are NOT exported, so the JIT's process-symbol
+// generator (which uses GetProcAddress) cannot find them by name. We register
+// their real addresses with the JIT below. Declared weak so that any name not
+// actually provided by the linked libgcc resolves to nullptr instead of failing
+// the link; we skip the null ones at registration time.
+extern "C" {
+    void __main(void) __attribute__((weak));
+    void ___chkstk_ms(void) __attribute__((weak));
+    void ___chkstk(void) __attribute__((weak));
+    void __chkstk(void) __attribute__((weak));
+}
+#endif
+
 // Conditionally include Python
 #ifdef WITH_PYTHON
 #include <Python.h>
@@ -605,6 +623,27 @@ public:
             llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
         }
 
+#if defined(_WIN32) && defined(__GNUC__)
+        // Provide the mingw/libgcc helper symbols the backend references in
+        // generated code (see the weak declarations above). Only the ones the
+        // linked libgcc actually defines are non-null; register those.
+        {
+            llvm::orc::SymbolMap mingwrt;
+            auto defabs = [&](const char *name, void *addr) {
+                if (!addr) return;
+                mingwrt[jit->mangleAndIntern(name)] = llvm::orc::ExecutorSymbolDef(
+                    llvm::orc::ExecutorAddr::fromPtr(addr), llvm::JITSymbolFlags::Exported);
+            };
+            defabs("__main", reinterpret_cast<void *>(&__main));
+            defabs("___chkstk_ms", reinterpret_cast<void *>(&___chkstk_ms));
+            defabs("___chkstk", reinterpret_cast<void *>(&___chkstk));
+            defabs("__chkstk", reinterpret_cast<void *>(&__chkstk));
+            if (!mingwrt.empty())
+                llvm::cantFail(jit->getMainJITDylib().define(
+                    llvm::orc::absoluteSymbols(std::move(mingwrt))));
+        }
+#endif
+
         if (auto err = jit->addIRModule(
                 llvm::orc::ThreadSafeModule(std::move(module), std::move(context))))
         {
@@ -644,7 +683,12 @@ public:
 #endif
 
         std::string error;
+        // LLVM 21 changed TargetRegistry::lookupTarget to accept an llvm::Triple.
+#if LLVM_VERSION_MAJOR >= 21
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), error);
+#else
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);
+#endif
         if (!target)
         {
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
@@ -692,7 +736,34 @@ public:
      */
     bool linkExecutable(const std::string& objPath, const std::string& exePath)
     {
-        std::string cc = std::getenv("CC") ? std::getenv("CC") : "cc";
+        // Pick a C toolchain driver to link with. $CC wins; otherwise probe the
+        // usual driver names and use the first that actually runs. mingw-w64
+        // ships 'gcc' (there is no 'cc'), so it is tried first on Windows.
+        std::string cc;
+        if (const char* env = std::getenv("CC"); env && *env) {
+            cc = env;
+        } else {
+#if defined(_WIN32)
+            const char* devnull = "NUL";
+            const char* candidates[] = {"gcc", "clang", "cc"};
+#else
+            const char* devnull = "/dev/null";
+            const char* candidates[] = {"cc", "gcc", "clang"};
+#endif
+            for (const char* cand : candidates) {
+                std::string probe = std::string(cand) + " --version >" + devnull + " 2>&1";
+                if (std::system(probe.c_str()) == 0) { cc = cand; break; }
+            }
+        }
+        if (cc.empty()) {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "No C toolchain driver found to link the native executable. "
+                                     "Install a C compiler (Windows: mingw-w64 'gcc'; Linux/macOS: "
+                                     "gcc or clang) and put it on PATH, or set the CC environment "
+                                     "variable. (Tip: 'tocin file.to --run' needs no external tools.)",
+                                     "", 0, 0);
+            return false;
+        }
         std::string cmd = cc + " \"" + objPath + "\" -o \"" + exePath + "\"";
         // Link the Tocin runtime (channels/goroutines) so programs that use
         // concurrency resolve their __tocin_* calls.
@@ -920,7 +991,7 @@ void displayUsage()
 {
     std::cout << "Usage: tocin [options] [filename]\n"
               << "Options:\n"
-              << "  --help                 Display this help message\n"
+              << "  --help, -h             Display this help message\n"
               << "  --version, -V          Print the compiler version and exit\n"
               << "  --dump-ir              Dump LLVM IR to stdout\n"
               << "  --jit, --run           JIT-compile and run the program immediately\n"
@@ -1110,7 +1181,7 @@ int main(int argc, char *argv[])
     {
         std::string arg = argv[i];
 
-        if (arg == "--help")
+        if (arg == "--help" || arg == "-help" || arg == "-h" || arg == "/?")
         {
             displayUsage();
             return 0;
