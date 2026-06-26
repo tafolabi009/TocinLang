@@ -14,6 +14,21 @@ These programs compile and run with the current compiler. Run any of them with:
 | `fizzbuzz.to` | `if/elif/else`, `for`, modulo |
 | `point.to` | Classes: fields, methods, `self`, construction, mutation |
 | `strings.to` | String concatenation and formatting |
+| `first_class_functions.to` | Closures, capturing, functions as values |
+| `expr_evaluator.to` | Recursive-descent arithmetic evaluator (cursor class) |
+| `linked_list.to` | A recursive data structure |
+| `adt_interpreter.to` | **Algebraic data types** + exhaustive `match` (a recursive AST) |
+| `stack_vm.to` | **Capstone:** a bytecode stack VM — ADTs, `match`, vectors, coercion |
+| `json_parser.to` | A JSON parser written in Tocin (ADTs + recursion + vectors) |
+| `tuples.to` | **Tuples** and multiple return values; destructuring |
+| `iterators.to` | The **iterator protocol** (`next(self) -> Option`) |
+| `tcp_echo.to` | **TCP networking** + `go` goroutines (a loopback server/client) |
+| `operator_overload.to` | Operator overloading via dunder methods |
+| `raii_destructor.to` | Deterministic cleanup with `__del__` + `defer` |
+| `borrow_check.to` | The opt-in `--borrow-check` move analysis |
+| `freestanding_kernel.to` | `--freestanding` systems code (no libc/GC/runtime) |
+| `defer_cleanup.to` | `defer` (LIFO cleanup at function return) |
+| `concurrency.to` | `go` goroutines, typed channels, `select` |
 
 ## `roadmap/`
 

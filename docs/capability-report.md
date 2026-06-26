@@ -4,7 +4,7 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 135/135 `.to` programs passing, plus
+Last updated: this build. Test suite: 136/136 `.to` programs passing, plus
 opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
 const + bounds (2/2) — harnesses.
 
@@ -56,6 +56,52 @@ and the native linker. This is the escape hatch for anything not in the
 language (networking, crypto, OS APIs): call the C library.
 
 ---
+
+## Modern language features
+
+Beyond the basics, Tocin now has the constructs you reach for when building real
+systems — each backed by a passing `.to` test and, where noted, an example:
+
+- **Algebraic data types** — `enum` variants with typed, possibly-recursive
+  payloads (`enum Expr { Num(int), Add(Expr, Expr) }`); construct by calling a
+  variant; the AST substrate for compilers. (`examples/adt_interpreter.to`,
+  `examples/stack_vm.to`)
+- **Exhaustive pattern matching** — `match` on an ADT must cover every variant
+  or add `default:`; a missing case is a fatal compile error (`P001`).
+- **Tuples & multiple return** — `(a, b)` literals, `-> (int, int)`, `t.0`/`t.1`,
+  and `let (q, r) = divmod(...)`. (`examples/tuples.to`)
+- **Iterator protocol** — `for x in obj` drives any class with
+  `next(self) -> Option`. (`examples/iterators.to`)
+- **Array slices** — `a[lo..hi]` yields a fresh, bounds-clamped sub-array.
+- **Variadics** — `def f(a, rest: int...)` collects trailing args into an array.
+- **Labeled break/continue** — `outer: for ... { break outer; }`.
+- **const enforcement** and **default-on bounds checking** (panics on
+  out-of-range; `--freestanding` opts out).
+- **Runtime stdlib** — TCP sockets (`tcp*`), time (`timeSec`/`monoNanos`/
+  `sleepMs`), hashing (FNV-1a/splitmix64), seeded random, `envGet`/`sysExit`.
+  (`examples/tcp_echo.to`) Plus a JSON parser written in Tocin
+  (`examples/json_parser.to`).
+
+## Not yet built (honest)
+
+These are the remaining items a Rust/C++-class language would want; none are
+blocked by a fundamental design flaw, but they are real work and are *not*
+implemented today:
+
+- **Trait objects / open dynamic dispatch.** Methods dispatch statically by the
+  receiver's concrete type, and the iterator protocol gives one dynamic shape,
+  but a `vector<Shape>` of heterogeneous trait objects (vtables / fat pointers)
+  is not implemented. Closed-world polymorphism is available via ADTs + `match`.
+- **Generic/trait bound enforcement.** `def f<T: Bound>` parses the bound but
+  does not yet verify the type argument satisfies it.
+- **By-reference closure capture** (capture is by value), `&`/`&mut` reference
+  borrows and lifetimes (the borrow checker is move-only), and generators
+  (`yield`).
+- **Higher-level networking** (HTTP, TLS) and async/epoll I/O; build on the raw
+  socket primitives or C FFI.
+- **Tooling**: a formatter and an LSP are not provided; a hosted package
+  registry and an M:N green-thread scheduler (goroutines are 1:1 OS threads)
+  remain future work.
 
 ## Honest gaps (and how they bite)
 
