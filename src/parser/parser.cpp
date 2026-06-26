@@ -178,11 +178,83 @@ namespace parser
             returnType = parseType();
         }
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before function body");
+        bool savedSawYield = sawYield;
+        sawYield = false;
         auto body = blockStmt();
+        bool isGenerator = sawYield;
+        sawYield = savedSawYield;
+        if (isGenerator)
+        {
+            // Generator: collect yields into a vector and return it as an array.
+            body = desugarGenerator(body, name);
+            // The call yields a sequence; type it as list<int> so `for x in g()`
+            // drives the array path. (Element slots are 64-bit, like all values.)
+            auto intTok = lexer::Token(lexer::TokenType::IDENTIFIER, "int", name.filename, name.line, name.column);
+            std::vector<ast::TypePtr> targs{std::make_shared<ast::SimpleType>(intTok)};
+            returnType = std::make_shared<ast::GenericType>(name, "list", targs);
+        }
         if (!typeParams.empty())
             return std::make_shared<ast::FunctionStmt>(name, name.value, typeParams,
                                                        parameters, returnType, body, isAsync);
         return std::make_shared<ast::FunctionStmt>(name, name.value, parameters, returnType, body, isAsync);
+    }
+
+    // Build a `vecToArray(__gen_acc)` call expression used to finalize a
+    // generator body into a returnable array.
+    ast::ExprPtr Parser::makeVecToArrayCall(const lexer::Token &tok)
+    {
+        auto acc = std::make_shared<ast::VariableExpr>(tok, "__gen_acc");
+        auto conv = std::make_shared<ast::VariableExpr>(tok, "vecToArray");
+        std::vector<ast::ExprPtr> args{acc};
+        return std::make_shared<ast::CallExpr>(tok, conv, args);
+    }
+
+    // Replace every `return [expr]` in a generator body with
+    // `return vecToArray(__gen_acc)` (the original value, if any, is discarded —
+    // a generator stops at a return rather than producing a scalar). Mutates
+    // ReturnStmt nodes in place; recurses into nested control flow.
+    void Parser::rewriteGeneratorReturns(const ast::StmtPtr &stmt, const lexer::Token &tok)
+    {
+        if (!stmt) return;
+        if (auto r = std::dynamic_pointer_cast<ast::ReturnStmt>(stmt))
+        {
+            r->value = makeVecToArrayCall(tok);
+            return;
+        }
+        if (auto b = std::dynamic_pointer_cast<ast::BlockStmt>(stmt))
+        {
+            for (auto &s : b->statements) rewriteGeneratorReturns(s, tok);
+        }
+        else if (auto i = std::dynamic_pointer_cast<ast::IfStmt>(stmt))
+        {
+            rewriteGeneratorReturns(i->thenBranch, tok);
+            for (auto &e : i->elifBranches) rewriteGeneratorReturns(e.second, tok);
+            rewriteGeneratorReturns(i->elseBranch, tok);
+        }
+        else if (auto w = std::dynamic_pointer_cast<ast::WhileStmt>(stmt))
+            rewriteGeneratorReturns(w->body, tok);
+        else if (auto f = std::dynamic_pointer_cast<ast::ForStmt>(stmt))
+            rewriteGeneratorReturns(f->body, tok);
+    }
+
+    // Wrap a generator body: prepend `let __gen_acc = vecNew();`, rewrite any
+    // returns to finalize the array, and append `return vecToArray(__gen_acc);`.
+    ast::StmtPtr Parser::desugarGenerator(const ast::StmtPtr &body, const lexer::Token &tok)
+    {
+        auto block = std::dynamic_pointer_cast<ast::BlockStmt>(body);
+        std::vector<ast::StmtPtr> stmts;
+
+        auto vecNew = std::make_shared<ast::VariableExpr>(tok, "vecNew");
+        auto newCall = std::make_shared<ast::CallExpr>(tok, vecNew, std::vector<ast::ExprPtr>{});
+        stmts.push_back(std::make_shared<ast::VariableStmt>(tok, "__gen_acc", nullptr, newCall, false));
+
+        if (block)
+        {
+            for (auto &s : block->statements) rewriteGeneratorReturns(s, tok);
+            for (auto &s : block->statements) stmts.push_back(s);
+        }
+        stmts.push_back(std::make_shared<ast::ReturnStmt>(tok, makeVecToArrayCall(tok)));
+        return std::make_shared<ast::BlockStmt>(tok, stmts);
     }
 
     ast::StmtPtr Parser::classDeclaration()
@@ -378,6 +450,22 @@ namespace parser
             return blockStmt();
         if (match(lexer::TokenType::RETURN))
             return returnStmt();
+        if (match(lexer::TokenType::YIELD))
+        {
+            // `yield <expr>` in a generator. Desugared to `vecPush(__gen_acc,
+            // <expr>)`; functionDeclaration() wraps the body to create __gen_acc
+            // and return the collected values as an array. Marks the function a
+            // generator via sawYield.
+            lexer::Token kw = previous();
+            ast::ExprPtr val = expression();
+            match(lexer::TokenType::SEMI_COLON);
+            sawYield = true;
+            auto acc = std::make_shared<ast::VariableExpr>(kw, "__gen_acc");
+            auto push = std::make_shared<ast::VariableExpr>(kw, "vecPush");
+            std::vector<ast::ExprPtr> args{acc, val};
+            auto call = std::make_shared<ast::CallExpr>(kw, push, args);
+            return std::make_shared<ast::ExpressionStmt>(kw, call);
+        }
         if (match(lexer::TokenType::MATCH))
             return matchStmt();
         // `switch` is an alias for `match`: same `case <value>:` / `default:`

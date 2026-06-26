@@ -1559,6 +1559,37 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto h = pptr(0); if (!h) return;
                 builder.CreateCall(rt("__tocin_vec_free", voidb, {ptrb}), {h});
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            // vecToArray(v): copy a vector handle into a fresh Tocin array
+            // ([ i64 length ][ elems... ]) so it can be indexed and iterated with
+            // for-in. Used to finalize a generator's collected yields.
+            if (funcName == "vecToArray" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                llvm::Value *len = builder.CreateCall(rt("__tocin_vec_len", i64b, {ptrb}), {h}, "g.len");
+                llvm::Function *mallocFn = getStdLibFunction("malloc");
+                llvm::Value *eight = llvm::ConstantInt::get(i64b, 8);
+                llvm::Value *bytes = builder.CreateAdd(eight, builder.CreateMul(len, eight), "g.bytes");
+                llvm::Value *arr = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {bytes}, "g.arr");
+                builder.CreateStore(len, arr); // header holds the length
+                llvm::Type *i8t = llvm::Type::getInt8Ty(context);
+                llvm::Function *fn = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock *cond = llvm::BasicBlock::Create(context, "g.cond", fn);
+                llvm::BasicBlock *bodyB = llvm::BasicBlock::Create(context, "g.body", fn);
+                llvm::BasicBlock *doneB = llvm::BasicBlock::Create(context, "g.done", fn);
+                llvm::AllocaInst *iv = builder.CreateAlloca(i64b, nullptr, "g.i");
+                builder.CreateStore(llvm::ConstantInt::get(i64b, 0), iv);
+                builder.CreateBr(cond);
+                builder.SetInsertPoint(cond);
+                llvm::Value *i = builder.CreateLoad(i64b, iv, "g.iv");
+                builder.CreateCondBr(builder.CreateICmpSLT(i, len, "g.cmp"), bodyB, doneB);
+                builder.SetInsertPoint(bodyB);
+                llvm::Value *x = builder.CreateCall(rt("__tocin_vec_get", i64b, {ptrb, i64b}), {h, i}, "g.x");
+                llvm::Value *off = builder.CreateAdd(eight, builder.CreateMul(i, eight), "g.off");
+                llvm::Value *slotp = builder.CreateGEP(i8t, arr, off, "g.slot");
+                builder.CreateStore(x, slotp);
+                builder.CreateStore(builder.CreateAdd(i, llvm::ConstantInt::get(i64b, 1)), iv);
+                builder.CreateBr(cond);
+                builder.SetInsertPoint(doneB);
+                lastValue = arr; return; }
 
             // ---- hashmap ----
             if (funcName == "mapNew" && na == 0) {

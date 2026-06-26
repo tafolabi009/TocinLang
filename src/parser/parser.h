@@ -57,6 +57,14 @@ namespace parser
         }
 
     private:
+        // Set when a `yield` is parsed inside the current function body; turns
+        // that function into a generator (desugared to collect-and-return-array).
+        bool sawYield = false;
+        // Desugar helpers for generator functions.
+        ast::StmtPtr desugarGenerator(const ast::StmtPtr &body, const lexer::Token &tok);
+        void rewriteGeneratorReturns(const ast::StmtPtr &stmt, const lexer::Token &tok);
+        ast::ExprPtr makeVecToArrayCall(const lexer::Token &tok);
+
         ast::StmtPtr declaration();
         ast::StmtPtr varDeclaration();
         ast::StmtPtr functionDeclaration();

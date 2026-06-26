@@ -4,7 +4,7 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 141/141 `.to` programs passing, plus
+Last updated: this build. Test suite: 144/144 `.to` programs passing, plus
 opt-in borrow-check — move + `&`/`&mut` borrows (12/12), match-exhaustiveness
 (3/3), and safety — const + bounds + trait-bound (3/3) — harnesses.
 
@@ -89,6 +89,15 @@ systems — each backed by a passing `.to` test and, where noted, an example:
 - **Generic trait bounds** — `def f<T: Bound>` rejects a type argument that does
   not implement `Bound` (fatal `T016`), and trait-method calls on the bounded
   parameter resolve to the concrete type.
+- **Generators** — a function with `yield` produces a sequence; calling it
+  materializes the yielded values into an array that `for x in gen(...)` walks
+  or indexes. Eager (finite-sequence) collection. (`examples/generators.to`)
+- **By-reference closures** — a closure that writes a captured local shares the
+  cell (the write is visible outside); read-only captures stay by-value.
+  (`examples/byref_closures.to`)
+- **`&`/`&mut` reference borrows** — under `--borrow-check`, shared-XOR-mutable
+  borrows with lexical lifetimes (conflicts are fatal `B002`).
+  (`examples/borrow_check.to`)
 
 ## Not yet built (honest)
 
@@ -96,13 +105,18 @@ These are the remaining items a Rust/C++-class language would want; none are
 blocked by a fundamental design flaw, but they are real work and are *not*
 implemented today:
 
-- Generators (`yield`) are not yet built. **By-reference closure capture now
-  works**: a closure that *writes* a captured local shares the cell, so the
-  mutation is visible in the enclosing scope (read-only captures stay by-value
-  snapshots). The one nuance is escaping by-ref closures (a written-capture
-  closure that outlives its defining frame) — not reachable today because the
-  type checker does not yet permit calling a stored function-typed value;
-  heap-promotion of the cell is the upgrade for when it does.
+- **By-reference closure capture now works**: a closure that *writes* a
+  captured local shares the cell, so the mutation is visible in the enclosing
+  scope (read-only captures stay by-value snapshots). The one nuance is escaping
+  by-ref closures (a written-capture closure that outlives its defining frame) —
+  not reachable today because the type checker does not yet permit calling a
+  stored function-typed value; heap-promotion of the cell is the upgrade for
+  when it does.
+- **Generators (`yield`) now work** for finite sequences: a function containing
+  `yield` becomes a generator whose call materializes the yielded values as an
+  array that `for x in gen(...)` iterates (or you can index it). Collection is
+  eager (collect-then-iterate), so infinite/lazy generators — which need a
+  coroutine substrate (see the async item) — are the remaining piece.
 - **`&`/`&mut` reference borrows now work** under `--borrow-check`: `&x` takes a
   shared borrow and `&mut x` an exclusive one, with the standard rule (many
   shared XOR one mutable) and lexical borrow lifetimes (a borrow ends when its
@@ -140,7 +154,8 @@ implemented today:
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is
    fragile. Use `mapPutStr`/`mapGetStr` for string-keyed data.
-4. **Generators, the power operator `**`, and `++`/`--` are not implemented.**
+4. **The power operator `**` and `++`/`--` are not implemented** (generators
+   now work for finite sequences via `yield`; truly lazy ones are future work).
    Memory safety has two layers: GC by default (always safe — no use-after-free
    regardless), plus an **opt-in borrow checker** (`--borrow-check`) that adds
    Rust-like compile-time enforcement on owned values: move / use-after-move

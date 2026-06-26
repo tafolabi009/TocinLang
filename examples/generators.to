@@ -1,0 +1,56 @@
+// Generators (`yield`)
+// --------------------
+// A function that contains `yield` is a generator: each `yield x` contributes
+// the next value of a sequence, and calling the generator produces that whole
+// sequence, which `for x in gen(...)` walks (or you can index it directly).
+//
+// The sequence is materialized eagerly (collect-then-iterate), so generators
+// model finite sequences — the natural, common case. (Truly lazy / infinite
+// generators would need a coroutine substrate, which is future work.)
+
+// Yield the first `n` square numbers.
+def squares(n: int) -> int {
+    let i = 1;
+    while i <= n {
+        yield i * i;
+        i = i + 1;
+    }
+}
+
+// Yield only the even numbers in [0, n) — generators can yield conditionally.
+def evens(n: int) -> int {
+    for i in 0..n {
+        if i % 2 == 0 {
+            yield i;
+        }
+    }
+}
+
+// The classic: the first `n` Fibonacci numbers.
+def fibs(n: int) -> int {
+    let a = 0;
+    let b = 1;
+    for i in 0..n {
+        yield a;
+        let t = a + b;
+        a = b;
+        b = t;
+    }
+}
+
+def main() -> int {
+    let sumSq = 0;
+    for s in squares(5) { sumSq = sumSq + s; }   // 1+4+9+16+25 = 55
+
+    let sumEven = 0;
+    for e in evens(10) { sumEven = sumEven + e; } // 0+2+4+6+8 = 20
+
+    let f = fibs(10);                             // 0 1 1 2 3 5 8 13 21 34
+    let fib9 = f[9];                              // 34
+
+    println("sum of squares 1..5 = {}", sumSq);
+    println("sum of evens   < 10 = {}", sumEven);
+    println("10th fibonacci      = {}", fib9);
+
+    return sumSq + sumEven + fib9;                // 55 + 20 + 34 = 109
+}
