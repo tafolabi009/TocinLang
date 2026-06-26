@@ -1,0 +1,9 @@
+// expect: 30
+// An async function may await another; await composes inside expressions.
+async def double(x: int) -> int { return x * 2; }
+async def addThenDouble(a: int, b: int) -> int {
+    return await double(a + b);
+}
+def main() -> int {
+    return await addThenDouble(3, 4) + await double(8);  // 14 + 16
+}

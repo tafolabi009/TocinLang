@@ -1,0 +1,28 @@
+// async / await
+// -------------
+// `async def` marks a function asynchronous and `await` retrieves an async
+// result. Today async bodies run eagerly (on the calling path) and `await f()`
+// evaluates to f()'s result — correct async/await *semantics*. The cooperative
+// M:N scheduler that would run pending awaits concurrently on a worker pool is
+// designed in docs/async-scheduler-design.md (goroutines via `go` already run
+// on real OS threads).
+
+async def square(x: int) -> int {
+    return x * x;
+}
+
+async def sumOfSquares(n: int) -> int {
+    let total = 0;
+    let i = 1;
+    while i <= n {
+        total = total + await square(i);   // await composes in expressions
+        i = i + 1;
+    }
+    return total;
+}
+
+def main() -> int {
+    let r = await sumOfSquares(5);   // 1+4+9+16+25 = 55
+    println("sum of squares 1..5 = {}", r);
+    return r;
+}

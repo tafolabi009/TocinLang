@@ -828,90 +828,12 @@ void IRGenerator::visitDestructureStmt(ast::DestructureStmt *stmt)
 
 void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 {
-    // Handle async functions
-    if (stmt->isAsync)
-    {
-        // Transform the async function
-        llvm::Function *asyncFunc = transformAsyncFunction(stmt);
-
-        // If transformation failed, return
-        if (!asyncFunc)
-        {
-            return;
-        }
-
-        // Also create a regular wrapper function that awaits the async result
-        std::string regularFuncName = stmt->name;
-
-        // Create the function signature
-        std::vector<llvm::Type *> paramTypes;
-        for (const auto &param : stmt->parameters)
-        {
-            llvm::Type *paramType = getLLVMType(param.type);
-            if (!paramType)
-            {
-                return;
-            }
-            paramTypes.push_back(paramType);
-        }
-
-        llvm::Type *returnType = getLLVMType(stmt->returnType);
-        if (!returnType)
-        {
-            return;
-        }
-
-        llvm::FunctionType *funcType = llvm::FunctionType::get(
-            returnType, paramTypes, false);
-
-        // Create the function
-        llvm::Function *function = llvm::Function::Create(
-            funcType,
-            llvm::Function::ExternalLinkage,
-            regularFuncName,
-            *module);
-
-        // Set parameter names
-        unsigned idx = 0;
-        for (auto &arg : function->args())
-        {
-            if (idx < stmt->parameters.size())
-            {
-                arg.setName(stmt->parameters[idx].name);
-            }
-            idx++;
-        }
-
-        // Create body that calls the async version and awaits the result
-        llvm::BasicBlock *block = llvm::BasicBlock::Create(context, "entry", function);
-        builder.SetInsertPoint(block);
-
-        // Call the async function with all arguments
-        std::vector<llvm::Value *> args;
-        for (auto &arg : function->args())
-        {
-            args.push_back(&arg);
-        }
-
-        llvm::Value *futureResult = builder.CreateCall(asyncFunc, args, "async.call");
-
-        // Call the blocking get() method to await the result
-        llvm::Function *getFunc = getStdLibFunction("Future_get");
-        if (!getFunc)
-        {
-            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                     "Future_get method not found",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            return;
-        }
-
-        llvm::Value *result = builder.CreateCall(getFunc, {futureResult}, "async.result");
-
-        // Return the result
-        builder.CreateRet(result);
-
-        return;
-    }
+    // Async functions are generated as ordinary synchronous functions: the body
+    // runs eagerly on the calling path and `await f()` evaluates to f()'s result
+    // (see visitAwaitExpr). This gives correct async/await *semantics* today; the
+    // M:N worker-pool scheduler that suspends `await` onto a fiber pool is a
+    // performance layer to add on top (it does not change observable results for
+    // a single awaited result). So we simply fall through to normal codegen.
 
     // Generic functions are templates: record them and instantiate lazily
     // (monomorphize) when called with concrete argument types.
@@ -5237,7 +5159,9 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
 
 llvm::Function *IRGenerator::declareFunctionProto(ast::FunctionStmt *stmt)
 {
-    if (!stmt || stmt->isAsync || stmt->isGeneric())
+    // Async functions are lowered as ordinary synchronous functions, so they get
+    // a normal forward prototype (enables forward references and `go asyncFn()`).
+    if (!stmt || stmt->isGeneric())
         return nullptr;
     if (llvm::Function *existing = module->getFunction(stmt->name))
         return existing;

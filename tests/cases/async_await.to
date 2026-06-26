@@ -1,0 +1,6 @@
+// expect: 36
+// async/await: the body runs eagerly and `await f()` yields f()'s result.
+async def compute(x: int) -> int { return x * x; }
+def main() -> int {
+    return await compute(6);
+}

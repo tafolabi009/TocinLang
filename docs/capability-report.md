@@ -4,7 +4,7 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 144/144 `.to` programs passing, plus
+Last updated: this build. Test suite: 146/146 `.to` programs passing, plus
 opt-in borrow-check — move + `&`/`&mut` borrows (12/12), match-exhaustiveness
 (3/3), and safety — const + bounds + trait-bound (3/3) — harnesses.
 
@@ -125,9 +125,16 @@ implemented today:
   remains is non-lexical (flow-sensitive) lifetimes and borrows through struct
   fields / across function boundaries; the move analysis and these statement-
   scoped borrows are the foundation those build on.
-- **Async runtime / M:N scheduler.** `async`/`await` parse and goroutines run on
-  1:1 OS threads; a cooperative scheduler that suspends/resumes `await` on a
-  worker pool is not yet built.
+- **Async/await works; the M:N scheduler is the remaining layer.** `async def`
+  and `await` now compile and run with correct eager semantics: an async body
+  runs on the calling path and `await f()` evaluates to f()'s result (composes
+  in expressions and across async calls — `examples/async_await.to`). Goroutines
+  (`go`) run on real 1:1 OS threads with channels. What is *not* built is the
+  cooperative **M:N** scheduler that suspends a pending `await` and runs other
+  tasks on a worker pool — the fiber substrate exists
+  (`src/runtime/lightweight_scheduler.*`, ucontext-based) but is not yet wired
+  into the program runtime; the design is written up in
+  `docs/async-scheduler-design.md`.
 - **Higher-level networking** (HTTP, TLS) and async/epoll I/O; build on the raw
   socket primitives or C FFI.
 - **Tooling**: a formatter and an LSP are not provided; a hosted package

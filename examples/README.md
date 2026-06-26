@@ -24,6 +24,7 @@ These programs compile and run with the current compiler. Run any of them with:
 | `iterators.to` | The **iterator protocol** (`next(self) -> Option`) |
 | `generators.to` | **Generators** (`yield`) — finite sequences driven by `for x in gen()` |
 | `byref_closures.to` | **By-reference closures** — a closure mutates a captured local |
+| `async_await.to` | **async/await** — async functions and awaiting their results |
 | `tcp_echo.to` | **TCP networking** + `go` goroutines (a loopback server/client) |
 | `operator_overload.to` | Operator overloading via dunder methods |
 | `raii_destructor.to` | Deterministic cleanup with `__del__` + `defer` |
