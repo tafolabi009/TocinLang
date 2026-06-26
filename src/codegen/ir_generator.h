@@ -223,6 +223,12 @@ namespace codegen
         std::map<std::string, std::string> varArrayElemTrait;                  // array var -> trait type of its elements (for trait-object vectors)
         std::string pendingElemTrait;                                          // when building a list<Trait> literal, box each element as this trait
         std::map<std::string, std::string> pendingBindingClasses;              // type-param name -> concrete class, threaded into the next generic instantiation
+        // By-reference closure captures: names whose namedValues slot holds a
+        // POINTER to the original cell (not the value), so a lambda that mutates
+        // the capture writes through to the enclosing variable. Empty outside
+        // such lambdas, so all other code is unaffected.
+        std::set<std::string> varByRef;
+        std::map<std::string, llvm::Type *> varByRefType;                      // by-ref name -> pointed-to value type
         llvm::StructType *traitObjTy = nullptr;                                 // { i64 typeId, ptr data }
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions

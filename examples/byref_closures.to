@@ -1,0 +1,29 @@
+// By-reference closure capture
+// ----------------------------
+// A closure that READS a captured local takes a by-value snapshot; a closure
+// that WRITES (assigns) a captured local shares the underlying cell, so the
+// mutation is visible in the enclosing scope after the closure runs.
+
+def main() -> int {
+    // --- by-value read: the snapshot is frozen at capture time ---
+    let base = 10;
+    let readonly = lambda (x: int) -> int x + base;
+    base = 999;                 // does not affect the snapshot
+    let a = readonly(5);        // 5 + 10 = 15
+
+    // --- by-reference write: the closure mutates the enclosing local ---
+    let count = 0;
+    let inc = lambda () -> int count = count + 1;
+    inc();
+    inc();
+    inc();                      // count is now 3
+
+    // --- by-reference accumulation ---
+    let total = 0;
+    let add = lambda (x: int) -> int total = total + x;
+    add(100);
+    add(40);                    // total is now 140
+
+    // a(15) + count(3) + total(140) = 158
+    return a + count + total;
+}

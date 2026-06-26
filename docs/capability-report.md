@@ -96,9 +96,14 @@ These are the remaining items a Rust/C++-class language would want; none are
 blocked by a fundamental design flaw, but they are real work and are *not*
 implemented today:
 
-- **By-reference closure capture** (capture is by value), `&`/`&mut` reference
-  borrows and lifetimes (the borrow checker is move-only), and generators
-  (`yield`).
+- `&`/`&mut` reference borrows and lifetimes (the borrow checker is move-only)
+  and generators (`yield`). **By-reference closure capture now works**: a
+  closure that *writes* a captured local shares the cell, so the mutation is
+  visible in the enclosing scope (read-only captures stay by-value snapshots).
+  The one nuance is escaping by-ref closures (a written-capture closure that
+  outlives its defining frame) — not reachable today because the type checker
+  does not yet permit calling a stored function-typed value; heap-promotion of
+  the cell is the upgrade for when it does.
 - **Async runtime / M:N scheduler.** `async`/`await` parse and goroutines run on
   1:1 OS threads; a cooperative scheduler that suspends/resumes `await` on a
   worker pool is not yet built.
@@ -116,12 +121,14 @@ implemented today:
    `vecFree`/`mapFree`; and the GC is conservative (an int that happens to hold
    a heap address keeps that block alive). For request-scoped servers this is a
    non-issue in practice.
-2. **Capture is by value, not by reference.** Closures snapshot captured
-   locals; mutating the original afterward doesn't change the copy. (`const`
-   bindings are enforced — reassigning one is a compile error; array indexing is
-   bounds-checked by default, panicking on an out-of-range access, with
-   `--freestanding` omitting the check for systems code; and `break`/`continue`
-   support outer-loop labels.)
+2. **Closure capture is by value for reads, by reference for writes.** A
+   closure that only reads a captured local snapshots it (mutating the original
+   afterward doesn't change the snapshot); a closure that *assigns* a captured
+   local shares the underlying cell, so the write is visible outside the closure
+   (`examples/byref_closures.to`). (`const` bindings are enforced — reassigning
+   one is a compile error; array indexing is bounds-checked by default, panicking
+   on an out-of-range access, with `--freestanding` omitting the check for systems
+   code; and `break`/`continue` support outer-loop labels.)
 3. **Collection elements are 64-bit slots.** `vector`/`map`/channel payloads
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is

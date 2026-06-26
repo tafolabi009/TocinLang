@@ -1,0 +1,10 @@
+// expect: 50
+// By-reference capture lets a closure accumulate into an enclosing local.
+def main() -> int {
+    let total = 0;
+    let add = lambda (x: int) -> int total = total + x;
+    add(10);
+    add(15);
+    add(25);
+    return total;
+}

@@ -1,0 +1,11 @@
+// expect: 3
+// A lambda that WRITES a captured local takes it by reference: the mutation
+// is visible in the enclosing scope after the closure runs.
+def main() -> int {
+    let count = 0;
+    let inc = lambda () -> int count = count + 1;
+    inc();
+    inc();
+    inc();
+    return count;
+}

@@ -2939,6 +2939,35 @@ namespace
         else if (auto rs = std::dynamic_pointer_cast<ast::ReturnStmt>(stmt))
             collectExprNames(rs->value, used, bound);
     }
+
+    // Collect the names of variables ASSIGNED within an expression (a lambda
+    // body is a single expression). Used to decide which captures are by-ref.
+    void collectAssignedNames(const ast::ExprPtr &expr, std::set<std::string> &out)
+    {
+        if (!expr) return;
+        if (auto a = std::dynamic_pointer_cast<ast::AssignExpr>(expr))
+        {
+            if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(a->target))
+                out.insert(v->name);
+            else if (!a->name.empty())
+                out.insert(a->name);
+            collectAssignedNames(a->value, out);
+        }
+        else if (auto b = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+        {
+            collectAssignedNames(b->left, out);
+            collectAssignedNames(b->right, out);
+        }
+        else if (auto g = std::dynamic_pointer_cast<ast::GroupingExpr>(expr))
+            collectAssignedNames(g->expression, out);
+        else if (auto u = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+            collectAssignedNames(u->right, out);
+        else if (auto c = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+        {
+            collectAssignedNames(c->callee, out);
+            for (auto &arg : c->arguments) collectAssignedNames(arg, out);
+        }
+    }
 } // namespace
 
 void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
@@ -2968,10 +2997,16 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     for (auto &p : expr->parameters)
         bound.insert(p.name);
     collectExprNames(expr->body, used, bound);
+    // Captures that the lambda WRITES are taken by reference (the env holds a
+    // pointer to the enclosing cell), so the mutation is visible outside.
+    std::set<std::string> assigned;
+    collectAssignedNames(expr->body, assigned);
 
     std::vector<std::string> captureNames;
     std::vector<llvm::Value *> captureVals; // loaded in the *enclosing* scope
     std::vector<llvm::Type *> captureTypes;
+    std::vector<bool> captureByRef;
+    std::vector<llvm::Type *> captureValTypes; // pointed-to value type for by-ref
     for (const auto &name : used)
     {
         if (bound.count(name))
@@ -2979,10 +3014,22 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         llvm::AllocaInst *slot = lookupVariable(name);
         if (!slot)
             continue; // not a local (e.g. a global function called inside)
+        bool byref = assigned.count(name) > 0;
         captureNames.push_back(name);
-        captureTypes.push_back(slot->getAllocatedType());
-        captureVals.push_back(
-            builder.CreateLoad(slot->getAllocatedType(), slot, name + ".cap"));
+        captureByRef.push_back(byref);
+        captureValTypes.push_back(slot->getAllocatedType());
+        if (byref)
+        {
+            // Capture the cell's address (the alloca itself is a pointer value).
+            captureTypes.push_back(ptrTy);
+            captureVals.push_back(slot);
+        }
+        else
+        {
+            captureTypes.push_back(slot->getAllocatedType());
+            captureVals.push_back(
+                builder.CreateLoad(slot->getAllocatedType(), slot, name + ".cap"));
+        }
     }
 
     // --- Build the lambda function with the env-first ABI ------------------
@@ -3006,6 +3053,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     auto savedVarArrayElem = varArrayElem;
     auto savedVarFuncSig = varFuncSig;
     auto savedVarIsString = varIsString;
+    auto savedVarByRef = varByRef;
+    auto savedVarByRefType = varByRefType;
 
     builder.SetInsertPoint(block);
     currentFunction = function;
@@ -3013,6 +3062,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     namedValues.clear();
     varFuncSig.clear();
     varIsString.clear();
+    varByRef.clear();
+    varByRefType.clear();
 
     // arg 0 is the environment; load each captured value back out of it.
     llvm::Argument *envArg = function->getArg(0);
@@ -3023,9 +3074,16 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         llvm::Value *off = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 8 * (i + 1));
         llvm::Value *p = builder.CreateGEP(llvm::Type::getInt8Ty(context), envArg, off, captureNames[i] + ".slot");
         llvm::Value *val = builder.CreateLoad(captureTypes[i], p, captureNames[i]);
+        // For a by-ref capture, `val` is a POINTER to the enclosing cell; the
+        // local slot holds that pointer and reads/writes go through it.
         llvm::AllocaInst *a = createEntryBlockAlloca(function, captureNames[i], captureTypes[i]);
         builder.CreateStore(val, a);
         namedValues[captureNames[i]] = a;
+        if (captureByRef[i])
+        {
+            varByRef.insert(captureNames[i]);
+            varByRefType[captureNames[i]] = captureValTypes[i];
+        }
     }
 
     // Bind declared parameters (args 1..N).
@@ -3083,6 +3141,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     varArrayElem = savedVarArrayElem;
     varFuncSig = savedVarFuncSig;
     varIsString = savedVarIsString;
+    varByRef = savedVarByRef;
+    varByRefType = savedVarByRefType;
     currentFunction = savedFunction;
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
@@ -5065,6 +5125,33 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
             return false;
         }
 
+        // By-reference capture: the slot holds a POINTER to the original
+        // variable's cell. Load that cell pointer and store through it so the
+        // mutation is visible to the enclosing scope (and to other closures
+        // sharing the same cell). The local slot's allocated type is `ptr`,
+        // so we coerce rhs to the captured value's type before the indirect
+        // store rather than matching against the slot type.
+        if (varByRef.count(name))
+        {
+            llvm::Type *valTy = varByRefType.count(name)
+                                    ? varByRefType[name]
+                                    : llvm::Type::getInt64Ty(context);
+            if (rhs->getType() != valTy)
+            {
+                if (rhs->getType()->isIntegerTy() && valTy->isIntegerTy())
+                    rhs = builder.CreateIntCast(rhs, valTy, true, "cast");
+                else if (rhs->getType()->isFloatingPointTy() && valTy->isFloatingPointTy())
+                    rhs = builder.CreateFPCast(rhs, valTy, "cast");
+                else if (canConvertImplicitly(rhs->getType(), valTy))
+                    rhs = implicitConversion(rhs, valTy);
+            }
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *cell = builder.CreateLoad(ptrTy, alloca, name + ".cellp");
+            builder.CreateStore(rhs, cell);
+            lastValue = rhs;
+            return true;
+        }
+
         // Validate that initializer type matches variable type
         if (rhs->getType() != alloca->getAllocatedType())
         {
@@ -6129,6 +6216,19 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
     {
         lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
         return;
+    }
+    // A by-reference closure capture: the slot holds a pointer to the enclosing
+    // cell, so read through one extra indirection.
+    if (varByRef.count(expr->name))
+    {
+        llvm::AllocaInst *pcell = lookupVariable(expr->name);
+        if (pcell)
+        {
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *cell = builder.CreateLoad(ptrTy, pcell, expr->name + ".cellp");
+            lastValue = builder.CreateLoad(varByRefType[expr->name], cell, expr->name);
+            return;
+        }
     }
     // Look up variable in current scope
     llvm::AllocaInst *alloca = lookupVariable(expr->name);
