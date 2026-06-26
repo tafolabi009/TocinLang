@@ -963,8 +963,21 @@ namespace parser
             else if (match(lexer::TokenType::LEFT_BRACKET))
             {
                 auto index = expression();
-                auto bracket = consume(lexer::TokenType::RIGHT_BRACKET, "Expected ']' after index");
-                expr = std::make_shared<ast::IndexExpr>(bracket, expr, index);
+                // Slice: a[lo..hi] -> a fresh array of elements [lo, hi). Lowered
+                // to a __slice(a, lo, hi) builtin.
+                if (match(lexer::TokenType::RANGE))
+                {
+                    auto hi = expression();
+                    auto bracket = consume(lexer::TokenType::RIGHT_BRACKET, "Expected ']' after slice");
+                    std::vector<ast::ExprPtr> args{expr, index, hi};
+                    expr = std::make_shared<ast::CallExpr>(
+                        bracket, std::make_shared<ast::VariableExpr>(bracket, "__slice"), args);
+                }
+                else
+                {
+                    auto bracket = consume(lexer::TokenType::RIGHT_BRACKET, "Expected ']' after index");
+                    expr = std::make_shared<ast::IndexExpr>(bracket, expr, index);
+                }
             }
             else if (match(lexer::TokenType::CHANNEL_SEND))
             {
