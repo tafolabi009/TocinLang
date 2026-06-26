@@ -4,7 +4,8 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 108/108 `.to` programs passing.
+Last updated: this build. Test suite: 123/123 `.to` programs passing, plus
+opt-in borrow-check (5/5) and match-exhaustiveness (3/3) harnesses.
 
 ---
 
@@ -38,8 +39,10 @@ string-keyed `map` for symbol tables, and `vector` for growable buffers.
 
 **General programming.** Functions (recursion, mutual recursion, forward
 references, first-class values, **capturing closures**), `class`/struct with
-methods and `self`, generics (monomorphized), traits + `impl`, enums,
-`Option`/`Result` with pattern matching, exceptions (`try`/`catch`/`finally`,
+methods and `self`, generics (monomorphized), traits + `impl`, enums —
+including **algebraic enums (tagged unions)** with payload-carrying, recursive
+variants and **exhaustiveness-checked** `match` (the AST substrate for a
+compiler), `Option`/`Result` with pattern matching, exceptions (`try`/`catch`/`finally`,
 finally honored on early return), full operators (arithmetic with int→float
 promotion, compound assignment, bitwise/shifts, value-equality strings),
 `vector`/`map` collections, a char-level string library, and file I/O.

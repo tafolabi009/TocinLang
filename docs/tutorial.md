@@ -910,6 +910,43 @@ err: 1
 `case Some(x):` only matches the `Some` case and binds its payload to `x`; the
 same goes for `Ok(v)` and `Err(e)`.
 
+### Your own algebraic types
+
+`Option` and `Result` are just two built-in *algebraic enums*. You can define
+your own: any `enum` whose variants carry payload fields becomes a tagged union,
+and variants may even refer to the enum itself (so the type can be recursive —
+exactly what an AST needs):
+
+```tocin
+enum Expr {
+    Num(int),
+    Add(Expr, Expr),
+    Mul(Expr, Expr)
+}
+
+def eval(e: Expr) -> int {
+    match e {
+        case Num(n):    { return n; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Mul(a, b): { return eval(a) * eval(b); }
+    }
+    return 0;
+}
+
+def main() -> int {
+    return eval(Mul(Add(Num(2), Num(3)), Num(4)));   // (2 + 3) * 4 = 20
+}
+```
+
+Build a value by calling the variant (`Num(2)`, `Add(x, y)`); a variant with no
+fields is written bare (e.g. `Empty`). Each pattern binds the variant's payload
+fields to names you choose (`Add(a, b)` binds `a` and `b`).
+
+The compiler **requires the match to be exhaustive**: cover every variant, or
+add a `default:` arm. Drop the `Mul` case above and compilation fails with
+*"Non-exhaustive match on enum 'Expr': missing variant(s) Mul"* — a whole class
+of bugs caught before the program ever runs. See `examples/adt_interpreter.to`.
+
 ---
 
 ## 12. Null safety

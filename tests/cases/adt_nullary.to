@@ -1,0 +1,17 @@
+// expect: 42
+// An algebraic enum mixing a payload variant (Lit) with a nullary variant
+// (Zero). Nullary variants are constructed by bare name and matched by tag.
+enum Expr {
+    Lit(int),
+    Zero
+}
+def eval(e: Expr) -> int {
+    match e {
+        case Lit(n): { return n; }
+        case Zero: { return 0; }
+    }
+    return -1;
+}
+def main() -> int {
+    return eval(Lit(42)) + eval(Zero); // 42 + 0
+}

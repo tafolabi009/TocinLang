@@ -1,0 +1,19 @@
+// expect: 78
+// Algebraic enum (tagged union) with payload-carrying variants; match
+// destructures each variant's fields by position.
+enum Shape {
+    Circle(int),
+    Rect(int, int)
+}
+def area(s: Shape) -> int {
+    match s {
+        case Circle(r): { return r * r * 3; }   // 5*5*3 = 75
+        case Rect(w, h): { return w * h; }       // 1*3   = 3
+    }
+    return 0;
+}
+def main() -> int {
+    let c = Circle(5);
+    let r = Rect(1, 3);
+    return area(c) + area(r); // 78
+}

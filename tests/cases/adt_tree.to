@@ -1,0 +1,21 @@
+// expect: 20
+// Recursive algebraic data type: an expression tree whose Add/Mul variants hold
+// sub-expressions. Exhaustive match drives a recursive evaluator — the exact
+// shape of a real compiler's AST.
+enum Expr {
+    Num(int),
+    Add(Expr, Expr),
+    Mul(Expr, Expr)
+}
+def eval(e: Expr) -> int {
+    match e {
+        case Num(n): { return n; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Mul(a, b): { return eval(a) * eval(b); }
+    }
+    return 0;
+}
+def main() -> int {
+    // (2 + 3) * 4 = 20
+    return eval(Mul(Add(Num(2), Num(3)), Num(4)));
+}

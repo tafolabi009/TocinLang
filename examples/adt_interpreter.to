@@ -1,0 +1,45 @@
+// adt_interpreter.to — algebraic data types + exhaustive pattern matching.
+//
+// Tocin's `enum` is a real tagged union (sum type), like Rust's `enum` or an
+// ML datatype: each variant may carry typed payload fields, variants may be
+// recursive, and `match` destructures them by position. The type checker
+// REQUIRES every match to be exhaustive — cover every variant or add a
+// `default:` arm — so a forgotten case is a compile error, not a runtime bug.
+//
+// This is the foundation a compiler is built on: an AST is just a recursive
+// algebraic type, and a tree-walking evaluator is just an exhaustive match.
+//
+// Run it:
+//   tocin examples/adt_interpreter.to --run
+// The process exit code is the evaluated result, ((2 + 3) * 4) - 5 = 15.
+
+// A small arithmetic expression language. Add/Sub/Mul are recursive: their
+// fields are themselves Expr values, so we can build arbitrarily nested trees.
+enum Expr {
+    Num(int),
+    Add(Expr, Expr),
+    Sub(Expr, Expr),
+    Mul(Expr, Expr)
+}
+
+// Evaluate an expression tree. The match has one arm per variant and no
+// `default:` — remove any arm and the compiler rejects the program with
+// "Non-exhaustive match on enum 'Expr'".
+def eval(e: Expr) -> int {
+    match e {
+        case Num(n):    { return n; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Sub(a, b): { return eval(a) - eval(b); }
+        case Mul(a, b): { return eval(a) * eval(b); }
+    }
+    return 0;
+}
+
+def main() -> int {
+    // Build the tree for ((2 + 3) * 4) - 5 and evaluate it.
+    let tree = Sub(
+        Mul(Add(Num(2), Num(3)), Num(4)),
+        Num(5)
+    );
+    return eval(tree); // 15
+}

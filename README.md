@@ -39,6 +39,11 @@ clear what is implemented versus planned.
   patterns (`case Some(x)`, `case Err(e)`).
 - **Enums** — `enum Color { Red, Green, Blue }` with auto-incrementing integer
   constants, usable bare or qualified (`Color.Red`).
+- **Algebraic enums (tagged unions)** — variants with typed payloads, including
+  recursive ones: `enum Expr { Num(int), Add(Expr, Expr) }`. Destructure with
+  `match` (`case Add(a, b)`), and the compiler **enforces exhaustiveness** — a
+  match that misses a variant (with no `default:`) is a compile error. This is
+  the canonical way to build an AST; see `examples/adt_interpreter.to`.
 - **Classes / structs** — fields, methods with `self`, construction, field read and
   mutation, and method calls.
 - **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with

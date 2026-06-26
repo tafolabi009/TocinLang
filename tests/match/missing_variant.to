@@ -1,0 +1,10 @@
+// Omits the Rect and Empty variants with no `default:` arm: must be REJECTED
+// with a P001 non-exhaustive-match diagnostic.
+enum Shape { Circle(int), Rect(int, int), Empty }
+def area(s: Shape) -> int {
+    match s {
+        case Circle(r): { return r * r * 3; }
+    }
+    return -1;
+}
+def main() -> int { return area(Circle(4)); }

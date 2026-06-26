@@ -224,7 +224,27 @@ namespace type_checker
 
     void TypeChecker::visitEnumStmt(ast::EnumStmt *stmt)
     {
-        // Enum members are integer constants; make them visible by name.
+        if (stmt->isAlgebraic())
+        {
+            // Algebraic enum: record variants for match-exhaustiveness checking.
+            // Bare nullary variants (e.g. Empty) are usable as values; variants
+            // with payloads are constructed via a call, so register a permissive
+            // constructor symbol for them too.
+            auto enumType = std::make_shared<ast::SimpleType>(
+                lexer::Token(lexer::TokenType::IDENTIFIER, stmt->name, "", 0, 0));
+            std::unordered_set<std::string> &variants = adtEnumVariants_[stmt->name];
+            for (const auto &m : stmt->members)
+            {
+                variants.insert(m.first);
+                adtVariantEnum_[m.first] = stmt->name;
+                if (environment_) environment_->define(m.first, enumType, true);
+                if (globalEnv_) globalEnv_->define(m.first, enumType, true);
+            }
+            currentType_ = nullptr;
+            return;
+        }
+
+        // Plain enum: members are integer constants; make them visible by name.
         auto intType = makeBasic(ast::TypeKind::INT);
         for (const auto &m : stmt->members)
         {
@@ -693,6 +713,20 @@ namespace type_checker
         {
             if (arg)
                 arg->accept(*this);
+        }
+
+        // Algebraic-enum variant constructor: Circle(r)/Rect(w, h) builds a value
+        // of the enum. It is not a function, so adopt the enum type and return
+        // before the not-callable diagnostic below.
+        if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+        {
+            auto av = adtVariantEnum_.find(var->name);
+            if (av != adtVariantEnum_.end())
+            {
+                currentType_ = std::make_shared<ast::SimpleType>(
+                    lexer::Token(lexer::TokenType::IDENTIFIER, av->second, "", 0, 0));
+                return;
+            }
         }
 
         // Resolve the callee to a function type and adopt its return type.
@@ -1274,13 +1308,66 @@ namespace type_checker
 
     void TypeChecker::visitMatchStmt(ast::MatchStmt *stmt)
     {
-        // Basic match statement implementation
         if (stmt->value) stmt->value->accept(*this);
-        
-        // For now, just visit the first case
-        if (!stmt->cases.empty() && stmt->cases[0].second)
+
+        // Visit every case body with its pattern bindings in scope so the bound
+        // variables resolve. Bindings are checked permissively (typed int) — the
+        // codegen denormalizes payloads to their real types.
+        auto intType = makeBasic(ast::TypeKind::INT);
+        for (size_t i = 0; i < stmt->cases.size(); ++i)
         {
-            stmt->cases[0].second->accept(*this);
+            pushScope();
+            if (i < stmt->caseBinds.size() && environment_)
+                for (const auto &b : stmt->caseBinds[i])
+                    if (!b.empty())
+                        environment_->define(b, intType, false);
+            if (stmt->cases[i].second)
+                stmt->cases[i].second->accept(*this);
+            popScope();
+        }
+        if (stmt->defaultCase)
+        {
+            pushScope();
+            stmt->defaultCase->accept(*this);
+            popScope();
+        }
+
+        // Exhaustiveness: if the scrutinee is an algebraic enum (inferred from the
+        // case constructors) and there is no default case, every variant must be
+        // covered. Identify the enum from the first constructor pattern that names
+        // a known variant.
+        if (!stmt->defaultCase)
+        {
+            std::string enumName;
+            for (const auto &c : stmt->caseCtor)
+            {
+                auto it = adtVariantEnum_.find(c);
+                if (it != adtVariantEnum_.end()) { enumName = it->second; break; }
+            }
+            if (!enumName.empty())
+            {
+                std::unordered_set<std::string> covered;
+                for (const auto &c : stmt->caseCtor)
+                    if (!c.empty()) covered.insert(c);
+                std::vector<std::string> missing;
+                for (const auto &v : adtEnumVariants_[enumName])
+                    if (!covered.count(v)) missing.push_back(v);
+                if (!missing.empty())
+                {
+                    std::string list;
+                    for (size_t i = 0; i < missing.size(); ++i)
+                        list += (i ? ", " : "") + missing[i];
+                    // Fatal: a non-exhaustive match can fall through to garbage,
+                    // so abort compilation rather than emit unsafe code.
+                    errorHandler_.reportError(
+                        error::ErrorCode::P001_NON_EXHAUSTIVE_PATTERNS,
+                        "Non-exhaustive match on enum '" + enumName +
+                            "': missing variant(s) " + list +
+                            ". Add the missing case(s) or a `default:` arm.",
+                        std::string(stmt->token.filename), stmt->token.line,
+                        stmt->token.column, error::ErrorSeverity::FATAL);
+                }
+            }
         }
     }
 

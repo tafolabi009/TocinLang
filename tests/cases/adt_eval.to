@@ -1,0 +1,20 @@
+// expect: 14
+// A tiny expression ADT evaluated by exhaustive match — the exact shape a real
+// compiler's AST takes. Demonstrates several multi-field variants dispatched by
+// tag with positional field binding.
+enum Op {
+    Num(int),
+    Add(int, int),
+    Mul(int, int)
+}
+def eval(o: Op) -> int {
+    match o {
+        case Num(n): { return n; }       // 2
+        case Add(a, b): { return a + b; } // 3+4 = 7
+        case Mul(a, b): { return a * b; } // 1*5 = 5
+    }
+    return 0;
+}
+def main() -> int {
+    return eval(Num(2)) + eval(Add(3, 4)) + eval(Mul(1, 5)); // 14
+}
