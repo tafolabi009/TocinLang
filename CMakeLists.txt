@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.16)
-project(Tocin LANGUAGES C CXX)
+project(Tocin VERSION 0.1.0 LANGUAGES C CXX)
 
 # Set C++ standard to C++20 (modern features: concepts, ranges, <bit>, designated inits)
 set(CMAKE_CXX_STANDARD 20)
@@ -506,6 +506,7 @@ endif()
 target_compile_definitions(tocin PRIVATE TOCIN_RUNTIME_LIB="$<TARGET_FILE:tocin_runtime>")
 # Default search path for `import` of standard-library modules.
 target_compile_definitions(tocin PRIVATE TOCIN_STDLIB_PATH="${CMAKE_SOURCE_DIR}/stdlib")
+target_compile_definitions(tocin PRIVATE TOCIN_VERSION="${PROJECT_VERSION}")
 
 # Export symbols dynamically so the JIT can resolve the Tocin runtime
 # (channels, goroutines, etc.) from within the running compiler process.

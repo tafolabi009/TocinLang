@@ -909,6 +909,7 @@ void displayUsage()
     std::cout << "Usage: tocin [options] [filename]\n"
               << "Options:\n"
               << "  --help                 Display this help message\n"
+              << "  --version, -V          Print the compiler version and exit\n"
               << "  --dump-ir              Dump LLVM IR to stdout\n"
               << "  --jit, --run           JIT-compile and run the program immediately\n"
               << "  -O0, -O1, -O2, -O3     Set optimization level (default: -O2)\n"
@@ -1100,6 +1101,14 @@ int main(int argc, char *argv[])
         if (arg == "--help")
         {
             displayUsage();
+            return 0;
+        }
+        else if (arg == "--version" || arg == "-V")
+        {
+#ifndef TOCIN_VERSION
+#define TOCIN_VERSION "0.0.0-dev"
+#endif
+            std::cout << "tocin " << TOCIN_VERSION << std::endl;
             return 0;
         }
         else if (arg == "--dump-ir")

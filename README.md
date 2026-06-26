@@ -12,6 +12,24 @@ This README describes what the compiler **actually does today**. Longer-term,
 aspirational features are collected in the [Roadmap](#roadmap) so it is always
 clear what is implemented versus planned.
 
+## Install
+
+Self-contained, per-user installers (compiler + runtime + standard library +
+docs + examples + uninstaller, added to your `PATH`) — see
+**[INSTALL.md](INSTALL.md)** for all platforms and options.
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/tafolabi009/TocinLang/master/installer/get-tocin.sh | sh
+```
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/tafolabi009/TocinLang/master/installer/install.ps1 | iex
+```
+
+The one-liners fetch a published GitHub Release. To build a package locally and
+publish one, see [installer/README.md](installer/README.md).
+
 ## Highlights (implemented and tested)
 
 - **Compiles to native code via LLVM 18** — every example below produces a real
