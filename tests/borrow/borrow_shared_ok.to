@@ -1,0 +1,8 @@
+// Multiple shared borrows of the same value coexist.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(5);
+    let r = &a;
+    let s = &a;
+    return r.v + s.v;   // 10
+}

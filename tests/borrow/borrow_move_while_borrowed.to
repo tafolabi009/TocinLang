@@ -1,0 +1,9 @@
+// Moving a value while it is borrowed is rejected.
+class Box { v: int; }
+def sink(b: Box) -> int { return b.v; }
+def main() -> int {
+    let a = Box(1);
+    let r = &a;
+    let n = sink(a);     // ERROR: cannot move 'a' while borrowed
+    return n + r.v;
+}

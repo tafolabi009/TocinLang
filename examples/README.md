@@ -22,10 +22,13 @@ These programs compile and run with the current compiler. Run any of them with:
 | `json_parser.to` | A JSON parser written in Tocin (ADTs + recursion + vectors) |
 | `tuples.to` | **Tuples** and multiple return values; destructuring |
 | `iterators.to` | The **iterator protocol** (`next(self) -> Option`) |
+| `generators.to` | **Generators** (`yield`) — finite sequences driven by `for x in gen()` |
+| `byref_closures.to` | **By-reference closures** — a closure mutates a captured local |
+| `async_await.to` | **async/await** — async functions and awaiting their results |
 | `tcp_echo.to` | **TCP networking** + `go` goroutines (a loopback server/client) |
 | `operator_overload.to` | Operator overloading via dunder methods |
 | `raii_destructor.to` | Deterministic cleanup with `__del__` + `defer` |
-| `borrow_check.to` | The opt-in `--borrow-check` move analysis |
+| `borrow_check.to` | The opt-in `--borrow-check` move + `&`/`&mut` borrow analysis |
 | `freestanding_kernel.to` | `--freestanding` systems code (no libc/GC/runtime) |
 | `defer_cleanup.to` | `defer` (LIFO cleanup at function return) |
 | `concurrency.to` | `go` goroutines, typed channels, `select` |

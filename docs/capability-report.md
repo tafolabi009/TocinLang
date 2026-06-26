@@ -4,9 +4,9 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 139/139 `.to` programs passing, plus
-opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
-const + bounds + trait-bound (3/3) — harnesses.
+Last updated: this build. Test suite: 146/146 `.to` programs passing, plus
+opt-in borrow-check — move + `&`/`&mut` borrows (12/12), match-exhaustiveness
+(3/3), and safety — const + bounds + trait-bound (3/3) — harnesses.
 
 ---
 
@@ -89,6 +89,15 @@ systems — each backed by a passing `.to` test and, where noted, an example:
 - **Generic trait bounds** — `def f<T: Bound>` rejects a type argument that does
   not implement `Bound` (fatal `T016`), and trait-method calls on the bounded
   parameter resolve to the concrete type.
+- **Generators** — a function with `yield` produces a sequence; calling it
+  materializes the yielded values into an array that `for x in gen(...)` walks
+  or indexes. Eager (finite-sequence) collection. (`examples/generators.to`)
+- **By-reference closures** — a closure that writes a captured local shares the
+  cell (the write is visible outside); read-only captures stay by-value.
+  (`examples/byref_closures.to`)
+- **`&`/`&mut` reference borrows** — under `--borrow-check`, shared-XOR-mutable
+  borrows with lexical lifetimes (conflicts are fatal `B002`).
+  (`examples/borrow_check.to`)
 
 ## Not yet built (honest)
 
@@ -96,12 +105,36 @@ These are the remaining items a Rust/C++-class language would want; none are
 blocked by a fundamental design flaw, but they are real work and are *not*
 implemented today:
 
-- **By-reference closure capture** (capture is by value), `&`/`&mut` reference
-  borrows and lifetimes (the borrow checker is move-only), and generators
-  (`yield`).
-- **Async runtime / M:N scheduler.** `async`/`await` parse and goroutines run on
-  1:1 OS threads; a cooperative scheduler that suspends/resumes `await` on a
-  worker pool is not yet built.
+- **By-reference closure capture now works**: a closure that *writes* a
+  captured local shares the cell, so the mutation is visible in the enclosing
+  scope (read-only captures stay by-value snapshots). The one nuance is escaping
+  by-ref closures (a written-capture closure that outlives its defining frame) —
+  not reachable today because the type checker does not yet permit calling a
+  stored function-typed value; heap-promotion of the cell is the upgrade for
+  when it does.
+- **Generators (`yield`) now work** for finite sequences: a function containing
+  `yield` becomes a generator whose call materializes the yielded values as an
+  array that `for x in gen(...)` iterates (or you can index it). Collection is
+  eager (collect-then-iterate), so infinite/lazy generators — which need a
+  coroutine substrate (see the async item) — are the remaining piece.
+- **`&`/`&mut` reference borrows now work** under `--borrow-check`: `&x` takes a
+  shared borrow and `&mut x` an exclusive one, with the standard rule (many
+  shared XOR one mutable) and lexical borrow lifetimes (a borrow ends when its
+  binding leaves scope). Conflicts — a second `&mut`, a `&mut` over a live `&`,
+  using/moving/mutating a value while it is borrowed — are fatal `B002`. What
+  remains is non-lexical (flow-sensitive) lifetimes and borrows through struct
+  fields / across function boundaries; the move analysis and these statement-
+  scoped borrows are the foundation those build on.
+- **Async/await works; the M:N scheduler is the remaining layer.** `async def`
+  and `await` now compile and run with correct eager semantics: an async body
+  runs on the calling path and `await f()` evaluates to f()'s result (composes
+  in expressions and across async calls — `examples/async_await.to`). Goroutines
+  (`go`) run on real 1:1 OS threads with channels. What is *not* built is the
+  cooperative **M:N** scheduler that suspends a pending `await` and runs other
+  tasks on a worker pool — the fiber substrate exists
+  (`src/runtime/lightweight_scheduler.*`, ucontext-based) but is not yet wired
+  into the program runtime; the design is written up in
+  `docs/async-scheduler-design.md`.
 - **Higher-level networking** (HTTP, TLS) and async/epoll I/O; build on the raw
   socket primitives or C FFI.
 - **Tooling**: a formatter and an LSP are not provided; a hosted package
@@ -116,24 +149,29 @@ implemented today:
    `vecFree`/`mapFree`; and the GC is conservative (an int that happens to hold
    a heap address keeps that block alive). For request-scoped servers this is a
    non-issue in practice.
-2. **Capture is by value, not by reference.** Closures snapshot captured
-   locals; mutating the original afterward doesn't change the copy. (`const`
-   bindings are enforced — reassigning one is a compile error; array indexing is
-   bounds-checked by default, panicking on an out-of-range access, with
-   `--freestanding` omitting the check for systems code; and `break`/`continue`
-   support outer-loop labels.)
+2. **Closure capture is by value for reads, by reference for writes.** A
+   closure that only reads a captured local snapshots it (mutating the original
+   afterward doesn't change the snapshot); a closure that *assigns* a captured
+   local shares the underlying cell, so the write is visible outside the closure
+   (`examples/byref_closures.to`). (`const` bindings are enforced — reassigning
+   one is a compile error; array indexing is bounds-checked by default, panicking
+   on an out-of-range access, with `--freestanding` omitting the check for systems
+   code; and `break`/`continue` support outer-loop labels.)
 3. **Collection elements are 64-bit slots.** `vector`/`map`/channel payloads
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is
    fragile. Use `mapPutStr`/`mapGetStr` for string-keyed data.
-4. **Generators, the power operator `**`, and `++`/`--` are not implemented.**
+4. **The power operator `**` and `++`/`--` are not implemented** (generators
+   now work for finite sequences via `yield`; truly lazy ones are future work).
    Memory safety has two layers: GC by default (always safe — no use-after-free
    regardless), plus an **opt-in borrow checker** (`--borrow-check`) that adds
-   Rust-like compile-time move / use-after-move enforcement on owned values.
-   `defer` + RAII destructors (`__del__`) give deterministic cleanup. The borrow
-   checker is move-only for now — `&`/`&mut` reference borrows and lifetimes are
-   the remaining Rust-parity items (the move analysis is the foundation they
-   build on).
+   Rust-like compile-time enforcement on owned values: move / use-after-move
+   (`B001`) *and* `&`/`&mut` reference borrows with the shared-XOR-mutable rule
+   and lexical borrow lifetimes (`B002`). `defer` + RAII destructors (`__del__`)
+   give deterministic cleanup. What remains for full Rust parity is non-lexical
+   (flow-sensitive) lifetimes and borrows through struct fields / across
+   function boundaries — refinements on the statement-scoped borrows that work
+   today.
 5. **TCP networking is built in** (`tcpListen`/`tcpAccept`/`tcpConnect`/
    `tcpSend`/`tcpRecv`/`tcpClose`, POSIX sockets) — enough to write a concurrent
    server (pair with `go`) or a client, plus `time`/`hashing`/`random`/`env`

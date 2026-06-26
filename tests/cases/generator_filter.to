@@ -1,0 +1,12 @@
+// expect: 20
+// A generator may yield conditionally (here: only even numbers).
+def evens(n: int) -> int {
+    for i in 0..n {
+        if i % 2 == 0 { yield i; }
+    }
+}
+def main() -> int {
+    let sum = 0;
+    for e in evens(10) { sum = sum + e; }   // 0+2+4+6+8
+    return sum;
+}

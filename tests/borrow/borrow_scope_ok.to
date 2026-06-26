@@ -1,0 +1,8 @@
+// A borrow released at block end frees the value for a later exclusive borrow.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(3);
+    { let r = &a; }      // shared borrow ends here
+    let m = &mut a;      // OK now: no live borrow
+    return m.v;          // 3
+}

@@ -1,0 +1,13 @@
+// expect: 34
+// The materialized sequence is a real array: indexable and length-checked.
+def fibs(n: int) -> int {
+    let a = 0; let b = 1;
+    for i in 0..n {
+        yield a;
+        let t = a + b; a = b; b = t;
+    }
+}
+def main() -> int {
+    let f = fibs(10);   // 0 1 1 2 3 5 8 13 21 34
+    return f[9];
+}

@@ -1,14 +1,21 @@
-// Opt-in ownership / move checking.  Compile with:
+// Opt-in ownership / move + borrow checking.  Compile with:
 //   tocin --borrow-check examples/borrow_check.to -o app
 //
 // By DEFAULT (no flag) Tocin is GC-based and class instances alias freely.
 // With --borrow-check, owned values (class/struct instances) follow Rust-like
-// move semantics: binding/passing/returning a value MOVES it, and using a moved
-// value is a compile error (B001). Reassignment revives. Copy types
-// (int/float/bool) are never moved.
+// rules:
 //
-// This file is written to PASS the checker. To see an error, add `return a.v;`
-// after `let b = a;` — `a` was moved into `b`.
+//   Moves   — binding/passing/returning a value MOVES it; using a moved value
+//             is a compile error (B001). Reassignment revives. Copy types
+//             (int/float/bool) are never moved.
+//   Borrows — `&x` is a shared borrow and `&mut x` an exclusive one. Many
+//             shared borrows may coexist, but a `&mut` is exclusive: while one
+//             is live you cannot use, move, mutate, or re-borrow `x` (B002).
+//             Borrows end when the borrowing binding leaves scope.
+//
+// This file is written to PASS the checker. To see errors, try:
+//   - add `return a.size;` right after `let b = a;`   (use after move,  B001)
+//   - add `let m2 = &mut a;` after `let m = &mut a;`  (double &mut,     B002)
 
 class Buffer { size: int; }
 
@@ -24,7 +31,17 @@ def main() -> int {
     a = Buffer(8);             // revive `a` with a fresh value
     let n = a.size + c.size;   // both live
 
+    // Shared borrows: any number may be live at once.
+    let r = &c;
+    let s = &c;
+    let shared = r.size + s.size;   // 16 + 16 = 32
+
+    // Exclusive borrow in its own scope; released at the closing brace.
+    let ex = 0;
+    { let m = &mut a; ex = m.size; }   // 8
+
     let i = 10;
     let j = i;                 // int is a copy type: `i` still usable
-    return total + n + i + j;  // 64 + (8+16) + 10 + 10 = 108
+    // 64 + (8+16) + 32 + 8 + 10 + 10 = 148
+    return total + n + shared + ex + i + j;
 }

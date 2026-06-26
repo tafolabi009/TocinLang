@@ -1,0 +1,7 @@
+// A single exclusive borrow is fine.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(7);
+    let m = &mut a;
+    return m.v;         // 7
+}

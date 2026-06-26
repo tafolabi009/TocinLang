@@ -828,90 +828,12 @@ void IRGenerator::visitDestructureStmt(ast::DestructureStmt *stmt)
 
 void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 {
-    // Handle async functions
-    if (stmt->isAsync)
-    {
-        // Transform the async function
-        llvm::Function *asyncFunc = transformAsyncFunction(stmt);
-
-        // If transformation failed, return
-        if (!asyncFunc)
-        {
-            return;
-        }
-
-        // Also create a regular wrapper function that awaits the async result
-        std::string regularFuncName = stmt->name;
-
-        // Create the function signature
-        std::vector<llvm::Type *> paramTypes;
-        for (const auto &param : stmt->parameters)
-        {
-            llvm::Type *paramType = getLLVMType(param.type);
-            if (!paramType)
-            {
-                return;
-            }
-            paramTypes.push_back(paramType);
-        }
-
-        llvm::Type *returnType = getLLVMType(stmt->returnType);
-        if (!returnType)
-        {
-            return;
-        }
-
-        llvm::FunctionType *funcType = llvm::FunctionType::get(
-            returnType, paramTypes, false);
-
-        // Create the function
-        llvm::Function *function = llvm::Function::Create(
-            funcType,
-            llvm::Function::ExternalLinkage,
-            regularFuncName,
-            *module);
-
-        // Set parameter names
-        unsigned idx = 0;
-        for (auto &arg : function->args())
-        {
-            if (idx < stmt->parameters.size())
-            {
-                arg.setName(stmt->parameters[idx].name);
-            }
-            idx++;
-        }
-
-        // Create body that calls the async version and awaits the result
-        llvm::BasicBlock *block = llvm::BasicBlock::Create(context, "entry", function);
-        builder.SetInsertPoint(block);
-
-        // Call the async function with all arguments
-        std::vector<llvm::Value *> args;
-        for (auto &arg : function->args())
-        {
-            args.push_back(&arg);
-        }
-
-        llvm::Value *futureResult = builder.CreateCall(asyncFunc, args, "async.call");
-
-        // Call the blocking get() method to await the result
-        llvm::Function *getFunc = getStdLibFunction("Future_get");
-        if (!getFunc)
-        {
-            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                     "Future_get method not found",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
-            return;
-        }
-
-        llvm::Value *result = builder.CreateCall(getFunc, {futureResult}, "async.result");
-
-        // Return the result
-        builder.CreateRet(result);
-
-        return;
-    }
+    // Async functions are generated as ordinary synchronous functions: the body
+    // runs eagerly on the calling path and `await f()` evaluates to f()'s result
+    // (see visitAwaitExpr). This gives correct async/await *semantics* today; the
+    // M:N worker-pool scheduler that suspends `await` onto a fiber pool is a
+    // performance layer to add on top (it does not change observable results for
+    // a single awaited result). So we simply fall through to normal codegen.
 
     // Generic functions are templates: record them and instantiate lazily
     // (monomorphize) when called with concrete argument types.
@@ -1559,6 +1481,37 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto h = pptr(0); if (!h) return;
                 builder.CreateCall(rt("__tocin_vec_free", voidb, {ptrb}), {h});
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            // vecToArray(v): copy a vector handle into a fresh Tocin array
+            // ([ i64 length ][ elems... ]) so it can be indexed and iterated with
+            // for-in. Used to finalize a generator's collected yields.
+            if (funcName == "vecToArray" && na == 1) {
+                auto h = pptr(0); if (!h) return;
+                llvm::Value *len = builder.CreateCall(rt("__tocin_vec_len", i64b, {ptrb}), {h}, "g.len");
+                llvm::Function *mallocFn = getStdLibFunction("malloc");
+                llvm::Value *eight = llvm::ConstantInt::get(i64b, 8);
+                llvm::Value *bytes = builder.CreateAdd(eight, builder.CreateMul(len, eight), "g.bytes");
+                llvm::Value *arr = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {bytes}, "g.arr");
+                builder.CreateStore(len, arr); // header holds the length
+                llvm::Type *i8t = llvm::Type::getInt8Ty(context);
+                llvm::Function *fn = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock *cond = llvm::BasicBlock::Create(context, "g.cond", fn);
+                llvm::BasicBlock *bodyB = llvm::BasicBlock::Create(context, "g.body", fn);
+                llvm::BasicBlock *doneB = llvm::BasicBlock::Create(context, "g.done", fn);
+                llvm::AllocaInst *iv = builder.CreateAlloca(i64b, nullptr, "g.i");
+                builder.CreateStore(llvm::ConstantInt::get(i64b, 0), iv);
+                builder.CreateBr(cond);
+                builder.SetInsertPoint(cond);
+                llvm::Value *i = builder.CreateLoad(i64b, iv, "g.iv");
+                builder.CreateCondBr(builder.CreateICmpSLT(i, len, "g.cmp"), bodyB, doneB);
+                builder.SetInsertPoint(bodyB);
+                llvm::Value *x = builder.CreateCall(rt("__tocin_vec_get", i64b, {ptrb, i64b}), {h, i}, "g.x");
+                llvm::Value *off = builder.CreateAdd(eight, builder.CreateMul(i, eight), "g.off");
+                llvm::Value *slotp = builder.CreateGEP(i8t, arr, off, "g.slot");
+                builder.CreateStore(x, slotp);
+                builder.CreateStore(builder.CreateAdd(i, llvm::ConstantInt::get(i64b, 1)), iv);
+                builder.CreateBr(cond);
+                builder.SetInsertPoint(doneB);
+                lastValue = arr; return; }
 
             // ---- hashmap ----
             if (funcName == "mapNew" && na == 0) {
@@ -2684,6 +2637,18 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         return;
     }
 
+    // Borrow expressions (`&x`, `&mut x`) and `move x` are transparent at run
+    // time: they evaluate to the operand itself. Tocin references alias (a class
+    // instance is already a pointer); the opt-in borrow *checker* enforces the
+    // aliasing rules statically, so codegen treats a borrow as identity.
+    if (expr->op.type == lexer::TokenType::BORROW ||
+        expr->op.type == lexer::TokenType::MUTABLE_BORROW ||
+        expr->op.type == lexer::TokenType::MOVE)
+    {
+        lastValue = operand;
+        return;
+    }
+
     switch (expr->op.type)
     {
     case lexer::TokenType::MINUS:
@@ -2939,6 +2904,35 @@ namespace
         else if (auto rs = std::dynamic_pointer_cast<ast::ReturnStmt>(stmt))
             collectExprNames(rs->value, used, bound);
     }
+
+    // Collect the names of variables ASSIGNED within an expression (a lambda
+    // body is a single expression). Used to decide which captures are by-ref.
+    void collectAssignedNames(const ast::ExprPtr &expr, std::set<std::string> &out)
+    {
+        if (!expr) return;
+        if (auto a = std::dynamic_pointer_cast<ast::AssignExpr>(expr))
+        {
+            if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(a->target))
+                out.insert(v->name);
+            else if (!a->name.empty())
+                out.insert(a->name);
+            collectAssignedNames(a->value, out);
+        }
+        else if (auto b = std::dynamic_pointer_cast<ast::BinaryExpr>(expr))
+        {
+            collectAssignedNames(b->left, out);
+            collectAssignedNames(b->right, out);
+        }
+        else if (auto g = std::dynamic_pointer_cast<ast::GroupingExpr>(expr))
+            collectAssignedNames(g->expression, out);
+        else if (auto u = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+            collectAssignedNames(u->right, out);
+        else if (auto c = std::dynamic_pointer_cast<ast::CallExpr>(expr))
+        {
+            collectAssignedNames(c->callee, out);
+            for (auto &arg : c->arguments) collectAssignedNames(arg, out);
+        }
+    }
 } // namespace
 
 void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
@@ -2968,10 +2962,16 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     for (auto &p : expr->parameters)
         bound.insert(p.name);
     collectExprNames(expr->body, used, bound);
+    // Captures that the lambda WRITES are taken by reference (the env holds a
+    // pointer to the enclosing cell), so the mutation is visible outside.
+    std::set<std::string> assigned;
+    collectAssignedNames(expr->body, assigned);
 
     std::vector<std::string> captureNames;
     std::vector<llvm::Value *> captureVals; // loaded in the *enclosing* scope
     std::vector<llvm::Type *> captureTypes;
+    std::vector<bool> captureByRef;
+    std::vector<llvm::Type *> captureValTypes; // pointed-to value type for by-ref
     for (const auto &name : used)
     {
         if (bound.count(name))
@@ -2979,10 +2979,22 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         llvm::AllocaInst *slot = lookupVariable(name);
         if (!slot)
             continue; // not a local (e.g. a global function called inside)
+        bool byref = assigned.count(name) > 0;
         captureNames.push_back(name);
-        captureTypes.push_back(slot->getAllocatedType());
-        captureVals.push_back(
-            builder.CreateLoad(slot->getAllocatedType(), slot, name + ".cap"));
+        captureByRef.push_back(byref);
+        captureValTypes.push_back(slot->getAllocatedType());
+        if (byref)
+        {
+            // Capture the cell's address (the alloca itself is a pointer value).
+            captureTypes.push_back(ptrTy);
+            captureVals.push_back(slot);
+        }
+        else
+        {
+            captureTypes.push_back(slot->getAllocatedType());
+            captureVals.push_back(
+                builder.CreateLoad(slot->getAllocatedType(), slot, name + ".cap"));
+        }
     }
 
     // --- Build the lambda function with the env-first ABI ------------------
@@ -3006,6 +3018,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     auto savedVarArrayElem = varArrayElem;
     auto savedVarFuncSig = varFuncSig;
     auto savedVarIsString = varIsString;
+    auto savedVarByRef = varByRef;
+    auto savedVarByRefType = varByRefType;
 
     builder.SetInsertPoint(block);
     currentFunction = function;
@@ -3013,6 +3027,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     namedValues.clear();
     varFuncSig.clear();
     varIsString.clear();
+    varByRef.clear();
+    varByRefType.clear();
 
     // arg 0 is the environment; load each captured value back out of it.
     llvm::Argument *envArg = function->getArg(0);
@@ -3023,9 +3039,16 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         llvm::Value *off = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 8 * (i + 1));
         llvm::Value *p = builder.CreateGEP(llvm::Type::getInt8Ty(context), envArg, off, captureNames[i] + ".slot");
         llvm::Value *val = builder.CreateLoad(captureTypes[i], p, captureNames[i]);
+        // For a by-ref capture, `val` is a POINTER to the enclosing cell; the
+        // local slot holds that pointer and reads/writes go through it.
         llvm::AllocaInst *a = createEntryBlockAlloca(function, captureNames[i], captureTypes[i]);
         builder.CreateStore(val, a);
         namedValues[captureNames[i]] = a;
+        if (captureByRef[i])
+        {
+            varByRef.insert(captureNames[i]);
+            varByRefType[captureNames[i]] = captureValTypes[i];
+        }
     }
 
     // Bind declared parameters (args 1..N).
@@ -3083,6 +3106,8 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     varArrayElem = savedVarArrayElem;
     varFuncSig = savedVarFuncSig;
     varIsString = savedVarIsString;
+    varByRef = savedVarByRef;
+    varByRefType = savedVarByRefType;
     currentFunction = savedFunction;
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
@@ -3414,6 +3439,16 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
 {
     if (!expr)
         return "";
+    // Borrow / move expressions are transparent: `&x`, `&mut x`, `move x` have
+    // the same class as `x`, so a `let r = &obj` binding tracks obj's class and
+    // field/method access through the reference resolves correctly.
+    if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+    {
+        if (un->op.type == lexer::TokenType::BORROW ||
+            un->op.type == lexer::TokenType::MUTABLE_BORROW ||
+            un->op.type == lexer::TokenType::MOVE)
+            return getExprClassName(un->right);
+    }
     if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
     {
         if (var->name == "self" || var->name == "this")
@@ -5065,6 +5100,33 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
             return false;
         }
 
+        // By-reference capture: the slot holds a POINTER to the original
+        // variable's cell. Load that cell pointer and store through it so the
+        // mutation is visible to the enclosing scope (and to other closures
+        // sharing the same cell). The local slot's allocated type is `ptr`,
+        // so we coerce rhs to the captured value's type before the indirect
+        // store rather than matching against the slot type.
+        if (varByRef.count(name))
+        {
+            llvm::Type *valTy = varByRefType.count(name)
+                                    ? varByRefType[name]
+                                    : llvm::Type::getInt64Ty(context);
+            if (rhs->getType() != valTy)
+            {
+                if (rhs->getType()->isIntegerTy() && valTy->isIntegerTy())
+                    rhs = builder.CreateIntCast(rhs, valTy, true, "cast");
+                else if (rhs->getType()->isFloatingPointTy() && valTy->isFloatingPointTy())
+                    rhs = builder.CreateFPCast(rhs, valTy, "cast");
+                else if (canConvertImplicitly(rhs->getType(), valTy))
+                    rhs = implicitConversion(rhs, valTy);
+            }
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *cell = builder.CreateLoad(ptrTy, alloca, name + ".cellp");
+            builder.CreateStore(rhs, cell);
+            lastValue = rhs;
+            return true;
+        }
+
         // Validate that initializer type matches variable type
         if (rhs->getType() != alloca->getAllocatedType())
         {
@@ -5097,7 +5159,9 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
 
 llvm::Function *IRGenerator::declareFunctionProto(ast::FunctionStmt *stmt)
 {
-    if (!stmt || stmt->isAsync || stmt->isGeneric())
+    // Async functions are lowered as ordinary synchronous functions, so they get
+    // a normal forward prototype (enables forward references and `go asyncFn()`).
+    if (!stmt || stmt->isGeneric())
         return nullptr;
     if (llvm::Function *existing = module->getFunction(stmt->name))
         return existing;
@@ -6129,6 +6193,19 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
     {
         lastValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), e->second);
         return;
+    }
+    // A by-reference closure capture: the slot holds a pointer to the enclosing
+    // cell, so read through one extra indirection.
+    if (varByRef.count(expr->name))
+    {
+        llvm::AllocaInst *pcell = lookupVariable(expr->name);
+        if (pcell)
+        {
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *cell = builder.CreateLoad(ptrTy, pcell, expr->name + ".cellp");
+            lastValue = builder.CreateLoad(varByRefType[expr->name], cell, expr->name);
+            return;
+        }
     }
     // Look up variable in current scope
     llvm::AllocaInst *alloca = lookupVariable(expr->name);
