@@ -2341,6 +2341,68 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
     llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     llvm::Type *i8 = llvm::Type::getInt8Ty(context);
 
+    // Iterator-protocol for-each: if the iterable is a class instance with a
+    // `next(self) -> Option` method, drive the loop by calling it — Some(x)
+    // yields x, None stops. This lets `for x in it` walk any custom iterator.
+    {
+        std::string iterCls = getExprClassName(stmt->iterable);
+        llvm::Function *nextFn = iterCls.empty() ? nullptr
+                                                 : module->getFunction(iterCls + "_next");
+        if (nextFn)
+        {
+            llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::StructType *optTy = getOptResType();
+
+            stmt->iterable->accept(*this);
+            if (!lastValue) return;
+            llvm::Value *iterObj = lastValue;
+            llvm::AllocaInst *objSlot = builder.CreateAlloca(iterObj->getType(), nullptr, "iter.obj");
+            builder.CreateStore(iterObj, objSlot);
+
+            llvm::Type *elemTy = (variableType && getLLVMType(variableType))
+                                     ? getLLVMType(variableType) : i64;
+            llvm::AllocaInst *iterVar = builder.CreateAlloca(elemTy, nullptr, variable);
+            namedValues[variable] = iterVar;
+
+            llvm::BasicBlock *condB = llvm::BasicBlock::Create(context, "iter.cond", function);
+            llvm::BasicBlock *bodyB = llvm::BasicBlock::Create(context, "iter.body", function);
+            llvm::BasicBlock *afterB = llvm::BasicBlock::Create(context, "iter.after", function);
+            builder.CreateBr(condB);
+
+            // cond: opt = obj.next(); branch on Some (non-null) vs None (null).
+            builder.SetInsertPoint(condB);
+            llvm::Value *obj = builder.CreateLoad(objSlot->getAllocatedType(), objSlot, "iter.o");
+            llvm::Value *opt = builder.CreateCall(nextFn->getFunctionType(), nextFn, {obj}, "iter.opt");
+            llvm::Value *optPtr = opt->getType()->isPointerTy()
+                                      ? opt : builder.CreateIntToPtr(opt, ptrTy, "iter.optp");
+            llvm::Value *nullp = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(optPtr->getType()));
+            builder.CreateCondBr(builder.CreateICmpNE(optPtr, nullp, "iter.some"), bodyB, afterB);
+
+            // body: extract the payload (Option slot 1) into the loop variable.
+            builder.SetInsertPoint(bodyB);
+            llvm::Value *payP = builder.CreateGEP(optTy, optPtr,
+                {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "iter.payp");
+            llvm::Value *pay = builder.CreateLoad(i64, payP, "iter.pay");
+            llvm::Value *val = pay;
+            if (elemTy->isDoubleTy()) val = builder.CreateBitCast(pay, elemTy, variable);
+            else if (elemTy->isPointerTy()) val = builder.CreateIntToPtr(pay, elemTy, variable);
+            else if (elemTy->isIntegerTy() && elemTy != i64) val = builder.CreateTrunc(pay, elemTy, variable);
+            builder.CreateStore(val, iterVar);
+
+            loopStack.push_back({condB, afterB}); // continue -> next(), break -> after
+            loopLabels.push_back(stmt->label);
+            if (stmt->body) stmt->body->accept(*this);
+            loopStack.pop_back();
+            loopLabels.pop_back();
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(condB);
+
+            builder.SetInsertPoint(afterB);
+            return;
+        }
+    }
+
     // Evaluate the iterable expression -> base pointer of a flat array
     // laid out as [i64 length][elem0][elem1]... (same layout as visitIndexExpr).
     stmt->iterable->accept(*this);
