@@ -200,6 +200,12 @@ namespace codegen
         std::map<std::string, ast::ClassStmt *> genericClasses;                  // name -> generic class template
         std::map<const ast::CallExpr *, std::string> genericCtorClass;           // generic constructor call -> mangled class name
         std::map<std::string, int64_t> enumConstants;                           // EnumName.Member and Member -> value
+        // Algebraic enum (ADT) variants. An ADT value is a heap buffer
+        // [i64 tag][i64 slot0][i64 slot1]... with payloads normalized to 64-bit
+        // slots. Plain integer enums are NOT recorded here (they stay scalars).
+        struct ADTVariant { std::string enumName; int64_t tag; std::vector<ast::TypePtr> fields; };
+        std::map<std::string, ADTVariant> adtVariants;                          // variant name & EnumName.variant -> info
+        std::map<std::string, std::vector<std::string>> adtEnumVariants;        // enum name -> ordered variant names
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
@@ -333,6 +339,11 @@ namespace codegen
         llvm::StructType *getOptResType();
         llvm::Value *normalizeToSlot(llvm::Value *v);
         llvm::Value *makeOptRes(int64_t tag, llvm::Value *payload);
+
+        // Construct an algebraic-enum value on the heap: [i64 tag][slot...].
+        // `args` are the already-evaluated payload values (each normalized to a
+        // 64-bit slot). Returns an opaque pointer to the buffer.
+        llvm::Value *makeADT(const ADTVariant &v, const std::vector<llvm::Value *> &args);
 
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,

@@ -1,0 +1,11 @@
+// Covers every variant of an algebraic enum: must compile cleanly.
+enum Shape { Circle(int), Rect(int, int), Empty }
+def area(s: Shape) -> int {
+    match s {
+        case Circle(r): { return r * r * 3; }
+        case Rect(w, h): { return w * h; }
+        case Empty: { return 0; }
+    }
+    return -1;
+}
+def main() -> int { return area(Rect(2, 3)); }

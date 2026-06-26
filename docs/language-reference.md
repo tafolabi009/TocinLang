@@ -724,9 +724,46 @@ def main() {
 }
 ```
 
-Enum members are plain `int` constants in scope by their bare name. There are
-no associated payloads (for tagged unions, use `Option`/`Result` and pattern
-matching — [§10](#10-pattern-matching), [§13](#13-option--result)).
+Enum members are plain `int` constants in scope by their bare name.
+
+### Algebraic enums (tagged unions / sum types)
+
+A variant may carry **typed payload fields**, written in parentheses after the
+variant name. As soon as any variant has fields, the whole enum becomes an
+*algebraic data type* (ADT): a tagged union where each value records which
+variant it is plus that variant's payload. Variants may be recursive — a field
+can be the enum's own type — which is exactly how an AST is shaped.
+
+```tocin
+enum Shape {
+    Circle(int),         // one field
+    Rect(int, int),      // two fields
+    Empty                // no fields (nullary)
+}
+
+enum Expr {              // recursive: a real expression tree
+    Num(int),
+    Add(Expr, Expr),
+    Mul(Expr, Expr)
+}
+```
+
+Construct a value by calling the variant like a function (nullary variants are
+written bare):
+
+```tocin
+let a = Circle(5);
+let b = Rect(3, 4);
+let c = Empty;
+let tree = Mul(Add(Num(2), Num(3)), Num(4));   // (2 + 3) * 4
+```
+
+Destructure with `match` ([§10](#10-pattern-matching)). An ADT value is a heap
+`[i64 tag][payload slots…]` buffer; payloads round-trip through 64-bit slots
+(see [§18](#18-memory-model--abi)).
+
+`Option`/`Result` are the two built-in algebraic types and use the same `match`
+machinery ([§13](#13-option--result)).
 
 ---
 
@@ -773,6 +810,43 @@ match safeDiv(100, n) {
 * `None` matches the null value.
 * The bound name (`x`, `v`, `e`) must be a single identifier. The payload is
   bound as an `i64` slot (see [§13](#13-option--result) / [§18](#18-memory-model--abi)).
+
+### Algebraic-enum variant patterns
+
+Variant patterns work the same way for user-defined ADTs ([§9](#9-enums)),
+including multi-field and nullary variants. Each pattern position binds a single
+identifier to the corresponding payload field, denormalized back to its declared
+type:
+
+```tocin
+enum Shape { Circle(int), Rect(int, int), Empty }
+
+def area(s: Shape) -> int {
+    match s {
+        case Circle(r):  { return r * r * 3; }   // binds r
+        case Rect(w, h): { return w * h; }        // binds w and h
+        case Empty:      { return 0; }            // nullary
+    }
+    return -1;
+}
+```
+
+### Exhaustiveness
+
+A `match` on an algebraic enum **must cover every variant**, or include a
+`default:` arm. A match that omits a variant and has no `default:` is a *fatal*
+compile error (`P001`), so a forgotten case can never silently fall through:
+
+```tocin
+match s {
+    case Circle(r): { return r * r * 3; }
+    // error [P001]: Non-exhaustive match on enum 'Shape':
+    //               missing variant(s) Rect, Empty.
+}
+```
+
+Exhaustiveness applies to user ADTs; value-equality matches (on `int` etc.) and
+plain integer enums are not required to be exhaustive.
 
 Cases are tested top-to-bottom; the first match wins. Match is a statement (it
 does not yield a value); produce results via `return` or by assigning inside

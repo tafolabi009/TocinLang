@@ -1,0 +1,11 @@
+// A `default:` arm makes any match exhaustive even if some variants are not
+// named explicitly: must compile cleanly.
+enum Shape { Circle(int), Rect(int, int), Empty }
+def area(s: Shape) -> int {
+    match s {
+        case Circle(r): { return r * r * 3; }
+        default: { return 0; }
+    }
+    return -1;
+}
+def main() -> int { return area(Circle(4)); }

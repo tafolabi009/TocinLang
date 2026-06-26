@@ -1080,6 +1080,27 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
 
 void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 {
+    // Algebraic-enum variant constructor: Variant(args) builds a tagged heap
+    // value [i64 tag][slot...]. Checked first so a variant never falls through to
+    // the generic call path.
+    if (auto ctorName = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+    {
+        auto av = adtVariants.find(ctorName->name);
+        if (av != adtVariants.end())
+        {
+            std::vector<llvm::Value *> args;
+            for (const auto &a : expr->arguments)
+            {
+                a->accept(*this);
+                if (!lastValue) return;
+                args.push_back(normalizeToSlot(lastValue));
+            }
+            lastValue = makeADT(av->second, args);
+            lastExprClassName = av->second.enumName;
+            return;
+        }
+    }
+
     // Constructor call: ClassName(args) allocates an instance and initializes
     // its fields positionally from the arguments.
     if (auto ctorName = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
@@ -3042,6 +3063,29 @@ llvm::Value *IRGenerator::makeOptRes(int64_t tag, llvm::Value *payload)
     return obj;
 }
 
+// Allocate an algebraic-enum value on the heap as a flat i64 buffer:
+// [i64 tag][i64 slot0][i64 slot1]... `args` are payload values already
+// normalized to 64-bit slots by the caller. Returns an opaque pointer.
+llvm::Value *IRGenerator::makeADT(const ADTVariant &v, const std::vector<llvm::Value *> &args)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    size_t nslots = 1 + args.size(); // tag + one slot per payload field
+    llvm::ArrayType *bufTy = llvm::ArrayType::get(i64, nslots);
+    llvm::Function *mallocFn = stdLibFunctions["malloc"];
+    llvm::Value *size = llvm::ConstantExpr::getSizeOf(bufTy);
+    llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn,
+                                          {size}, "adt." + v.enumName);
+    llvm::Value *tagP = builder.CreateGEP(i64, obj, llvm::ConstantInt::get(i64, 0), "adt.tagp");
+    builder.CreateStore(llvm::ConstantInt::get(i64, v.tag), tagP);
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        llvm::Value *p = builder.CreateGEP(i64, obj,
+            llvm::ConstantInt::get(i64, (int64_t)(i + 1)), "adt.fp");
+        builder.CreateStore(args[i], p);
+    }
+    return obj;
+}
+
 llvm::FunctionType *IRGenerator::llvmFnTypeOf(const std::shared_ptr<ast::FunctionType> &ft)
 {
     if (!ft)
@@ -3500,7 +3544,31 @@ std::string IRGenerator::instantiateGenericClass(ast::ClassStmt *stmt,
 
 void IRGenerator::visitEnumStmt(ast::EnumStmt *stmt)
 {
-    // Enum members are integer constants, registered both bare (Red) and
+    if (stmt->isAlgebraic())
+    {
+        // Algebraic enum (tagged union): each variant becomes a heap value
+        // [i64 tag][slot...]. Record variant metadata so constructors and match
+        // can build/destructure values. Do NOT add to enumConstants — these are
+        // not scalar integers.
+        std::vector<std::string> variantOrder;
+        for (const auto &m : stmt->members)
+        {
+            ADTVariant v;
+            v.enumName = stmt->name;
+            v.tag = m.second;
+            auto fit = stmt->variantFields.find(m.first);
+            if (fit != stmt->variantFields.end())
+                v.fields = fit->second;
+            adtVariants[m.first] = v;
+            adtVariants[stmt->name + "." + m.first] = v;
+            variantOrder.push_back(m.first);
+        }
+        adtEnumVariants[stmt->name] = std::move(variantOrder);
+        lastValue = nullptr;
+        return;
+    }
+
+    // Plain enum: members are integer constants, registered both bare (Red) and
     // qualified (Color.Red) for use in expressions.
     for (const auto &m : stmt->members)
     {
@@ -5371,6 +5439,15 @@ void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
 
 void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
 {
+    // A bare algebraic-enum variant with no payload (e.g. `Empty`) constructs a
+    // tagged value. Variants with fields are constructed via a call expression.
+    auto av = adtVariants.find(expr->name);
+    if (av != adtVariants.end() && av->second.fields.empty())
+    {
+        lastValue = makeADT(av->second, {});
+        lastExprClassName = av->second.enumName;
+        return;
+    }
     // Enum members resolve to their integer constant.
     auto e = enumConstants.find(expr->name);
     if (e != enumConstants.end())
@@ -5442,8 +5519,74 @@ void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
     {
         std::string ctor = i < stmt->caseCtor.size() ? stmt->caseCtor[i] : "";
 
+        // ---- Algebraic-enum variant pattern (Circle(r), Rect(w,h), Empty) ----
+        auto av = ctor.empty() ? adtVariants.end() : adtVariants.find(ctor);
+        if (av != adtVariants.end())
+        {
+            const ADTVariant &variant = av->second;
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            llvm::Value *mvPtr = matchVal->getType()->isPointerTy()
+                                     ? matchVal
+                                     : builder.CreateIntToPtr(matchVal, ptrTy, "adt.mv");
+
+            llvm::BasicBlock *caseBlock = llvm::BasicBlock::Create(context, "case", function);
+            llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context, "casenext", function);
+
+            // Tag is the first i64 slot of the buffer.
+            llvm::Value *tagP = builder.CreateGEP(i64, mvPtr,
+                llvm::ConstantInt::get(i64, 0), "adt.tagp");
+            llvm::Value *tag = builder.CreateLoad(i64, tagP, "adt.tag");
+            builder.CreateCondBr(
+                builder.CreateICmpEQ(tag, llvm::ConstantInt::get(i64, variant.tag), "adt.tagcmp"),
+                caseBlock, nextBlock);
+
+            builder.SetInsertPoint(caseBlock);
+            auto savedNamed = namedValues;
+            auto savedVarClasses = varClasses;
+            createEnvironment();
+            const std::vector<std::string> &binds =
+                i < stmt->caseBinds.size() ? stmt->caseBinds[i] : std::vector<std::string>{};
+            for (size_t fi = 0; fi < binds.size() && fi < variant.fields.size(); ++fi)
+            {
+                const std::string &bind = binds[fi];
+                if (bind.empty())
+                    continue; // pattern position with no variable to bind
+                // Payload slot fi lives at buffer element (1 + fi).
+                llvm::Value *fp = builder.CreateGEP(i64, mvPtr,
+                    llvm::ConstantInt::get(i64, (int64_t)(fi + 1)), "adt.fp");
+                llvm::Value *slotVal = builder.CreateLoad(i64, fp, bind + ".slot");
+                // Denormalize the 64-bit slot back to the field's declared type.
+                llvm::Type *fieldTy = getLLVMType(variant.fields[fi]);
+                llvm::Value *val = slotVal;
+                if (fieldTy->isDoubleTy())
+                    val = builder.CreateBitCast(slotVal, fieldTy, bind);
+                else if (fieldTy->isPointerTy())
+                    val = builder.CreateIntToPtr(slotVal, fieldTy, bind);
+                else if (fieldTy->isIntegerTy() && fieldTy != i64)
+                    val = builder.CreateTrunc(slotVal, fieldTy, bind);
+                llvm::AllocaInst *slot = builder.CreateAlloca(val->getType(), nullptr, bind);
+                builder.CreateStore(val, slot);
+                namedValues[bind] = slot;
+                // If the field is a class instance, remember its class so that
+                // member access on the binding resolves.
+                std::string fieldTypeName = variant.fields[fi] ? variant.fields[fi]->toString() : "";
+                if (classTypes.count(fieldTypeName))
+                    varClasses[bind] = fieldTypeName;
+            }
+            if (stmt->cases[i].second)
+                stmt->cases[i].second->accept(*this);
+            restoreEnvironment();
+            namedValues = savedNamed;
+            varClasses = savedVarClasses;
+            if (!builder.GetInsertBlock()->getTerminator())
+                builder.CreateBr(mergeBlock);
+
+            builder.SetInsertPoint(nextBlock);
+            continue;
+        }
+
         // ---- Option/Result constructor pattern (Some/Ok/Err/None) ----
-        if (!ctor.empty())
+        if (ctor == "Some" || ctor == "Ok" || ctor == "Err" || ctor == "None")
         {
             llvm::StructType *st = getOptResType();
             llvm::Type *i32 = llvm::Type::getInt32Ty(context);

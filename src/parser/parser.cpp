@@ -237,12 +237,25 @@ namespace parser
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected enum name");
         consume(lexer::TokenType::LEFT_BRACE, "Expected '{' before enum body");
         std::vector<std::pair<std::string, int64_t>> members;
+        std::map<std::string, std::vector<ast::TypePtr>> variantFields;
         int64_t next = 0;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
         {
             auto member = consume(lexer::TokenType::IDENTIFIER, "Expected enum member name");
             int64_t value = next;
-            if (match(lexer::TokenType::EQUAL))
+            // Algebraic variant with payload fields: Circle(float), Rect(float, float)
+            if (match(lexer::TokenType::LEFT_PAREN))
+            {
+                std::vector<ast::TypePtr> fields;
+                if (!check(lexer::TokenType::RIGHT_PAREN))
+                {
+                    do { fields.push_back(parseType()); }
+                    while (match(lexer::TokenType::COMMA));
+                }
+                consume(lexer::TokenType::RIGHT_PAREN, "Expected ')' after enum variant fields");
+                variantFields[member.value] = std::move(fields);
+            }
+            else if (match(lexer::TokenType::EQUAL))
             {
                 bool neg = match(lexer::TokenType::MINUS);
                 auto v = consume(lexer::TokenType::INT, "Expected integer after '=' in enum");
@@ -254,7 +267,9 @@ namespace parser
             match(lexer::TokenType::COMMA); // optional separator
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after enum body");
-        return std::make_shared<ast::EnumStmt>(name, name.value, members);
+        auto enumStmt = std::make_shared<ast::EnumStmt>(name, name.value, members);
+        enumStmt->variantFields = std::move(variantFields);
+        return enumStmt;
     }
 
     ast::StmtPtr Parser::traitDeclaration()
@@ -521,6 +536,7 @@ namespace parser
         std::vector<std::pair<ast::ExprPtr, ast::StmtPtr>> cases;
         std::vector<std::string> ctors;
         std::vector<std::string> binds;
+        std::vector<std::vector<std::string>> bindLists;
         ast::StmtPtr defaultCase = nullptr;
         while (!check(lexer::TokenType::RIGHT_BRACE) && !isAtEnd())
         {
@@ -531,9 +547,17 @@ namespace parser
                 consume(lexer::TokenType::LEFT_BRACE, "Expected '{' after case pattern");
                 auto body = blockStmt();
 
-                // Classify Option/Result constructor patterns so codegen can do
-                // a tag check + payload binding instead of value equality.
+                // Classify constructor patterns so codegen can do a tag check +
+                // payload binding instead of value equality. This covers
+                // Option/Result (Some/Ok/Err/None) and algebraic-enum variants
+                // (Circle(r), Rect(w, h), Empty). Any capitalized callee is taken
+                // to be a constructor pattern; codegen decides whether the name is
+                // an ADT variant, an Option/Result ctor, or a plain enum constant.
                 std::string ctor, bind;
+                std::vector<std::string> bindList;
+                auto isCtorName = [](const std::string &n) {
+                    return !n.empty() && n[0] >= 'A' && n[0] <= 'Z';
+                };
                 if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(pattern))
                 {
                     if (lit->literalType == ast::LiteralExpr::LiteralType::NIL)
@@ -543,20 +567,33 @@ namespace parser
                 {
                     if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
                     {
-                        const std::string &n = callee->name;
-                        if (n == "Some" || n == "Ok" || n == "Err")
+                        if (isCtorName(callee->name))
                         {
-                            ctor = n;
-                            if (call->arguments.size() == 1)
-                                if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(call->arguments[0]))
-                                    bind = v->name;
+                            ctor = callee->name;
+                            for (const auto &arg : call->arguments)
+                            {
+                                if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(arg))
+                                    bindList.push_back(v->name);
+                                else
+                                    bindList.push_back(""); // non-variable arg: no binding
+                            }
+                            if (!bindList.empty())
+                                bind = bindList.front();
                         }
                     }
+                }
+                else if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(pattern))
+                {
+                    // Bare capitalized name: a nullary variant (Empty/None) or a
+                    // plain enum constant (Red). Codegen distinguishes them.
+                    if (isCtorName(var->name))
+                        ctor = var->name;
                 }
 
                 cases.emplace_back(pattern, body);
                 ctors.push_back(ctor);
                 binds.push_back(bind);
+                bindLists.push_back(std::move(bindList));
             }
             else if (match(lexer::TokenType::DEFAULT))
             {
@@ -574,6 +611,7 @@ namespace parser
         auto stmt = std::make_shared<ast::MatchStmt>(value->token, value, cases, defaultCase);
         stmt->caseCtor = std::move(ctors);
         stmt->caseBind = std::move(binds);
+        stmt->caseBinds = std::move(bindLists);
         return stmt;
     }
 

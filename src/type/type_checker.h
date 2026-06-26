@@ -180,6 +180,11 @@ namespace type_checker
         // treat these as abstract types and check permissively.
         std::unordered_set<std::string> classTypeParams_;
 
+        // Algebraic-enum tracking for exhaustiveness checking. Populated in
+        // visitEnumStmt for enums that have at least one payload-carrying variant.
+        std::unordered_map<std::string, std::string> adtVariantEnum_;                  // variant name -> enum name
+        std::unordered_map<std::string, std::unordered_set<std::string>> adtEnumVariants_; // enum name -> variant set
+
         // Module related methods
         bool loadModule(const std::string &moduleName);
         bool importSymbol(const std::string &moduleName, const std::string &symbolName,

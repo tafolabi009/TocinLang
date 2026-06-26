@@ -40,7 +40,9 @@ funcDecl       ::= ("def" | "async" "def") IDENT typeParams? "(" params ")" retT
 externDecl     ::= "extern" "def" IDENT typeParams? "(" params ")" retType? ";"     // no body
 classDecl      ::= ("class" | "struct") IDENT typeParams? "{" classMember* "}"
 classMember    ::= varDecl | funcDecl | IDENT ":" type ("=" expression)? ";"?       // field or method
-enumDecl       ::= "enum" IDENT "{" (IDENT ("=" "-"? INT)? ","?)* "}"
+enumDecl       ::= "enum" IDENT "{" (enumVariant ","?)* "}"
+enumVariant    ::= IDENT ( "(" type ("," type)* ")"     // algebraic variant: payload field types
+                         | "=" "-"? INT )?              // plain variant: explicit integer value
 traitDecl      ::= "trait" IDENT typeParams? "{" methodSig* "}"                      // method bodies optional
 implDecl       ::= "impl" (IDENT "for")? IDENT typeParams? "{" funcDecl* "}"
 importStmt     ::= "import" (STRING | IDENT ("." IDENT)*) ";"?
@@ -128,9 +130,9 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 | `for ... in` | Iterate a range `a..b` or index an array (`for i in 0..len(a)`). |
 | `in` | Part of `for x in ...`. |
 | `return` | Return from a function (optionally with a value). |
-| `match` / `case` / `default` | Pattern match (int/float equality, and `Some/Ok/Err/None` constructor patterns). |
+| `match` / `case` / `default` | Pattern match: int/float equality, `Some/Ok/Err/None`, and algebraic-enum variant patterns `Circle(r)`/`Rect(w, h)`/`Empty` with field binding. Matches on an algebraic enum must be exhaustive (cover every variant or add `default:`). |
 | `class` / `struct` | Define a record type with fields + methods. `struct` and `class` are identical. |
-| `enum` | Integer-valued enum. |
+| `enum` | Integer enum, or an algebraic data type (tagged union) when any variant carries payload fields. |
 | `trait` | Declare an interface (method signatures, optional default bodies). |
 | `impl` | `impl Type { ... }` inherent methods, or `impl Trait for Type { ... }`. |
 | `import` | Pull in another `.to` file/module (concatenates its top-level decls). |
@@ -414,6 +416,27 @@ def main() -> int {
 }
 ```
 Members are plain `int` constants. Use them bare (`Red`) or qualified (`Color.Blue`). Negative explicit values are allowed (`X = -1`).
+
+### An algebraic enum (tagged union / sum type)
+```tocin
+enum Expr {                 // a variant with payload fields makes the enum an ADT
+    Num(int),
+    Add(Expr, Expr),        // recursive: fields can be the enum's own type
+    Mul(Expr, Expr)
+}
+def eval(e: Expr) -> int {
+    match e {               // must cover every variant (or add `default:`) — else P001
+        case Num(n):    { return n; }
+        case Add(a, b): { return eval(a) + eval(b); }
+        case Mul(a, b): { return eval(a) * eval(b); }
+    }
+    return 0;
+}
+def main() -> int {
+    return eval(Mul(Add(Num(2), Num(3)), Num(4)));   // (2+3)*4 = exit 20
+}
+```
+Construct a variant by calling it (`Num(2)`, `Add(x, y)`); nullary variants are written bare (`Empty`). `match` binds each payload field to a single identifier, denormalized to its declared type. A value is a heap `[i64 tag][slots…]` buffer. This is the canonical way to build an AST — see `examples/adt_interpreter.to`.
 
 ### Error handling (throw / try / catch / finally)
 ```tocin
@@ -701,7 +724,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - Generics: generic functions and generic classes, monomorphized by **inferred** type arguments.
 - Traits with `impl Trait for Type` and inherent `impl Type` methods.
 - Enums with integer values (auto and explicit, incl. negatives).
-- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match`/`switch` (value equality + `Some/Ok/Err/None` patterns with payload binding), and `defer <stmt>` (LIFO cleanup at function return).
+- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match`/`switch` (value equality + `Some/Ok/Err/None` + algebraic-enum variant patterns with payload binding, checked for exhaustiveness), and `defer <stmt>` (LIFO cleanup at function return).
 - Exceptions: `throw` / `try` / `catch` / `finally` (setjmp-based, integer/handle payload).
 - `Option`/`Result` boxes and null-safety operators `?:` `?.` `!!`.
 - Fixed array literals (`[..]`, `len`, indexing/assignment) and dynamic `vector` + `map` (int- and string-keyed) builtins.

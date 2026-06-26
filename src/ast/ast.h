@@ -745,10 +745,15 @@ namespace ast
         ExprPtr value;
         std::vector<std::pair<ExprPtr, StmtPtr>> cases;
         // Per-case constructor-pattern metadata, index-aligned with `cases`.
-        // caseCtor: "Some"/"None"/"Ok"/"Err" for a constructor pattern, else "".
-        // caseBind: payload variable bound by the pattern (e.g. "x"), else "".
+        // caseCtor: constructor name for a pattern like Some(x)/Ok(v)/None or an
+        //   algebraic-enum variant Circle(r)/Rect(w,h)/Empty, else "".
+        // caseBind: first payload variable bound by the pattern (e.g. "x"), else
+        //   "" — kept for the Option/Result single-bind path.
+        // caseBinds: full list of payload variables, for multi-field ADT variants
+        //   (e.g. ["w","h"] for Rect(w, h)); empty entry "" for a non-variable arg.
         std::vector<std::string> caseCtor;
         std::vector<std::string> caseBind;
+        std::vector<std::vector<std::string>> caseBinds;
         StmtPtr defaultCase;
     };
 
@@ -934,7 +939,11 @@ namespace ast
             : Statement(token), name(name), members(std::move(members)) {}
         void accept(Visitor &visitor) override { visitor.visitEnumStmt(this); }
         std::string name;
-        std::vector<std::pair<std::string, int64_t>> members;
+        std::vector<std::pair<std::string, int64_t>> members; // variant name -> tag (index)
+        // Algebraic variants: variant name -> payload field types. Empty for a
+        // plain integer enum. A non-empty map makes this an ADT (tagged union).
+        std::map<std::string, std::vector<TypePtr>> variantFields;
+        bool isAlgebraic() const { return !variantFields.empty(); }
     };
 
     /**
