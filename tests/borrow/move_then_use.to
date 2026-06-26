@@ -1,0 +1,2 @@
+class Box { v: int; }
+def main() -> int { let a = Box(1); let b = a; return a.v + b.v; }  // use of moved 'a'

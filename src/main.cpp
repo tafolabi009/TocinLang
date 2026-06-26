@@ -141,6 +141,7 @@ extern "C" {
 #include "type/option_result_types.h"
 #include "type/traits.h"
 #include "type/ownership.h"
+#include "type/borrow_checker.h"
 #include "type/null_safety.h"
 #include "type/move_semantics.h"
 #include "type/extension_functions.h"
@@ -199,13 +200,14 @@ public:
         bool run; // JIT-execute the program in-process (--jit / --run)
         bool freestanding; // no libc / no GC / no runtime — kernel/bare-metal
         bool noGC;         // don't link the garbage collector (alloc -> malloc)
+        bool borrowCheck;  // opt-in ownership / use-after-move analysis
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
               enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
               enableMacros(true), enableAsync(true), enableDebugger(false),
               enableWASM(false), target("native"), enablePackageManager(true), run(false),
-              freestanding(false), noGC(false) {}
+              freestanding(false), noGC(false), borrowCheck(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -260,6 +262,17 @@ public:
         if (errorHandler.hasFatalErrors())
         {
             return false;
+        }
+
+        // Opt-in ownership / borrow analysis. Off by default; never changes
+        // codegen. Aborts before codegen only when --borrow-check is set and an
+        // ownership error is found (move/use-after-move are ERROR, not FATAL, so
+        // gate on the pass's own result rather than hasFatalErrors()).
+        if (options.borrowCheck)
+        {
+            type_checker::BorrowChecker borrowChecker(errorHandler);
+            if (!borrowChecker.check(program))
+                return false;
         }
 
         // Generate code based on target
@@ -859,6 +872,9 @@ void displayUsage()
               << "                           .ll = LLVM IR, .s = assembly, .o = object,\n"
               << "                           anything else = native executable\n"
               << "  --target <target>      Set compilation target (native, wasm)\n"
+              << "  --borrow-check         Enable opt-in ownership / use-after-move checking\n"
+              << "  --freestanding         Emit a no-libc/no-GC object for kernel/bare-metal\n"
+              << "  --no-gc                Do not link the garbage collector (alloc -> malloc)\n"
               << "  --no-ffi               Disable FFI support\n"
               << "  --no-concurrency       Disable concurrency features\n"
               << "  --no-advanced          Disable advanced language features\n"
@@ -1085,6 +1101,10 @@ int main(int argc, char *argv[])
         else if (arg == "--no-gc")
         {
             options.noGC = true;
+        }
+        else if (arg == "--borrow-check")
+        {
+            options.borrowCheck = true;
         }
         else if (arg == "--freestanding")
         {

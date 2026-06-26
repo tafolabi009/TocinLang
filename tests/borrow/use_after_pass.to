@@ -1,0 +1,3 @@
+class Box { v: int; }
+def take(b: Box) -> int { return b.v; }
+def main() -> int { let a = Box(2); let r = take(a); return a.v + r; }  // use of moved 'a'
