@@ -43,9 +43,23 @@ include_directories(${ZLIB_INCLUDE_DIRS})
 # -------------------------
 # LLVM Integration
 # -------------------------
-# First try to find LLVM through standard paths; on Windows allow a fallback hint
+# First try to find LLVM through standard paths; on Windows, if LLVM_DIR was
+# not supplied, probe common MSYS2/mingw64 install locations so
+# find_package(LLVM CONFIG) can locate the LLVM CMake package. (When configuring
+# from a mingw64 shell, /mingw64 is already on the prefix path; these hints cover
+# MSVC or other shells. Pass -DLLVM_DIR=... to override.)
 if(WIN32 AND NOT DEFINED LLVM_DIR)
-    set(LLVM_DIR "D:/Downloads/msys64/mingw64/lib/cmake/llvm")
+    foreach(_llvm_cand
+            "$ENV{MSYS2_ROOT}/mingw64/lib/cmake/llvm"
+            "C:/msys64/mingw64/lib/cmake/llvm"
+            "D:/msys64/mingw64/lib/cmake/llvm"
+            "C:/tools/msys64/mingw64/lib/cmake/llvm")
+        if(EXISTS "${_llvm_cand}")
+            set(LLVM_DIR "${_llvm_cand}")
+            message(STATUS "Probed LLVM_DIR: ${LLVM_DIR}")
+            break()
+        endif()
+    endforeach()
 endif()
 find_package(LLVM REQUIRED CONFIG)
 
