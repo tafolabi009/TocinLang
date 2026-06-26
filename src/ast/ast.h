@@ -573,6 +573,7 @@ namespace ast
         void accept(Visitor &visitor) override;
         ExprPtr condition;
         StmtPtr body;
+        std::string label; // optional loop label for labeled break/continue
     };
 
     /**
@@ -589,6 +590,7 @@ namespace ast
         TypePtr variableType;
         ExprPtr iterable;
         StmtPtr body;
+        std::string label; // optional loop label for labeled break/continue
     };
 
     /**
@@ -987,6 +989,7 @@ namespace ast
     public:
         explicit BreakStmt(const lexer::Token &token) : Statement(token) {}
         void accept(Visitor &visitor) override { visitor.visitBreakStmt(this); }
+        std::string targetLabel; // "" = innermost loop; else a labeled loop
     };
 
     /**
@@ -997,6 +1000,7 @@ namespace ast
     public:
         explicit ContinueStmt(const lexer::Token &token) : Statement(token) {}
         void accept(Visitor &visitor) override { visitor.visitContinueStmt(this); }
+        std::string targetLabel; // "" = innermost loop; else a labeled loop
     };
 
     /**

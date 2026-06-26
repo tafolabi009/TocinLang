@@ -341,6 +341,27 @@ namespace parser
 
     ast::StmtPtr Parser::statement()
     {
+        // Loop label: `name: while ...` / `name: for ...`. Only a loop may carry
+        // a label, so require one to follow.
+        if (check(lexer::TokenType::IDENTIFIER) && checkNext(lexer::TokenType::COLON))
+        {
+            std::string label = peek().value;
+            advance(); // name
+            advance(); // ':'
+            if (match(lexer::TokenType::WHILE))
+            {
+                auto s = whileStmt();
+                if (auto w = std::dynamic_pointer_cast<ast::WhileStmt>(s)) w->label = label;
+                return s;
+            }
+            if (match(lexer::TokenType::FOR))
+            {
+                auto s = forStmt();
+                if (auto f = std::dynamic_pointer_cast<ast::ForStmt>(s)) f->label = label;
+                return s;
+            }
+            error(peek(), "A label must be followed by a 'while' or 'for' loop");
+        }
         if (match(lexer::TokenType::IF))
             return ifStmt();
         if (match(lexer::TokenType::WHILE))
@@ -368,14 +389,22 @@ namespace parser
         if (match(lexer::TokenType::BREAK))
         {
             lexer::Token kw = previous();
+            std::string label;
+            if (check(lexer::TokenType::IDENTIFIER)) label = advance().value; // break outer;
             match(lexer::TokenType::SEMI_COLON); // optional ';'
-            return std::make_shared<ast::BreakStmt>(kw);
+            auto s = std::make_shared<ast::BreakStmt>(kw);
+            s->targetLabel = label;
+            return s;
         }
         if (match(lexer::TokenType::CONTINUE))
         {
             lexer::Token kw = previous();
+            std::string label;
+            if (check(lexer::TokenType::IDENTIFIER)) label = advance().value; // continue outer;
             match(lexer::TokenType::SEMI_COLON); // optional ';'
-            return std::make_shared<ast::ContinueStmt>(kw);
+            auto s = std::make_shared<ast::ContinueStmt>(kw);
+            s->targetLabel = label;
+            return s;
         }
         // `defer <statement>` — runs the statement at function return.
         if (match(lexer::TokenType::DEFER))

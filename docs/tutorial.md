@@ -394,8 +394,10 @@ optional `default: { ... }`.
 
 Inside any loop you can use `break` to stop the loop early and `continue` to
 skip the rest of the current iteration and move on to the next one. Both work in
-`while`, `for ... in` over a range, and `for ... in` over an array, and they
-always affect the innermost enclosing loop.
+`while`, `for ... in` over a range, and `for ... in` over an array, and by
+default they affect the innermost enclosing loop. To act on an *outer* loop from
+inside a nested one, give the loop a label and name it: `outer: for ... { ...
+break outer; }` (and likewise `continue outer;`).
 
 ```tocin
 def main() {

@@ -1,0 +1,23 @@
+// expect: 123
+// Labeled break and continue target an outer loop by name.
+def main() -> int {
+    // break: find the first i,j with i*10+j == 23 and bail out of both loops.
+    let hit = 0;
+    search: for i in 0..5 {
+        for j in 0..5 {
+            if i * 10 + j == 23 { hit = 100; break search; }
+        }
+    }
+    // continue: for each i, count one inner step then skip to the next i.
+    let count = 0;
+    rows: for a in 0..3 {
+        for b in 0..3 {
+            if b == 1 { continue rows; }
+            count = count + 1;   // runs once per a -> 3 total
+        }
+    }
+    // plain (unlabeled) break still hits the innermost loop.
+    let inner = 0;
+    while inner < 9 { if inner == 2 { break; } inner = inner + 1; }
+    return hit + count * 10 - inner * 5 + 3; // 100 + 30 - 10 + 3 = 123
+}
