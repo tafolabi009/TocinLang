@@ -1,0 +1,53 @@
+// stack_vm.to — a bytecode stack machine, in Tocin.
+//
+// A capstone that ties together the language's modern features:
+//   * algebraic enums (`Op`) for a typed instruction set,
+//   * exhaustive `match` to decode/execute each instruction (a missing case is
+//     a compile error),
+//   * a `vector` as the operand stack and as the program itself,
+//   * automatic slot/pointer coercion so `Op` values live in a vector and flow
+//     back out to be matched.
+// This is the shape of a real VM / interpreter — Tocin's strongest domain.
+//
+// Run it:
+//   tocin examples/stack_vm.to --run
+// Exit code is the program's result: ((2 + 3) * 4) then dup+add = 40.
+
+enum Op {
+    Push(int),   // push a literal
+    Add,         // a b -> a+b
+    Sub,         // a b -> a-b
+    Mul,         // a b -> a*b
+    Dup          // a   -> a a
+}
+
+def run(prog: int) -> int {
+    let stack = vecNew();
+    for i in 0..vecLen(prog) {
+        let op = vecGet(prog, i);   // an Op handle, matched below as an ADT
+        match op {
+            case Push(n): { vecPush(stack, n); }
+            case Add:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a + b); }
+            case Sub:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a - b); }
+            case Mul:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a * b); }
+            case Dup:     { let a = vecPop(stack); vecPush(stack, a); vecPush(stack, a); }
+        }
+    }
+    return vecPop(stack);
+}
+
+def main() -> int {
+    // Program for ((2 + 3) * 4), then duplicate the top and add: 20 -> 40.
+    let prog = vecNew();
+    vecPush(prog, Push(2));
+    vecPush(prog, Push(3));
+    vecPush(prog, Add);
+    vecPush(prog, Push(4));
+    vecPush(prog, Mul);
+    vecPush(prog, Dup);
+    vecPush(prog, Add);
+
+    let result = run(prog);
+    println("result = {}", result);
+    return result; // 40
+}

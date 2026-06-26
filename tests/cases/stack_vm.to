@@ -1,0 +1,39 @@
+// expect: 40
+// A bytecode stack machine: instructions are an algebraic enum, the program is
+// a vector of them, and execution is an exhaustive match. Exercises ADTs +
+// pattern matching + vectors + slot/pointer coercion together — the building
+// blocks of a real VM.
+enum Op {
+    Push(int),
+    Add,
+    Sub,
+    Mul,
+    Dup
+}
+
+def run(prog: int) -> int {
+    let stack = vecNew();
+    for i in 0..vecLen(prog) {
+        let op = vecGet(prog, i);   // an Op handle (slot), matched as an ADT
+        match op {
+            case Push(n): { vecPush(stack, n); }
+            case Add:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a + b); }
+            case Sub:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a - b); }
+            case Mul:     { let b = vecPop(stack); let a = vecPop(stack); vecPush(stack, a * b); }
+            case Dup:     { let a = vecPop(stack); vecPush(stack, a); vecPush(stack, a); }
+        }
+    }
+    return vecPop(stack);
+}
+
+def main() -> int {
+    let prog = vecNew();
+    vecPush(prog, Push(2));
+    vecPush(prog, Push(3));
+    vecPush(prog, Add);   // 5
+    vecPush(prog, Push(4));
+    vecPush(prog, Mul);   // 20
+    vecPush(prog, Dup);   // 20 20
+    vecPush(prog, Add);   // 40
+    return run(prog);     // 40
+}
