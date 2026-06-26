@@ -1,0 +1,17 @@
+// expect: 42
+// Seeded pseudo-random numbers are deterministic and stay within range.
+def main() -> int {
+    randSeed(123);
+    let bad = 0;
+    for i in 0..500 {
+        let v = randRange(1, 7); // dice: 1..6
+        if v < 1 || v > 6 { bad = bad + 1; }
+    }
+    // Re-seeding reproduces the exact sequence.
+    randSeed(7);
+    let a = randInt();
+    randSeed(7);
+    let b = randInt();
+    if bad == 0 && a == b { return 42; }
+    return 1;
+}

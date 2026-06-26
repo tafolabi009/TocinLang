@@ -323,6 +323,39 @@ Two calling styles:
 | `appendFile(path, content)` | `(string, string) -> int` | bytes appended |
 | `readLine()` | `() -> string` | one line from stdin |
 
+**Time** (epoch + monotonic)
+| Builtin | Signature | Returns |
+|---|---|---|
+| `timeSec()` / `timeMs()` | `() -> int` | wall-clock seconds / milliseconds since the epoch |
+| `monoNanos()` | `() -> int` | monotonic nanoseconds (for measuring durations) |
+| `sleepMs(ms)` | `(int) -> int` | sleep the current goroutine; returns 0 |
+
+**Hashing & random** (FNV-1a / splitmix64 / xorshift64*)
+| Builtin | Signature | Returns |
+|---|---|---|
+| `hashStr(s)` | `(string) -> int` | 64-bit FNV-1a hash (stable across runs) |
+| `hashBytes(ptr, n)` | `(int, int) -> int` | FNV-1a over `n` bytes at a raw address |
+| `hashInt(x)` | `(int) -> int` | splitmix64 integer mix |
+| `randSeed(n)` | `(int) -> int` | seed the per-thread generator; returns 0 |
+| `randInt()` | `() -> int` | next non-negative pseudo-random int |
+| `randRange(lo, hi)` | `(int, int) -> int` | pseudo-random int in `[lo, hi)` |
+
+**TCP networking** (POSIX sockets; fds are ints). Pair with `go` for a concurrent server.
+| Builtin | Signature | Returns |
+|---|---|---|
+| `tcpListen(port)` | `(int) -> int` | listening socket fd, or -1 |
+| `tcpAccept(fd)` | `(int) -> int` | accepted client fd (blocks), or -1 |
+| `tcpConnect(host, port)` | `(string, int) -> int` | connected socket fd, or -1 |
+| `tcpSend(fd, s)` | `(int, string) -> int` | bytes sent, or -1 |
+| `tcpRecv(fd)` | `(int) -> string` | bytes read (empty on EOF/error) |
+| `tcpClose(fd)` | `(int) -> int` | closes the fd; returns 0 |
+
+**Environment / process**
+| Builtin | Signature | Returns |
+|---|---|---|
+| `envGet(name)` | `(string) -> string` | environment variable value, or "" |
+| `sysExit(code)` | `(int) -> int` | terminate the process with `code` |
+
 **Option / Result / channels**
 | Builtin | Signature | Returns |
 |---|---|---|

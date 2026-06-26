@@ -96,6 +96,29 @@ extern "C" {
     int64_t __tocin_write_file(const char *, const char *);
     int64_t __tocin_append_file(const char *, const char *);
     char *__tocin_read_line();
+    // Time
+    int64_t __tocin_time_sec();
+    int64_t __tocin_time_ms();
+    int64_t __tocin_mono_nanos();
+    void __tocin_sleep_ms(int64_t);
+    // Hashing
+    int64_t __tocin_hash_bytes(const void *, int64_t);
+    int64_t __tocin_hash_str(const char *);
+    int64_t __tocin_hash_int(int64_t);
+    // Random
+    void __tocin_rand_seed(int64_t);
+    int64_t __tocin_rand_next();
+    int64_t __tocin_rand_range(int64_t, int64_t);
+    // TCP networking
+    int64_t __tocin_tcp_listen(int64_t);
+    int64_t __tocin_tcp_accept(int64_t);
+    int64_t __tocin_tcp_connect(const char *, int64_t);
+    int64_t __tocin_tcp_send(int64_t, const char *);
+    char *__tocin_tcp_recv(int64_t);
+    void __tocin_tcp_close(int64_t);
+    // Environment / process
+    char *__tocin_env_get(const char *);
+    void __tocin_sys_exit(int64_t);
 }
 
 // Conditionally include Python
@@ -558,6 +581,24 @@ public:
             def("__tocin_write_file", reinterpret_cast<void *>(&__tocin_write_file));
             def("__tocin_append_file", reinterpret_cast<void *>(&__tocin_append_file));
             def("__tocin_read_line", reinterpret_cast<void *>(&__tocin_read_line));
+            def("__tocin_time_sec", reinterpret_cast<void *>(&__tocin_time_sec));
+            def("__tocin_time_ms", reinterpret_cast<void *>(&__tocin_time_ms));
+            def("__tocin_mono_nanos", reinterpret_cast<void *>(&__tocin_mono_nanos));
+            def("__tocin_sleep_ms", reinterpret_cast<void *>(&__tocin_sleep_ms));
+            def("__tocin_hash_bytes", reinterpret_cast<void *>(&__tocin_hash_bytes));
+            def("__tocin_hash_str", reinterpret_cast<void *>(&__tocin_hash_str));
+            def("__tocin_hash_int", reinterpret_cast<void *>(&__tocin_hash_int));
+            def("__tocin_rand_seed", reinterpret_cast<void *>(&__tocin_rand_seed));
+            def("__tocin_rand_next", reinterpret_cast<void *>(&__tocin_rand_next));
+            def("__tocin_rand_range", reinterpret_cast<void *>(&__tocin_rand_range));
+            def("__tocin_tcp_listen", reinterpret_cast<void *>(&__tocin_tcp_listen));
+            def("__tocin_tcp_accept", reinterpret_cast<void *>(&__tocin_tcp_accept));
+            def("__tocin_tcp_connect", reinterpret_cast<void *>(&__tocin_tcp_connect));
+            def("__tocin_tcp_send", reinterpret_cast<void *>(&__tocin_tcp_send));
+            def("__tocin_tcp_recv", reinterpret_cast<void *>(&__tocin_tcp_recv));
+            def("__tocin_tcp_close", reinterpret_cast<void *>(&__tocin_tcp_close));
+            def("__tocin_env_get", reinterpret_cast<void *>(&__tocin_env_get));
+            def("__tocin_sys_exit", reinterpret_cast<void *>(&__tocin_sys_exit));
             llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
         }
 

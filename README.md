@@ -61,6 +61,12 @@ clear what is implemented versus planned.
   building blocks for symbol tables and real data structures.
 - **Concurrency** — `go f(args)` goroutines (real OS threads), typed `channel<T>`
   send/receive, and `select` over multiple channels, in both JIT and native builds.
+- **Networking & system services** — TCP sockets (`tcpListen`/`tcpAccept`/
+  `tcpConnect`/`tcpSend`/`tcpRecv`/`tcpClose`) for clients and concurrent servers,
+  wall-clock + monotonic **time** (`timeSec`/`timeMs`/`monoNanos`/`sleepMs`),
+  **hashing** (FNV-1a `hashStr`/`hashBytes`, splitmix64 `hashInt`), seeded
+  **random** (`randSeed`/`randInt`/`randRange`), and `envGet`/`sysExit`. See
+  `examples/tcp_echo.to`.
 - **Modules** — `import a.b.c` / `import "path"` resolves and merges other `.to`
   files; a small standard library ships in `stdlib/std/` (math, list, LINQ-style
   collection ops).

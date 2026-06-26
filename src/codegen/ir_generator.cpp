@@ -1543,6 +1543,70 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             if (funcName == "readLine" && na == 0) {
                 lastValue = builder.CreateCall(rt("__tocin_read_line", ptrb, {}), {}, "rdl"); return; }
 
+            // ---- time ----
+            if (funcName == "timeSec" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_time_sec", i64b, {}), {}, "tsec"); return; }
+            if (funcName == "timeMs" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_time_ms", i64b, {}), {}, "tms"); return; }
+            if (funcName == "monoNanos" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_mono_nanos", i64b, {}), {}, "mono"); return; }
+            if (funcName == "sleepMs" && na == 1) {
+                auto m = slot(0); if (!m) return;
+                builder.CreateCall(rt("__tocin_sleep_ms", voidb, {i64b}), {m});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
+            // ---- hashing (FNV-1a / splitmix64) ----
+            if (funcName == "hashStr" && na == 1) {
+                auto s = pptr(0); if (!s) return;
+                lastValue = builder.CreateCall(rt("__tocin_hash_str", i64b, {ptrb}), {s}, "hstr"); return; }
+            if (funcName == "hashBytes" && na == 2) {
+                auto p = pptr(0); auto n = slot(1); if (!p || !n) return;
+                lastValue = builder.CreateCall(rt("__tocin_hash_bytes", i64b, {ptrb, i64b}), {p, n}, "hbytes"); return; }
+            if (funcName == "hashInt" && na == 1) {
+                auto x = slot(0); if (!x) return;
+                lastValue = builder.CreateCall(rt("__tocin_hash_int", i64b, {i64b}), {x}, "hint"); return; }
+
+            // ---- pseudo-random (xorshift64*) ----
+            if (funcName == "randSeed" && na == 1) {
+                auto s = slot(0); if (!s) return;
+                builder.CreateCall(rt("__tocin_rand_seed", voidb, {i64b}), {s});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+            if (funcName == "randInt" && na == 0) {
+                lastValue = builder.CreateCall(rt("__tocin_rand_next", i64b, {}), {}, "rnd"); return; }
+            if (funcName == "randRange" && na == 2) {
+                auto lo = slot(0); auto hi = slot(1); if (!lo || !hi) return;
+                lastValue = builder.CreateCall(rt("__tocin_rand_range", i64b, {i64b, i64b}), {lo, hi}, "rndr"); return; }
+
+            // ---- TCP networking ----
+            if (funcName == "tcpListen" && na == 1) {
+                auto p = slot(0); if (!p) return;
+                lastValue = builder.CreateCall(rt("__tocin_tcp_listen", i64b, {i64b}), {p}, "lst"); return; }
+            if (funcName == "tcpAccept" && na == 1) {
+                auto f = slot(0); if (!f) return;
+                lastValue = builder.CreateCall(rt("__tocin_tcp_accept", i64b, {i64b}), {f}, "acc"); return; }
+            if (funcName == "tcpConnect" && na == 2) {
+                auto h = pptr(0); auto p = slot(1); if (!h || !p) return;
+                lastValue = builder.CreateCall(rt("__tocin_tcp_connect", i64b, {ptrb, i64b}), {h, p}, "conn"); return; }
+            if (funcName == "tcpSend" && na == 2) {
+                auto f = slot(0); auto s = pptr(1); if (!f || !s) return;
+                lastValue = builder.CreateCall(rt("__tocin_tcp_send", i64b, {i64b, ptrb}), {f, s}, "snd"); return; }
+            if (funcName == "tcpRecv" && na == 1) {
+                auto f = slot(0); if (!f) return;
+                lastValue = builder.CreateCall(rt("__tocin_tcp_recv", ptrb, {i64b}), {f}, "rcv"); return; }
+            if (funcName == "tcpClose" && na == 1) {
+                auto f = slot(0); if (!f) return;
+                builder.CreateCall(rt("__tocin_tcp_close", voidb, {i64b}), {f});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
+            // ---- environment / process ----
+            if (funcName == "envGet" && na == 1) {
+                auto n = pptr(0); if (!n) return;
+                lastValue = builder.CreateCall(rt("__tocin_env_get", ptrb, {ptrb}), {n}, "env"); return; }
+            if (funcName == "sysExit" && na == 1) {
+                auto c = slot(0); if (!c) return;
+                builder.CreateCall(rt("__tocin_sys_exit", voidb, {i64b}), {c});
+                lastValue = llvm::ConstantInt::get(i64b, 0); return; }
+
             // ---- low-level / systems: raw memory ----
             llvm::Type *i8b = llvm::Type::getInt8Ty(context);
             llvm::Type *i32b = llvm::Type::getInt32Ty(context);
@@ -3459,7 +3523,7 @@ bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
             // Builtins whose return value is a freshly-allocated string.
             static const std::set<std::string> strFns = {
                 "substring", "intToStr", "charToStr", "readFile", "readLine",
-                "toUpper", "toLower", "floatToStr"};
+                "toUpper", "toLower", "floatToStr", "tcpRecv", "envGet"};
             return strFns.count(callee->name) > 0;
         }
     }
