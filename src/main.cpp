@@ -42,7 +42,11 @@
 
 // Platform APIs for locating this executable (used to find the bundled linker).
 #if defined(_WIN32)
-#include <windows.h>
+// Forward-declare the single Win32 API we need rather than including <windows.h>,
+// whose macros (IN, OUT, VOID, CONST, TRUE, FALSE, ERROR, ...) would clobber the
+// enum members of the Tocin headers included below and break the whole build.
+extern "C" __declspec(dllimport) unsigned long __stdcall
+GetModuleFileNameA(void *hModule, char *lpFilename, unsigned long nSize);
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #else
@@ -213,8 +217,8 @@ extern "C" {
 static std::string tocinExecutableDir()
 {
 #if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, buf, static_cast<DWORD>(sizeof(buf)));
+    char buf[4096];
+    unsigned long n = GetModuleFileNameA(nullptr, buf, static_cast<unsigned long>(sizeof(buf)));
     if (n == 0 || n >= sizeof(buf)) return {};
     std::string p(buf, n);
 #elif defined(__APPLE__)
