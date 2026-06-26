@@ -1,0 +1,8 @@
+// Out-of-bounds array indexing must be caught. With bounds checking on by
+// default, this compiles but panics at run time via __tocin_oob — so the
+// compiled IR references that symbol. (Systems code can opt out with
+// --freestanding.)
+def main() -> int {
+    let a = [10, 20, 30];
+    return a[5]; // out of bounds
+}

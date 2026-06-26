@@ -127,7 +127,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 |---|---|
 | `def` | Define a function or method. |
 | `let` | Declare a mutable local/field; type inferred from initializer or annotated. |
-| `const` | Like `let` (compiles to the same thing; no enforced immutability). |
+| `const` | Immutable binding: like `let`, but reassigning it is a compile error (T013). |
 | `if` / `elif` / `else` | Conditional. Condition needs no parentheses; body needs braces. |
 | `while` | While loop. |
 | `for ... in` | Iterate a range `a..b` or index an array (`for i in 0..len(a)`). |

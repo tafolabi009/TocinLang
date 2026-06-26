@@ -3575,6 +3575,30 @@ void IRGenerator::visitIndexExpr(ast::IndexExpr *expr)
     if (!index->getType()->isIntegerTy(64))
         index = builder.CreateIntCast(index, i64, true, "idx");
 
+    // Bounds check (default on; skipped in --freestanding systems code, which
+    // has no runtime). Arrays are laid out [i64 length][elems...], so the length
+    // is the first 8 bytes. An out-of-range index panics via __tocin_oob.
+    if (!freestanding)
+    {
+        llvm::Function *fn = builder.GetInsertBlock()->getParent();
+        llvm::Value *len = builder.CreateLoad(i64, base, "arr.len");
+        llvm::Value *tooLow = builder.CreateICmpSLT(index, llvm::ConstantInt::get(i64, 0), "oob.lo");
+        llvm::Value *tooHigh = builder.CreateICmpSGE(index, len, "oob.hi");
+        llvm::Value *oob = builder.CreateOr(tooLow, tooHigh, "oob");
+        llvm::BasicBlock *failB = llvm::BasicBlock::Create(context, "oob.fail", fn);
+        llvm::BasicBlock *okB = llvm::BasicBlock::Create(context, "oob.ok", fn);
+        builder.CreateCondBr(oob, failB, okB);
+        builder.SetInsertPoint(failB);
+        llvm::Function *oobFn = module->getFunction("__tocin_oob");
+        if (!oobFn)
+            oobFn = llvm::Function::Create(
+                llvm::FunctionType::get(llvm::Type::getVoidTy(context), {i64, i64}, false),
+                llvm::Function::ExternalLinkage, "__tocin_oob", *module);
+        builder.CreateCall(oobFn, {index, len});
+        builder.CreateUnreachable();
+        builder.SetInsertPoint(okB);
+    }
+
     llvm::Type *elemTy = getArrayElemType(expr->object);
     llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
     // Offset = 8 (length header) + index * sizeof(elem).

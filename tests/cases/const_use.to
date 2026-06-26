@@ -1,0 +1,9 @@
+// expect: 11
+// `const` declares an immutable binding; reading it is fine. (Reassigning a
+// const is a compile error — see tests/safety/.)
+def main() -> int {
+    const base = 10;
+    const step = 1;
+    let total = base + step; // 11
+    return total;
+}
