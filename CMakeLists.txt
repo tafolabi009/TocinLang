@@ -392,6 +392,17 @@ list(APPEND SOURCES ${FEATURE_SOURCES})
 # the compiler internals are compiled exactly once and fully testable.
 add_library(tocin_core STATIC ${SOURCES})
 
+# GCC's -O3 optimizer raises a spurious -Wfree-nonheap-object from inside the
+# std::variant special members instantiated in ffi_value.cpp (a known false
+# positive). The translation unit also disables it via an in-source pragma; this
+# is a guaranteed backstop, since the warning is emitted in the middle-end where
+# pragma-region attribution can be unreliable across GCC versions.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi/ffi_value.cpp
+        PROPERTIES COMPILE_OPTIONS "-Wno-free-nonheap-object")
+endif()
+
 target_include_directories(tocin_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${LLVM_INCLUDE_DIRS}
