@@ -620,6 +620,31 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     if (!vcls.empty())
         varClasses[stmt->name] = vcls;
 
+    // RAII: register a destructor call for a local initialized *directly* by a
+    // constructor of a class that defines __del__. Aliases, parameters, and
+    // method/function results are never owned (no double-destroy).
+    {
+        bool directCtor = false;
+        if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+        {
+            if (genericCtorClass.count(call.get()))
+                directCtor = true;
+            else if (auto cv = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+                directCtor = classTypes.count(cv->name) > 0;
+        }
+        if (directCtor && !vcls.empty() && module->getFunction(vcls + "___del__"))
+        {
+            llvm::Type *i1ty = llvm::Type::getInt1Ty(context);
+            llvm::AllocaInst *flag = createEntryBlockAlloca(currentFunction, "dtor.reached", i1ty);
+            {
+                llvm::IRBuilder<> initB(flag->getParent(), std::next(flag->getIterator()));
+                initB.CreateStore(llvm::ConstantInt::getFalse(context), flag);
+            }
+            builder.CreateStore(llvm::ConstantInt::getTrue(context), flag);
+            destructorStack.push_back({alloca, vcls, flag});
+        }
+    }
+
     // Track array element type so indexing into this variable loads/stores the
     // right element type.
     if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
@@ -866,6 +891,8 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     auto savedVarIsString = varIsString;
     auto savedDeferStack = deferStack;  // defer is function-scoped
     deferStack.clear();
+    auto savedDestructorStack = destructorStack;  // RAII is function-scoped
+    destructorStack.clear();
 
     // Create entry basic block
     llvm::BasicBlock *entryBlock = llvm::BasicBlock::Create(context, "entry", function);
@@ -903,10 +930,13 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         stmt->body->accept(*this);
     }
 
-    // Normal fall-through exit: run function-scoped deferred cleanups before
-    // the implicit return.
+    // Normal fall-through exit: run function-scoped deferred cleanups and
+    // destructors before the implicit return.
     if (!builder.GetInsertBlock()->getTerminator())
+    {
         runDeferred();
+        runDestructors();
+    }
 
     // If the function doesn't have an explicit return and returns void, add one
     if (returnType->isVoidTy() && !builder.GetInsertBlock()->getTerminator())
@@ -953,6 +983,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     varFuncSig = savedVarFuncSig;
     varIsString = savedVarIsString;
     deferStack = savedDeferStack;
+    destructorStack = savedDestructorStack;
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
 }
@@ -979,6 +1010,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
                 // Function returns void; discard the value.
                 runPendingFinally();
                 runDeferred();
+                runDestructors();
                 builder.CreateRetVoid();
                 return;
             }
@@ -1015,7 +1047,17 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
         // Save the value first: that emission may overwrite lastValue.
         llvm::Value *retVal = lastValue;
         runPendingFinally();
+        // Ownership escapes via `return x;` — don't destroy the returned local.
+        if (auto rv = std::dynamic_pointer_cast<ast::VariableExpr>(stmt->value))
+        {
+            auto sit = namedValues.find(rv->name);
+            if (sit != namedValues.end())
+                for (auto &oi : destructorStack)
+                    if (oi.slot == sit->second)
+                        builder.CreateStore(llvm::ConstantInt::getFalse(context), oi.reached);
+        }
         runDeferred();
+        runDestructors();
         builder.CreateRet(retVal);
     }
     else
@@ -1030,6 +1072,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
         }
         runPendingFinally();
         runDeferred();
+        runDestructors();
 
         builder.CreateRetVoid();
     }
@@ -1583,6 +1626,14 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         //   * sequential style: print(a, b, c)  (each argument printed in turn)
         if (funcName == "print" || funcName == "println")
         {
+            if (freestanding)
+            {
+                errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                    "print/println are unavailable in --freestanding (no libc printf); "
+                    "write to your own console via asm/storeByte",
+                    "", 0, 0, error::ErrorSeverity::ERROR);
+                lastValue = nullptr; return;
+            }
             llvm::Function *printfFunc = stdLibFunctions["printf"];
             llvm::Type *i64 = llvm::Type::getInt64Ty(context);
             llvm::Type *dbl = llvm::Type::getDoubleTy(context);
@@ -2888,8 +2939,22 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
             return gc->second;
         // Constructor call: ClassName(...)
         if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
             if (classTypes.count(callee->name))
                 return callee->name;
+            // Plain function whose return type is a class.
+            auto rc = funcReturnClass.find(callee->name);
+            if (rc != funcReturnClass.end())
+                return rc->second;
+        }
+        // Method call `obj.method(...)` whose return type is a class.
+        if (auto mc = std::dynamic_pointer_cast<ast::GetExpr>(call->callee))
+        {
+            std::string oc = getExprClassName(mc->object);
+            auto rc = funcReturnClass.find(oc + "_" + mc->name);
+            if (rc != funcReturnClass.end())
+                return rc->second;
+        }
     }
     if (auto get = std::dynamic_pointer_cast<ast::GetExpr>(expr))
     {
@@ -2910,6 +2975,23 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
         {
             std::string c = getExprClassName(bin->left);
             return !c.empty() ? c : getExprClassName(bin->right);
+        }
+        // Overloaded operator whose dunder method returns a class.
+        const char *dunder = nullptr;
+        switch (bin->op.type) {
+        case lexer::TokenType::PLUS:    dunder = "__add__"; break;
+        case lexer::TokenType::MINUS:   dunder = "__sub__"; break;
+        case lexer::TokenType::STAR:    dunder = "__mul__"; break;
+        case lexer::TokenType::SLASH:   dunder = "__div__"; break;
+        case lexer::TokenType::PERCENT: dunder = "__mod__"; break;
+        default: break;
+        }
+        if (dunder)
+        {
+            std::string c = getExprClassName(bin->left);
+            auto rc = funcReturnClass.find(c + "_" + dunder);
+            if (rc != funcReturnClass.end())
+                return rc->second;
         }
     }
     if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
@@ -3157,6 +3239,39 @@ void IRGenerator::runDeferred()
     }
     lastValue = savedLast;
     deferStack = pending; // restore for the other exit paths
+}
+
+void IRGenerator::runDestructors()
+{
+    if (destructorStack.empty())
+        return;
+    auto pending = destructorStack;
+    destructorStack.clear();
+    llvm::Type *i1ty = llvm::Type::getInt1Ty(context);
+    llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    llvm::Value *savedLast = lastValue;
+    // LIFO: most recently constructed is destroyed first.
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it)
+    {
+        if (builder.GetInsertBlock()->getTerminator())
+            break;
+        llvm::Function *dtor = module->getFunction(it->className + "___del__");
+        if (!dtor)
+            continue;
+        llvm::Value *r = builder.CreateLoad(i1ty, it->reached, "dtor.r");
+        llvm::BasicBlock *run = llvm::BasicBlock::Create(context, "dtor.run", fn);
+        llvm::BasicBlock *cont = llvm::BasicBlock::Create(context, "dtor.cont", fn);
+        builder.CreateCondBr(r, run, cont);
+        builder.SetInsertPoint(run);
+        llvm::Value *obj = builder.CreateLoad(ptrTy, it->slot, "dtor.self");
+        builder.CreateCall(dtor->getFunctionType(), dtor, {obj});
+        if (!builder.GetInsertBlock()->getTerminator())
+            builder.CreateBr(cont);
+        builder.SetInsertPoint(cont);
+    }
+    lastValue = savedLast;
+    destructorStack = pending;
 }
 
 bool IRGenerator::isStringExpr(const ast::ExprPtr &expr)
@@ -3622,6 +3737,8 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     std::string savedClassName = currentClassName;
     std::map<std::string, llvm::AllocaInst *> savedNamedValues(namedValues);
     std::map<std::string, std::string> savedVarClasses(varClasses);
+    auto savedDeferStack = deferStack;
+    auto savedDestructorStack = destructorStack;
 
     builder.SetInsertPoint(block);
     currentFunction = function;
@@ -3629,6 +3746,8 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     namedValues.clear();
     varFuncSig.clear();
     varIsString.clear();
+    deferStack.clear();
+    destructorStack.clear();
 
     // Bind parameters (including `self`) into the method scope.
     ai = 0;
@@ -3649,6 +3768,13 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
     // Codegen method body
     method->body->accept(*this);
+
+    // Normal fall-through: run this method's deferred cleanups and destructors.
+    if (!builder.GetInsertBlock()->getTerminator())
+    {
+        runDeferred();
+        runDestructors();
+    }
 
     // Add implicit return if needed
     if (!builder.GetInsertBlock()->getTerminator())
@@ -3697,6 +3823,8 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     varClasses = savedVarClasses;
     currentFunction = savedFunction;
     currentClassName = savedClassName;
+    deferStack = savedDeferStack;
+    destructorStack = savedDestructorStack;
 
     if (savedBlock)
         builder.SetInsertPoint(savedBlock);
@@ -4322,6 +4450,10 @@ llvm::Function *IRGenerator::declareMethodProto(const std::string &className,
     llvm::Function *fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
                                                methodName, module.get());
     classMethods[className + "." + method->name] = fn;
+    // Remember when a method's return type is itself a class, so the result of
+    // a method/operator call can be used for further field/method access.
+    if (method->returnType && classTypes.count(method->returnType->toString()))
+        funcReturnClass[methodName] = method->returnType->toString();
     return fn;
 }
 
@@ -4363,6 +4495,11 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
             // signature of a closure produced by calling this function.
             if (auto rft = std::dynamic_pointer_cast<ast::FunctionType>(fn->returnType))
                 funcReturnFnType[fn->name] = rft;
+            // Record a class-typed return so `let x = f()` tracks x's class for
+            // field/method access. Keyed by the bare function name; getExprClassName
+            // checks funcReturnClass[name] for a direct call.
+            if (fn->returnType && classTypes.count(fn->returnType->toString()))
+                funcReturnClass[fn->name] = fn->returnType->toString();
         }
         else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
         {
@@ -4845,6 +4982,56 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         phi->addIncoming(rhs, rhsEnd);
         lastValue = phi;
         return;
+    }
+
+    // Operator overloading: if the left operand is a class instance whose class
+    // defines the corresponding dunder method (`__add__`, `__eq__`, ...), call
+    // it as `Class___op__(left, right)`. Needs no parser support — the dunder is
+    // an ordinary method.
+    {
+        const char *dunder = nullptr;
+        switch (expr->op.type) {
+        case lexer::TokenType::PLUS:          dunder = "__add__"; break;
+        case lexer::TokenType::MINUS:         dunder = "__sub__"; break;
+        case lexer::TokenType::STAR:          dunder = "__mul__"; break;
+        case lexer::TokenType::SLASH:         dunder = "__div__"; break;
+        case lexer::TokenType::PERCENT:       dunder = "__mod__"; break;
+        case lexer::TokenType::EQUAL_EQUAL:   dunder = "__eq__";  break;
+        case lexer::TokenType::BANG_EQUAL:    dunder = "__ne__";  break;
+        case lexer::TokenType::LESS:          dunder = "__lt__";  break;
+        case lexer::TokenType::LESS_EQUAL:    dunder = "__le__";  break;
+        case lexer::TokenType::GREATER:       dunder = "__gt__";  break;
+        case lexer::TokenType::GREATER_EQUAL: dunder = "__ge__";  break;
+        default: break;
+        }
+        if (dunder)
+        {
+            std::string cls = getExprClassName(expr->left);
+            if (!cls.empty())
+            {
+                if (llvm::Function *op = module->getFunction(cls + "_" + dunder))
+                {
+                    expr->left->accept(*this);
+                    llvm::Value *l = lastValue;
+                    if (!l) { lastValue = nullptr; return; }
+                    expr->right->accept(*this);
+                    llvm::Value *r = lastValue;
+                    if (!r) { lastValue = nullptr; return; }
+                    // Coerce the argument to the method's declared parameter type.
+                    llvm::FunctionType *ft = op->getFunctionType();
+                    if (ft->getNumParams() >= 2 && r->getType() != ft->getParamType(1))
+                    {
+                        llvm::Type *pt = ft->getParamType(1);
+                        if (r->getType()->isIntegerTy() && pt->isIntegerTy())
+                            r = builder.CreateIntCast(r, pt, true, "opcast");
+                        else if (r->getType()->isPointerTy() && pt->isPointerTy())
+                            r = builder.CreateBitCast(r, pt, "opcast");
+                    }
+                    lastValue = builder.CreateCall(ft, op, {l, r}, "op");
+                    return;
+                }
+            }
+        }
     }
 
     // Evaluate left operand

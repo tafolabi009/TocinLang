@@ -197,12 +197,15 @@ public:
         std::string target;
         bool enablePackageManager;
         bool run; // JIT-execute the program in-process (--jit / --run)
+        bool freestanding; // no libc / no GC / no runtime — kernel/bare-metal
+        bool noGC;         // don't link the garbage collector (alloc -> malloc)
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
               enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
               enableMacros(true), enableAsync(true), enableDebugger(false),
-              enableWASM(false), target("native"), enablePackageManager(true), run(false) {}
+              enableWASM(false), target("native"), enablePackageManager(true), run(false),
+              freestanding(false), noGC(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -349,6 +352,7 @@ public:
         auto module = std::make_unique<llvm::Module>(filename, *context);
 
         codegen::IRGenerator generator(*context, std::move(module), errorHandler);
+        generator.freestanding = options.freestanding;
 
         // Generate LLVM IR from the AST
         auto generatedModule = generator.generate(program);
@@ -386,6 +390,14 @@ public:
         // JIT execution takes precedence: run the program in-process.
         if (options.run)
         {
+            if (options.freestanding)
+            {
+                errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
+                    "--run/--jit is not supported with --freestanding (no host runtime); "
+                    "emit an object with -o and link it into your kernel",
+                    filename, 0, 0);
+                return false;
+            }
             return runJIT(std::move(context), std::move(generatedModule), filename);
         }
 
@@ -420,6 +432,17 @@ public:
             {
                 if (!emitObjectFile(*generatedModule, outputPath, /*asAssembly=*/false))
                     return false;
+            }
+            else if (options.freestanding)
+            {
+                // Freestanding/kernel: emit a relocatable object only. The kernel
+                // author links it (with their own _start, allocator, and linker
+                // script); we do NOT pull in libc/GC/runtime.
+                std::string objPath = endsWith(outputPath, ".obj") ? outputPath : outputPath + ".o";
+                if (!emitObjectFile(*generatedModule, objPath, false))
+                    return false;
+                std::cout << "Freestanding object written: " << objPath
+                          << " (link it into your kernel; provides symbol 'main')\n";
             }
             else
             {
@@ -1058,6 +1081,19 @@ int main(int argc, char *argv[])
         else if (arg == "--no-ffi")
         {
             options.enableFFI = false;
+        }
+        else if (arg == "--no-gc")
+        {
+            options.noGC = true;
+        }
+        else if (arg == "--freestanding")
+        {
+            // Kernel / bare-metal: no libc, no GC, no runtime, no host concurrency.
+            options.freestanding = true;
+            options.noGC = true;
+            options.enableFFI = false;
+            options.enableConcurrency = false;
+            options.enableAsync = false;
         }
         else if (arg == "--no-concurrency")
         {
