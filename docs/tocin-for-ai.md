@@ -137,7 +137,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 | `match` / `case` / `default` | Pattern match: int/float equality, `Some/Ok/Err/None`, and algebraic-enum variant patterns `Circle(r)`/`Rect(w, h)`/`Empty` with field binding. Matches on an algebraic enum must be exhaustive (cover every variant or add `default:`). |
 | `class` / `struct` | Define a record type with fields + methods. `struct` and `class` are identical. |
 | `enum` | Integer enum, or an algebraic data type (tagged union) when any variant carries payload fields. |
-| `trait` | Declare an interface (method signatures, optional default bodies). |
+| `trait` | Declare an interface (method signatures, optional default bodies). A value typed as a trait is a **trait object** (open dynamic dispatch). |
 | `impl` | `impl Type { ... }` inherent methods, or `impl Trait for Type { ... }`. |
 | `import` | Pull in another `.to` file/module (concatenates its top-level decls). |
 | `extern` | `extern def name(...)->T;` declares a C function (resolved from the process/libm). |
@@ -443,6 +443,28 @@ def main() -> int {
 }
 ```
 The concrete type is inferred from the constructor argument. `Box<int>` and `Box<float>` get distinct struct layouts and methods.
+
+### Trait objects (dynamic dispatch) + bounds
+```tocin
+trait Shape { def area(self) -> int; }
+class Circle { r: int; }
+impl Shape for Circle { def area(self) -> int { return self.r * self.r * 3; } }
+class Rect { w: int; h: int; }
+impl Shape for Rect { def area(self) -> int { return self.w * self.h; } }
+
+def total(xs: list<Shape>) -> int {     // heterogeneous list of trait objects
+    let s = 0;
+    for x in xs { s = s + x.area(); }   // virtual call per element
+    return s;
+}
+def biggest<T: Shape>(a: T) -> int { return a.area(); }  // bounded generic
+
+def main() -> int {
+    let shapes: list<Shape> = [Circle(5), Rect(2, 3)];   // boxed as trait objects
+    return total(shapes) + biggest(Circle(1));            // 81 + 3 = exit 84? (75+6+3)
+}
+```
+A value whose static type is a trait (a parameter, a `let`, or a `list<Trait>` element) is a **trait object**: `{i64 typeId, ptr data}` boxed at the boundary, dispatched at run time to the concrete `Type_method`. `def f<T: Bound>` requires the type argument to implement `Bound` (else a `T016` compile error), and `x.method()` on a bounded `T` resolves to the concrete type.
 
 ### An enum
 ```tocin

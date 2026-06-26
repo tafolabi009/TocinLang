@@ -69,6 +69,14 @@ publish one, see [installer/README.md](installer/README.md).
   mutation, and method calls.
 - **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with
   per-type method dispatch.
+- **Trait objects (dynamic dispatch)** — a value typed as a trait (a parameter,
+  a `let`, or an element of `list<Trait>`) carries its concrete type and
+  dispatches method calls virtually, so one collection can hold many concrete
+  types: `let xs: list<Shape> = [Circle(5), Rect(2,3)]; for s in xs { s.area() }`.
+  See `examples/trait_objects.to`.
+- **Generic trait bounds** — `def f<T: Bound>(...)` is checked: a type argument
+  that doesn't implement `Bound` is a compile error, and trait methods on the
+  bounded parameter dispatch to the concrete type.
 - **Generics** — `def f<T>(...)` functions and `class C<T>` classes, both
   monomorphized per concrete type (type arguments inferred at the call/constructor
   site).

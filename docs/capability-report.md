@@ -4,9 +4,9 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 136/136 `.to` programs passing, plus
+Last updated: this build. Test suite: 139/139 `.to` programs passing, plus
 opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
-const + bounds (2/2) — harnesses.
+const + bounds + trait-bound (3/3) — harnesses.
 
 ---
 
@@ -81,6 +81,14 @@ systems — each backed by a passing `.to` test and, where noted, an example:
   `sleepMs`), hashing (FNV-1a/splitmix64), seeded random, `envGet`/`sysExit`.
   (`examples/tcp_echo.to`) Plus a JSON parser written in Tocin
   (`examples/json_parser.to`).
+- **Trait objects / open dynamic dispatch** — a value typed as a trait carries
+  its concrete type at run time and dispatches method calls virtually, through
+  trait-typed parameters, `let` bindings, and **heterogeneous collections**
+  (`let xs: list<Shape> = [Circle(..), Rect(..)]`). Representation is a
+  `{ i64 typeId, ptr data }` box. (`examples/trait_objects.to`)
+- **Generic trait bounds** — `def f<T: Bound>` rejects a type argument that does
+  not implement `Bound` (fatal `T016`), and trait-method calls on the bounded
+  parameter resolve to the concrete type.
 
 ## Not yet built (honest)
 
@@ -88,20 +96,16 @@ These are the remaining items a Rust/C++-class language would want; none are
 blocked by a fundamental design flaw, but they are real work and are *not*
 implemented today:
 
-- **Trait objects / open dynamic dispatch.** Methods dispatch statically by the
-  receiver's concrete type, and the iterator protocol gives one dynamic shape,
-  but a `vector<Shape>` of heterogeneous trait objects (vtables / fat pointers)
-  is not implemented. Closed-world polymorphism is available via ADTs + `match`.
-- **Generic/trait bound enforcement.** `def f<T: Bound>` parses the bound but
-  does not yet verify the type argument satisfies it.
 - **By-reference closure capture** (capture is by value), `&`/`&mut` reference
   borrows and lifetimes (the borrow checker is move-only), and generators
   (`yield`).
+- **Async runtime / M:N scheduler.** `async`/`await` parse and goroutines run on
+  1:1 OS threads; a cooperative scheduler that suspends/resumes `await` on a
+  worker pool is not yet built.
 - **Higher-level networking** (HTTP, TLS) and async/epoll I/O; build on the raw
   socket primitives or C FFI.
 - **Tooling**: a formatter and an LSP are not provided; a hosted package
-  registry and an M:N green-thread scheduler (goroutines are 1:1 OS threads)
-  remain future work.
+  registry remains future work.
 
 ## Honest gaps (and how they bite)
 
