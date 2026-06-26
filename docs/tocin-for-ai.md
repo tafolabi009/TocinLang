@@ -158,7 +158,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 
 `panic`, `recover`, `assert`, `yield`, `generator`, `coroutine`, `spawn`, `join`, `mutex`/`lock`/`unlock`, `atomic`, `volatile`, `move`/`borrow`, `constexpr`, `inline`, `export`, `module`, `namespace`, `package`, `using`, `with`, `super`, `as`, `is`, `instanceof`, `typeof`, `where`, `pub`/`priv`/`static`/`final`/`abstract`/`virtual`/`override`, `null`, `undefined`, `from`. Several of these are reserved words, so they also can't be used as identifiers. (`break`, `continue`, `switch`, and `defer` **are** implemented.)
 
-> **`break`/`continue` are the most common trap.** They parse as expression statements and produce `error [S001]: Expected expression`. Restructure loops with a boolean flag or a `while` condition instead. **Use `None`, never `null`.**
+> **`break`/`continue` are fully implemented** in every loop (`for i in a..b`, `for v in arr`, `while`): unlabeled they affect the innermost loop, and a loop may carry a label (`outer: for ...`) so `break outer;` / `continue outer;` target it. **Use `None`, never `null`** (`null` is reserved and rejected as a value).
 
 ### Operators
 
@@ -625,7 +625,7 @@ def main() -> int {
 }
 ```
 - Lambda syntax: `lambda (params) -> ReturnType <single-expression>`. The body is **one expression**, not a block. The `-> ReturnType` is recommended (defaults to a null/None type if omitted).
-- **Lambdas do not capture** enclosing locals. A lambda referencing an outer variable produces invalid IR. Pass everything it needs as parameters.
+- **Lambdas capture enclosing locals by value** — a snapshot taken when the lambda is created. The captured copy is independent (mutating the outer variable afterward does not change it), and the closure may be **returned and escape** its defining scope carrying its own state. Capture is by value only; there is no capture by reference.
 
 ### Higher-order function over a collection
 ```tocin
@@ -738,7 +738,7 @@ def main() -> int {
     return mapGetStr(counts, "the");                 // exit 3
 }
 ```
-Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags.
+This loop uses boolean flags for illustration, but `break`/`continue` (including labeled `break outer;`) are implemented and would work here too.
 
 ---
 
