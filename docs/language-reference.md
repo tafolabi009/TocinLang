@@ -146,7 +146,7 @@ identifier by a token-level preprocessing pass (see [§15](#15-macros)).
 
 | Form | Meaning |
 |---|---|
-| `[a, b, c]` | **Array/list literal.** A heap block laid out as `[i64 length][elem 0][elem 1]…`. Indexed with `a[i]`; length via `len(a)`. |
+| `[a, b, c]` | **Array/list literal.** A heap block laid out as `[i64 length][elem 0][elem 1]…`. Indexed with `a[i]` (bounds-checked); length via `len(a)`. Slice with `a[lo..hi]` → a fresh array of the half-open range `[lo, hi)`, clamped to bounds. |
 | `list<T>`, `array<T>` (and `List`/`Array`) | Array type annotations. Represented as an opaque pointer to the array block. |
 | `{ k: v, ... }` | **Dictionary literal.** Constructs a dict value (see limitations on dict ergonomics). |
 | `channel<T>` | A concurrency channel handle (opaque pointer). Constructed with `channel<T>()`. See [§14](#14-concurrency). |

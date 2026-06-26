@@ -1,0 +1,12 @@
+// expect: 93
+// Array slicing a[lo..hi] yields a fresh array of the half-open range [lo, hi),
+// clamped to the source bounds. len() and indexing work on the result.
+def main() -> int {
+    let a = [10, 20, 30, 40, 50];
+    let s = a[1..4];               // [20, 30, 40]
+    let sum = 0;
+    for i in 0..len(s) { sum = sum + s[i]; }
+    // out-of-range bounds are clamped, not an error:
+    let tail = a[3..100];          // [40, 50]
+    return sum + len(s) + len(tail) - 2; // 90 + 3 + 2 - 2 = 93
+}

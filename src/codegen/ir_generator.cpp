@@ -659,6 +659,14 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
         if (it != varArrayElem.end())
             varArrayElem[stmt->name] = it->second;
     }
+    else if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+    {
+        // `let s = a[lo..hi]` (lowered to __slice): the slice has the same
+        // element type as the source array.
+        if (auto cv = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+            if (cv->name == "__slice" && !call->arguments.empty())
+                varArrayElem[stmt->name] = getArrayElemType(call->arguments[0]);
+    }
 
     // Track a function-pointer-typed local so calls through it recover the
     // signature: from an explicit annotation, or copied from the initializer
@@ -1176,6 +1184,51 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Value *p = builder.CreateGEP(i64, tup,
                 llvm::ConstantInt::get(i64, idx), "tup.gep");
             lastValue = builder.CreateLoad(i64, p, "tup.elem");
+            return;
+        }
+        if (bname->name == "__slice" && expr->arguments.size() == 3)
+        {
+            // a[lo..hi] -> a fresh [i64 len][elems] array holding the half-open
+            // range [lo, hi), clamped to the source bounds.
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Type *i8 = llvm::Type::getInt8Ty(context);
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            expr->arguments[0]->accept(*this);
+            llvm::Value *src = lastValue; if (!src) return;
+            if (!src->getType()->isPointerTy()) src = builder.CreateIntToPtr(src, ptrTy, "sl.src");
+            llvm::Type *elemTy = getArrayElemType(expr->arguments[0]);
+            auto idxv = [&](int i) -> llvm::Value * {
+                expr->arguments[i]->accept(*this);
+                llvm::Value *v = lastValue;
+                if (v && !v->getType()->isIntegerTy(64))
+                    v = builder.CreateIntCast(v, i64, true, "sl.i");
+                return v;
+            };
+            llvm::Value *lo = idxv(1); llvm::Value *hi = idxv(2);
+            if (!lo || !hi) return;
+            llvm::Value *zero = llvm::ConstantInt::get(i64, 0);
+            llvm::Value *srcLen = builder.CreateLoad(i64, src, "sl.srclen");
+            // Clamp: 0 <= lo <= srcLen ; lo <= hi <= srcLen.
+            lo = builder.CreateSelect(builder.CreateICmpSLT(lo, zero), zero, lo);
+            lo = builder.CreateSelect(builder.CreateICmpSGT(lo, srcLen), srcLen, lo);
+            hi = builder.CreateSelect(builder.CreateICmpSLT(hi, lo), lo, hi);
+            hi = builder.CreateSelect(builder.CreateICmpSGT(hi, srcLen), srcLen, hi);
+            llvm::Value *n = builder.CreateSub(hi, lo, "sl.n");
+            llvm::Value *elemSize = llvm::ConstantExpr::getSizeOf(elemTy);
+            llvm::Function *mallocFunc = getStdLibFunction("malloc");
+            llvm::Value *total = builder.CreateAdd(
+                llvm::ConstantInt::get(i64, 8), builder.CreateMul(n, elemSize), "sl.size");
+            llvm::Value *dst = builder.CreateCall(mallocFunc->getFunctionType(), mallocFunc, {total}, "slice");
+            builder.CreateStore(n, dst);
+            // memcpy n*elemSize bytes from src[8 + lo*es] to dst[8].
+            llvm::Value *srcOff = builder.CreateAdd(
+                llvm::ConstantInt::get(i64, 8), builder.CreateMul(lo, elemSize), "sl.soff");
+            llvm::Value *srcData = builder.CreateGEP(i8, src, srcOff, "sl.sdata");
+            llvm::Value *dstData = builder.CreateGEP(i8, dst, llvm::ConstantInt::get(i64, 8), "sl.ddata");
+            llvm::Value *bytes = builder.CreateMul(n, elemSize, "sl.bytes");
+            builder.CreateMemCpy(dstData, llvm::MaybeAlign(1), srcData, llvm::MaybeAlign(1), bytes);
+            lastValue = dst;
+            lastExprArrayElem = elemTy;
             return;
         }
     }

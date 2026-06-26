@@ -87,8 +87,9 @@ factor         ::= unary (("*"|"/"|"%") unary)*
 unary          ::= ("!"|"-"|"~") unary | "await" unary | "new" newExpr | "delete" expr
                  | "<-" unary               // channel receive (prefix)
                  | call
-call           ::= primary ( "(" args ")" | "." IDENT | "." INT | "?." IDENT | "!!" | "[" expr "]" | "<-" expr )*
+call           ::= primary ( "(" args ")" | "." IDENT | "." INT | "?." IDENT | "!!" | "[" expr "]" | "[" expr ".." expr "]" | "<-" expr )*
                  // "." INT is tuple element access: t.0, t.1
+                 // "[" lo ".." hi "]" is an array slice (fresh array of [lo, hi))
 primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
                  | "channel" ("<" type ">")? "(" ")"   // new channel
                  | "(" expression ")"                  // grouping
