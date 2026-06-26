@@ -2014,6 +2014,13 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 v = builder.CreateFPCast(v, pt, "argcast");
             else if (v->getType()->isPointerTy() && pt->isPointerTy())
                 v = builder.CreateBitCast(v, pt, "argcast");
+            // Slot ABI: a 64-bit value standing in for a reference (e.g. an ADT
+            // handle pulled from a vector) passed where a pointer is expected,
+            // and vice versa.
+            else if (v->getType()->isIntegerTy() && pt->isPointerTy())
+                v = builder.CreateIntToPtr(v, pt, "argcast");
+            else if (v->getType()->isPointerTy() && pt->isIntegerTy())
+                v = builder.CreatePtrToInt(v, pt, "argcast");
         }
         return v;
     };

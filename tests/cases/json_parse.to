@@ -1,0 +1,137 @@
+// expect: 44
+// A JSON parser written in Tocin: an algebraic `Json` type, a recursive-descent
+// parser over a cursor class, and arrays/objects stored in vectors. Exercises
+// ADTs, recursion, strings, vectors, and slot/pointer coercion together.
+enum Json {
+    JNull,
+    JBool(int),
+    JInt(int),
+    JStr(string),
+    JArr(int),   // vector of Json values
+    JObj(int)    // vector: key0, val0, key1, val1, ...
+}
+
+class P { src: string; pos: int; }
+
+def peek(p: P) -> int {
+    if p.pos >= strLen(p.src) { return -1; }
+    return charAt(p.src, p.pos);
+}
+def skipws(p: P) {
+    let c = peek(p);
+    while c == 32 || c == 9 || c == 10 || c == 13 { p.pos = p.pos + 1; c = peek(p); }
+}
+def parseString(p: P) -> string {
+    p.pos = p.pos + 1; // opening quote
+    let s = "";
+    let c = peek(p);
+    while c != 34 && c != -1 {
+        if c == 92 { // backslash escape
+            p.pos = p.pos + 1;
+            let e = peek(p);
+            if e == 110 { s = s + charToStr(10); }
+            elif e == 116 { s = s + charToStr(9); }
+            else { s = s + charToStr(e); }
+        } else {
+            s = s + charToStr(c);
+        }
+        p.pos = p.pos + 1;
+        c = peek(p);
+    }
+    p.pos = p.pos + 1; // closing quote
+    return s;
+}
+def parseNumber(p: P) -> int {
+    let neg = 0;
+    if peek(p) == 45 { neg = 1; p.pos = p.pos + 1; }
+    let n = 0;
+    let c = peek(p);
+    while c >= 48 && c <= 57 { n = n * 10 + (c - 48); p.pos = p.pos + 1; c = peek(p); }
+    if neg == 1 { return 0 - n; }
+    return n;
+}
+def parseValue(p: P) -> Json {
+    skipws(p);
+    let c = peek(p);
+    if c == 123 { return parseObject(p); }       // {
+    if c == 91  { return parseArray(p); }         // [
+    if c == 34  { return JStr(parseString(p)); }  // "
+    if c == 116 { p.pos = p.pos + 4; return JBool(1); } // true
+    if c == 102 { p.pos = p.pos + 5; return JBool(0); } // false
+    if c == 110 { p.pos = p.pos + 4; return JNull; }    // null
+    return JInt(parseNumber(p));
+}
+def parseArray(p: P) -> Json {
+    p.pos = p.pos + 1; // [
+    let v = vecNew();
+    skipws(p);
+    if peek(p) == 93 { p.pos = p.pos + 1; return JArr(v); }
+    let more = 1;
+    while more == 1 {
+        vecPush(v, parseValue(p));
+        skipws(p);
+        if peek(p) == 44 { p.pos = p.pos + 1; } else { more = 0; }
+    }
+    skipws(p);
+    p.pos = p.pos + 1; // ]
+    return JArr(v);
+}
+def parseObject(p: P) -> Json {
+    p.pos = p.pos + 1; // {
+    let v = vecNew();
+    skipws(p);
+    if peek(p) == 125 { p.pos = p.pos + 1; return JObj(v); }
+    let more = 1;
+    while more == 1 {
+        skipws(p);
+        vecPush(v, parseString(p)); // key (stored as string slot)
+        skipws(p);
+        p.pos = p.pos + 1;          // :
+        vecPush(v, parseValue(p));  // value (Json)
+        skipws(p);
+        if peek(p) == 44 { p.pos = p.pos + 1; } else { more = 0; }
+    }
+    skipws(p);
+    p.pos = p.pos + 1; // }
+    return JObj(v);
+}
+
+def parse(s: string) -> Json { let p = P(s, 0); return parseValue(p); }
+
+// Accessors return a Json *handle* as an int slot (coerced back to Json when
+// passed to a function whose parameter is Json).
+def objGet(j: Json, key: string) -> int {
+    match j {
+        case JObj(h): {
+            let i = 0;
+            while i < vecLen(h) {
+                if strEq(vecGet(h, i), key) == 1 { return vecGet(h, i + 1); }
+                i = i + 2;
+            }
+        }
+        default: { }
+    }
+    return 0;
+}
+def arrLen(j: Json) -> int {
+    match j { case JArr(h): { return vecLen(h); } default: { } }
+    return 0;
+}
+def arrGet(j: Json, i: int) -> int {
+    match j { case JArr(h): { return vecGet(h, i); } default: { } }
+    return 0;
+}
+def asInt(j: Json) -> int {
+    match j { case JInt(n): { return n; } default: { } }
+    return 0;
+}
+
+def main() -> int {
+    let doc = parse("{ \"name\": \"tocin\", \"version\": 2, \"tags\": [10, 20, 12] }");
+    let version = asInt(objGet(doc, "version"));   // 2
+    let tags = objGet(doc, "tags");                // handle to JArr
+    let sum = 0;
+    let n = arrLen(tags);
+    for i in 0..n { sum = sum + asInt(arrGet(tags, i)); } // 10+20+12 = 42
+    return version + sum;                            // 44
+}

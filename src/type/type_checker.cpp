@@ -237,6 +237,9 @@ namespace type_checker
             {
                 variants.insert(m.first);
                 adtVariantEnum_[m.first] = stmt->name;
+                auto fit = stmt->variantFields.find(m.first);
+                if (fit != stmt->variantFields.end())
+                    adtVariantFields_[m.first] = fit->second;
                 if (environment_) environment_->define(m.first, enumType, true);
                 if (globalEnv_) globalEnv_->define(m.first, enumType, true);
             }
@@ -1327,16 +1330,27 @@ namespace type_checker
         if (stmt->value) stmt->value->accept(*this);
 
         // Visit every case body with its pattern bindings in scope so the bound
-        // variables resolve. Bindings are checked permissively (typed int) — the
-        // codegen denormalizes payloads to their real types.
+        // variables resolve. Each payload name is bound with the variant's
+        // declared field type (so `return s` from a JStr(s) arm type-checks);
+        // unknown fields fall back to int.
         auto intType = makeBasic(ast::TypeKind::INT);
         for (size_t i = 0; i < stmt->cases.size(); ++i)
         {
             pushScope();
             if (i < stmt->caseBinds.size() && environment_)
-                for (const auto &b : stmt->caseBinds[i])
-                    if (!b.empty())
-                        environment_->define(b, intType, false);
+            {
+                const std::string &ctor = i < stmt->caseCtor.size() ? stmt->caseCtor[i] : "";
+                auto ff = adtVariantFields_.find(ctor);
+                const std::vector<std::string> &binds = stmt->caseBinds[i];
+                for (size_t fi = 0; fi < binds.size(); ++fi)
+                {
+                    if (binds[fi].empty()) continue;
+                    ast::TypePtr bt = intType;
+                    if (ff != adtVariantFields_.end() && fi < ff->second.size() && ff->second[fi])
+                        bt = ff->second[fi];
+                    environment_->define(binds[fi], bt, false);
+                }
+            }
             if (stmt->cases[i].second)
                 stmt->cases[i].second->accept(*this);
             popScope();

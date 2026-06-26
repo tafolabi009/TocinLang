@@ -1,0 +1,137 @@
+// json_parser.to — a JSON parser written entirely in Tocin.
+//
+// JSON maps perfectly onto Tocin's algebraic data types: a value is one of
+// null / bool / number / string / array / object, and a recursive-descent
+// parser is just a set of mutually-recursive functions over a cursor. Arrays
+// and objects are stored in `vector`s of child handles. This is the same shape
+// a real compiler front end takes — and a useful tool for config and APIs.
+//
+// Run it:
+//   tocin examples/json_parser.to --run
+// It prints fields from a parsed document; the exit code is the tag count (3).
+
+enum Json {
+    JNull,
+    JBool(int),
+    JInt(int),
+    JStr(string),
+    JArr(int),   // vector of Json values
+    JObj(int)    // vector: key0, val0, key1, val1, ...
+}
+
+class P { src: string; pos: int; }
+
+def peek(p: P) -> int {
+    if p.pos >= strLen(p.src) { return -1; }
+    return charAt(p.src, p.pos);
+}
+def skipws(p: P) {
+    let c = peek(p);
+    while c == 32 || c == 9 || c == 10 || c == 13 { p.pos = p.pos + 1; c = peek(p); }
+}
+def parseString(p: P) -> string {
+    p.pos = p.pos + 1;
+    let s = "";
+    let c = peek(p);
+    while c != 34 && c != -1 {
+        if c == 92 {
+            p.pos = p.pos + 1;
+            let e = peek(p);
+            if e == 110 { s = s + charToStr(10); }
+            elif e == 116 { s = s + charToStr(9); }
+            else { s = s + charToStr(e); }
+        } else {
+            s = s + charToStr(c);
+        }
+        p.pos = p.pos + 1;
+        c = peek(p);
+    }
+    p.pos = p.pos + 1;
+    return s;
+}
+def parseNumber(p: P) -> int {
+    let neg = 0;
+    if peek(p) == 45 { neg = 1; p.pos = p.pos + 1; }
+    let n = 0;
+    let c = peek(p);
+    while c >= 48 && c <= 57 { n = n * 10 + (c - 48); p.pos = p.pos + 1; c = peek(p); }
+    if neg == 1 { return 0 - n; }
+    return n;
+}
+def parseValue(p: P) -> Json {
+    skipws(p);
+    let c = peek(p);
+    if c == 123 { return parseObject(p); }
+    if c == 91  { return parseArray(p); }
+    if c == 34  { return JStr(parseString(p)); }
+    if c == 116 { p.pos = p.pos + 4; return JBool(1); }
+    if c == 102 { p.pos = p.pos + 5; return JBool(0); }
+    if c == 110 { p.pos = p.pos + 4; return JNull; }
+    return JInt(parseNumber(p));
+}
+def parseArray(p: P) -> Json {
+    p.pos = p.pos + 1;
+    let v = vecNew();
+    skipws(p);
+    if peek(p) == 93 { p.pos = p.pos + 1; return JArr(v); }
+    let more = 1;
+    while more == 1 {
+        vecPush(v, parseValue(p));
+        skipws(p);
+        if peek(p) == 44 { p.pos = p.pos + 1; } else { more = 0; }
+    }
+    skipws(p);
+    p.pos = p.pos + 1;
+    return JArr(v);
+}
+def parseObject(p: P) -> Json {
+    p.pos = p.pos + 1;
+    let v = vecNew();
+    skipws(p);
+    if peek(p) == 125 { p.pos = p.pos + 1; return JObj(v); }
+    let more = 1;
+    while more == 1 {
+        skipws(p);
+        vecPush(v, parseString(p));
+        skipws(p);
+        p.pos = p.pos + 1;
+        vecPush(v, parseValue(p));
+        skipws(p);
+        if peek(p) == 44 { p.pos = p.pos + 1; } else { more = 0; }
+    }
+    skipws(p);
+    p.pos = p.pos + 1;
+    return JObj(v);
+}
+def parse(s: string) -> Json { let p = P(s, 0); return parseValue(p); }
+
+def objGet(j: Json, key: string) -> int {
+    match j {
+        case JObj(h): {
+            let i = 0;
+            while i < vecLen(h) {
+                if strEq(vecGet(h, i), key) == 1 { return vecGet(h, i + 1); }
+                i = i + 2;
+            }
+        }
+        default: { }
+    }
+    return 0;
+}
+def arrLen(j: Json) -> int { match j { case JArr(h): { return vecLen(h); } default: { } } return 0; }
+def asInt(j: Json) -> int { match j { case JInt(n): { return n; } default: { } } return 0; }
+def asStr(j: Json) -> string { match j { case JStr(s): { return s; } default: { } } return ""; }
+
+def main() -> int {
+    let src = "{ \"name\": \"tocin\", \"version\": 2, \"tags\": [10, 20, 12], \"stable\": true }";
+    let doc = parse(src);
+
+    println("name    = {}", asStr(objGet(doc, "name")));
+    println("version = {}", asInt(objGet(doc, "version")));
+
+    let tags = objGet(doc, "tags");
+    let count = arrLen(tags);
+    println("tags    = {} items", count);
+
+    return count; // 3
+}

@@ -185,6 +185,7 @@ namespace type_checker
         // visitEnumStmt for enums that have at least one payload-carrying variant.
         std::unordered_map<std::string, std::string> adtVariantEnum_;                  // variant name -> enum name
         std::unordered_map<std::string, std::unordered_set<std::string>> adtEnumVariants_; // enum name -> variant set
+        std::unordered_map<std::string, std::vector<ast::TypePtr>> adtVariantFields_;  // variant name -> payload field types
 
         // Module related methods
         bool loadModule(const std::string &moduleName);
