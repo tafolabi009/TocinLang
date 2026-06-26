@@ -1,4 +1,4 @@
-# install.ps1 — install Tocin on Windows into a per-user prefix, add it to the
+# install.ps1 - install Tocin on Windows into a per-user prefix, add it to the
 # user PATH, and write an uninstaller. Run from inside an extracted package:
 #
 #   tar xzf tocin-<ver>-windows-x86_64.zip   (or Expand-Archive)
@@ -43,17 +43,19 @@ foreach ($d in "bin","libexec","lib","stdlib","share") {
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $Prefix "bin") | Out-Null
 Copy-Item -Recurse -Force (Join-Path $src "libexec") (Join-Path $Prefix "libexec")
-Copy-Item -Recurse -Force (Join-Path $src "lib")     (Join-Path $Prefix "lib")
 Copy-Item -Recurse -Force (Join-Path $src "stdlib")  (Join-Path $Prefix "stdlib")
 Copy-Item -Recurse -Force (Join-Path $src "share")   (Join-Path $Prefix "share")
 Copy-Item -Force (Join-Path $src "VERSION") (Join-Path $Prefix "VERSION")
 
-# Launcher: a .cmd shim that sets TOCIN_PATH + the DLL search path, then runs the exe.
+# Launcher: a .cmd shim that points TOCIN_PATH at the stdlib, then runs the exe.
+# The DLLs live next to tocin.exe in libexec, so no PATH change is needed for the
+# loader to find them; we still prepend libexec defensively for any DLL that does
+# a bare LoadLibrary at runtime.
 $launcher = @"
 @echo off
 set "TOCIN_HOME=%~dp0.."
 if not defined TOCIN_PATH set "TOCIN_PATH=%TOCIN_HOME%\stdlib"
-set "PATH=%TOCIN_HOME%\lib;%PATH%"
+set "PATH=%TOCIN_HOME%\libexec;%PATH%"
 "%TOCIN_HOME%\libexec\tocin.exe" %*
 "@
 Set-Content -Path (Join-Path $Prefix "bin\tocin.cmd") -Value $launcher -Encoding ASCII
