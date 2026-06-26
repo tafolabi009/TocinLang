@@ -44,6 +44,16 @@ namespace type_checker
         return false;
     }
 
+    bool Environment::isConstant(const std::string &name) const
+    {
+        auto it = variables_.find(name);
+        if (it != variables_.end())
+            return it->second.second;
+        if (parent_)
+            return parent_->isConstant(name);
+        return false;
+    }
+
     // ---------------------------------------------------------------------------
     // Small type helpers
     // ---------------------------------------------------------------------------
@@ -707,6 +717,17 @@ namespace type_checker
         // error on unknown targets to stay permissive.
         if (expr->isVariableAssignment() && environment_)
         {
+            // A `const` binding may not be reassigned. Fatal: this is a
+            // correctness guarantee, not a style hint.
+            if (environment_->isConstant(expr->name))
+            {
+                errorHandler_.reportError(
+                    error::ErrorCode::T013_INVALID_ASSIGNMENT,
+                    "Cannot assign to constant '" + expr->name +
+                        "' (declared with `const`). Use `let` for a mutable binding.",
+                    std::string(expr->token.filename), expr->token.line,
+                    expr->token.column, error::ErrorSeverity::FATAL);
+            }
             environment_->assign(expr->name, valueType);
         }
         else if (expr->target)

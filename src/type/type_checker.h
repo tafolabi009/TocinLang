@@ -31,6 +31,8 @@ namespace type_checker
         void define(const std::string &name, ast::TypePtr type, bool isConstant);
         ast::TypePtr lookup(const std::string &name) const;
         bool assign(const std::string &name, ast::TypePtr type);
+        // True if `name` resolves (through the scope chain) to a `const` binding.
+        bool isConstant(const std::string &name) const;
 
         // Add a getter for parent
         std::shared_ptr<Environment> getParent() const { return parent_; }

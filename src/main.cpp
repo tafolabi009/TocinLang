@@ -119,6 +119,8 @@ extern "C" {
     // Environment / process
     char *__tocin_env_get(const char *);
     void __tocin_sys_exit(int64_t);
+    // Safety
+    void __tocin_oob(int64_t, int64_t);
 }
 
 // Conditionally include Python
@@ -599,6 +601,7 @@ public:
             def("__tocin_tcp_close", reinterpret_cast<void *>(&__tocin_tcp_close));
             def("__tocin_env_get", reinterpret_cast<void *>(&__tocin_env_get));
             def("__tocin_sys_exit", reinterpret_cast<void *>(&__tocin_sys_exit));
+            def("__tocin_oob", reinterpret_cast<void *>(&__tocin_oob));
             llvm::cantFail(jit->getMainJITDylib().define(llvm::orc::absoluteSymbols(std::move(rt))));
         }
 

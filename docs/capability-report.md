@@ -4,8 +4,9 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 130/130 `.to` programs passing, plus
-opt-in borrow-check (5/5) and match-exhaustiveness (3/3) harnesses.
+Last updated: this build. Test suite: 131/131 `.to` programs passing, plus
+opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
+const + bounds (2/2) — harnesses.
 
 ---
 
@@ -67,7 +68,9 @@ language (networking, crypto, OS APIs): call the C library.
    non-issue in practice.
 2. **Capture is by value, not by reference.** Closures snapshot captured
    locals; mutating the original afterward doesn't change the copy. No labeled
-   `break`/`continue`.
+   `break`/`continue`. (`const` bindings are enforced — reassigning one is a
+   compile error — and array indexing is bounds-checked by default, panicking on
+   an out-of-range access; `--freestanding` omits the check for systems code.)
 3. **Collection elements are 64-bit slots.** `vector`/`map`/channel payloads
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is

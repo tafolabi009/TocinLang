@@ -1,0 +1,6 @@
+// Reassigning a `const` binding must be rejected with a T013 diagnostic.
+def main() -> int {
+    const x = 5;
+    x = 9;       // error: cannot assign to constant 'x'
+    return x;
+}

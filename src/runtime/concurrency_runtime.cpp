@@ -747,4 +747,15 @@ extern "C"
         return v ? tocin_dup(v, std::strlen(v)) : tocin_dup("", 0);
     }
     void __tocin_sys_exit(int64_t code) { std::exit((int)code); }
+
+    // Array bounds-check failure: report and abort (process exit 134, like a
+    // panic). Emitted by the compiler before each checked `arr[i]` access.
+    void __tocin_oob(int64_t idx, int64_t len)
+    {
+        std::fprintf(stderr,
+            "panic: index out of bounds: the length is %lld but the index is %lld\n",
+            (long long)len, (long long)idx);
+        std::fflush(stderr);
+        std::abort();
+    }
 }
