@@ -318,6 +318,28 @@ list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 # linked into both the compiler (for the JIT) and AOT-produced executables.
 list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/concurrency_runtime.cpp")
 
+# Unreferenced scaffolding that is not wired into the compiler and does not
+# compile cleanly against modern LLVM (>= 19) or on Windows. Excluding it keeps
+# the core build portable; nothing links against these translation units.
+#  - advanced_optimizations.cpp: legacy PassManager + create*Pass factories
+#    removed in LLVM 19 (the active O-pipeline lives in main.cpp via PassBuilder).
+#  - lightweight_scheduler.cpp: the M:N fiber scheduler scaffolding (not yet
+#    wired up; uses Windows fiber types that need porting).
+list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/advanced_optimizations.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/lightweight_scheduler.cpp")
+
+# Python FFI is scaffolding (the working FFI path is `extern def` C functions,
+# emitted directly in the IR generator). Build it only when explicitly enabled,
+# so a default build needs no Python.h / mingw python package.
+if(NOT WITH_PYTHON)
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ffi/ffi_python.cpp")
+endif()
+# The C++ FFI uses POSIX dlfcn.h + libffi (absent on a stock Windows/mingw
+# toolchain). It is scaffolding too; exclude it on Windows.
+if(WIN32)
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ffi/ffi_cpp.cpp")
+endif()
+
 # Find all header files
 file(GLOB_RECURSE HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"

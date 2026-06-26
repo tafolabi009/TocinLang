@@ -253,12 +253,23 @@ namespace compiler
         llvm::TargetOptions opt;
         // Change llvm::Optional to a concrete relocation model value instead
         auto relocationModel = llvm::Reloc::Model::PIC_;
+        // LLVM 21 changed createTargetMachine's first parameter from a triple
+        // string to an llvm::Triple. Guard so the same source builds on 18-22.
+#if LLVM_VERSION_MAJOR >= 21
+        auto targetMachine = target->createTargetMachine(
+            llvm::Triple(targetTriple),
+            "generic", // CPU
+            "",        // Features
+            opt,
+            relocationModel);
+#else
         auto targetMachine = target->createTargetMachine(
             targetTriple,
             "generic", // CPU
             "",        // Features
             opt,
             relocationModel);
+#endif
 
         if (!targetMachine)
         {

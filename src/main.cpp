@@ -648,8 +648,15 @@ public:
         }
 
         llvm::TargetOptions opt;
+        // LLVM 21 changed createTargetMachine's first parameter from a triple
+        // string to an llvm::Triple. Guard so the same source builds on 18-22.
+#if LLVM_VERSION_MAJOR >= 21
+        auto targetMachine = target->createTargetMachine(
+            llvm::Triple(triple), "generic", "", opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+#else
         auto targetMachine = target->createTargetMachine(
             triple, "generic", "", opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+#endif
         module.setDataLayout(targetMachine->createDataLayout());
 
         std::error_code EC;
