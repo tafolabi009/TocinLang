@@ -198,6 +198,7 @@ namespace codegen
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, std::shared_ptr<ast::FunctionType>> funcReturnFnType; // function name -> its function-typed return signature
         std::map<std::string, std::string> funcReturnClass;                       // mangled fn/method name -> class name of its return type
+        std::map<std::string, int> funcVariadic;                                  // variadic fn name -> fixed (non-variadic) param count
         std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
         std::map<std::string, ast::ClassStmt *> genericClasses;                  // name -> generic class template
         std::map<const ast::CallExpr *, std::string> genericCtorClass;           // generic constructor call -> mangled class name

@@ -1,0 +1,14 @@
+// expect: 175
+// A trailing `name: T...` parameter collects the remaining call arguments into
+// a `list` (elements are 64-bit slots). len()/indexing work as on any array.
+def sumAll(first: int, rest: int...) -> int {
+    let total = first;
+    for i in 0..len(rest) { total = total + rest[i]; }
+    return total;
+}
+def main() -> int {
+    let a = sumAll(1, 2, 3, 4, 5); // 1 + (2+3+4+5) = 15
+    let b = sumAll(10);            // 10 (zero variadic args)
+    let c = sumAll(100, 50);       // 150
+    return a + b + c;              // 175
+}

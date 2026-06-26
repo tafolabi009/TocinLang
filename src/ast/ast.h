@@ -281,6 +281,7 @@ namespace ast
         std::string name;
         TypePtr type;
         bool isMoved;
+        bool isVariadic = false; // trailing `name: T...` parameter (collects rest args into an array)
     };
 
     // Base class for expressions.

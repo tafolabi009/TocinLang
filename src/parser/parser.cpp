@@ -1210,7 +1210,17 @@ namespace parser
                     type = std::make_shared<ast::SimpleType>(
                         lexer::Token(lexer::TokenType::IDENTIFIER, "int", "", 0, 0));
                 }
+                // Variadic parameter `name: T...` collects the remaining call
+                // arguments into a `list<T>` array.
+                bool variadic = false;
+                if (match(lexer::TokenType::ELLIPSIS))
+                {
+                    variadic = true;
+                    type = std::make_shared<ast::GenericType>(
+                        name, "list", std::vector<ast::TypePtr>{type});
+                }
                 parameters.emplace_back(name.value, type);
+                parameters.back().isVariadic = variadic;
             } while (match(lexer::TokenType::COMMA));
         }
         return parameters;
