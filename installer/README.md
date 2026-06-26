@@ -8,8 +8,9 @@ producing and publishing the release packages.
 
 | File | Role |
 |---|---|
+| `linux/Build-TocinInstaller.sh` | **Turnkey Linux builder** — bootstraps the toolchain, builds, bundles, and packages in one run (see below). |
 | `windows/Build-TocinInstaller.ps1` | **Turnkey Windows builder** — bootstraps the toolchain, builds, and packages in one run (see below). |
-| `package.sh` | Build a Linux/macOS tarball (`dist/tocin-<ver>-<os>-<arch>.tar.gz`). |
+| `package.sh` | Build a Linux/macOS tarball (`dist/tocin-<ver>-<os>-<arch>.tar.gz`); `--bundle-libs` for the self-contained flavor. |
 | `package.ps1` | Build a Windows zip when the toolchain is *already* installed. |
 | `install.sh` | Per-user installer that ships *inside* each Unix tarball. |
 | `install.ps1` | Per-user installer for Windows (also a download bootstrap). |
@@ -33,6 +34,26 @@ installer/package.sh --bundle-libs
 ```
 
 Each writes its artifact to `dist/`.
+
+### Linux — one turnkey script (no prior setup)
+
+On a clean Linux machine, run **one** script and it does everything — installs
+the toolchain (CMake + Ninja + GCC + LLVM 18 + Boehm GC + libffi/zlib via
+`apt`/`dnf`/`pacman`/`zypper`), builds the compiler, vendors every non-system
+shared library so the result runs with no dependencies beyond glibc, and writes
+`dist/tocin-<ver>-linux-x86_64.tar.gz`:
+
+```bash
+installer/linux/Build-TocinInstaller.sh
+```
+
+Useful flags: `--skip-deps` (toolchain already installed — much faster repeat
+builds), `--no-python` (configure `WITH_PYTHON=OFF` for a slimmer, Python-free
+package), `--out DIR` (output directory). Extract the tarball and run
+`./install.sh` to put `tocin` on `PATH`.
+
+If the toolchain is already present, `installer/package.sh --bundle-libs`
+packages an existing `build/` without the bootstrap step.
 
 ### Windows — one turnkey script (no prior setup)
 
