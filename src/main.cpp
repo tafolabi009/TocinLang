@@ -18,7 +18,9 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/FileSystem.h>
 // Include our LLVM shim header instead of directly including Host.h
+// (the shim pulls in the real <llvm/TargetParser/Host.h> when available).
 #include "llvm_shim.h"
+#include <llvm/ADT/StringMap.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -289,13 +291,14 @@ public:
         bool freestanding; // no libc / no GC / no runtime — kernel/bare-metal
         bool noGC;         // don't link the garbage collector (alloc -> malloc)
         bool borrowCheck;  // opt-in ownership / use-after-move analysis
+        bool nativeCpu;    // tune AOT codegen for the host CPU (POPCNT/AVX/...)
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
               enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
               enableMacros(true), enableAsync(true), enableDebugger(false),
               enableWASM(false), target("native"), enablePackageManager(true), run(false),
-              freestanding(false), noGC(false), borrowCheck(false) {}
+              freestanding(false), noGC(false), borrowCheck(false), nativeCpu(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -454,6 +457,7 @@ public:
 
         codegen::IRGenerator generator(*context, std::move(module), errorHandler);
         generator.freestanding = options.freestanding;
+        useNativeCpu_ = options.nativeCpu;   // read by emitObjectFile()
 
         // Generate LLVM IR from the AST
         auto generatedModule = generator.generate(program);
@@ -713,6 +717,63 @@ public:
     }
 
     /**
+     * @brief Build a TargetMachine for the host, configured for the current mode.
+     *
+     * The CPU + feature string drives BOTH halves of the compiler:
+     *   - the middle-end (via the PassBuilder's TargetIRAnalysis/TTI in
+     *     optimizeModule) - so LoopIdiomRecognize can fold the Kernighan popcount
+     *     loop into @llvm.ctpop and the loop/SLP vectorizers know which vector
+     *     ISA is available;
+     *   - the backend (instruction selection in emitObjectFile).
+     * Default CPU "generic" keeps binaries portable. With --native we pin the
+     * build host's CPU and full feature set (POPCNT, BMI, AVX/AVX2, FMA, ...),
+     * the equivalent of clang's -march=native. Returns nullptr on lookup failure.
+     */
+    std::unique_ptr<llvm::TargetMachine> createConfiguredTargetMachine()
+    {
+        std::string triple = llvm::sys::getDefaultTargetTriple();
+        std::string error;
+#if LLVM_VERSION_MAJOR >= 21
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), error);
+#else
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);
+#endif
+        if (!target)
+            return nullptr;
+
+        std::string cpu = "generic";
+        std::string features;
+        if (useNativeCpu_)
+        {
+            cpu = llvm::sys::getHostCPUName().str();
+#if LLVM_VERSION_MAJOR >= 19
+            llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
+#else
+            llvm::StringMap<bool> hostFeatures;
+            llvm::sys::getHostCPUFeatures(hostFeatures);
+#endif
+            for (auto& f : hostFeatures)
+            {
+                if (!features.empty()) features += ",";
+                features += (f.second ? "+" : "-");
+                features += f.first().str();
+            }
+        }
+
+        llvm::TargetOptions opt;
+        // LLVM 21 changed createTargetMachine's first parameter from a triple
+        // string to an llvm::Triple. Guard so the same source builds on 18-22.
+#if LLVM_VERSION_MAJOR >= 21
+        llvm::TargetMachine* tm = target->createTargetMachine(
+            llvm::Triple(triple), cpu, features, opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+#else
+        llvm::TargetMachine* tm = target->createTargetMachine(
+            triple, cpu, features, opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+#endif
+        return std::unique_ptr<llvm::TargetMachine>(tm);
+    }
+
+    /**
      * @brief Emit a native object (or assembly) file from the module.
      */
     bool emitObjectFile(llvm::Module& module, const std::string& outputPath, bool asAssembly)
@@ -725,30 +786,13 @@ public:
         module.setTargetTriple(triple);
 #endif
 
-        std::string error;
-        // LLVM 21 changed TargetRegistry::lookupTarget to accept an llvm::Triple.
-#if LLVM_VERSION_MAJOR >= 21
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), error);
-#else
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);
-#endif
-        if (!target)
+        auto targetMachine = createConfiguredTargetMachine();
+        if (!targetMachine)
         {
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
-                                     "Failed to look up target: " + error, "", 0, 0);
+                                     "Failed to create target machine for " + triple, "", 0, 0);
             return false;
         }
-
-        llvm::TargetOptions opt;
-        // LLVM 21 changed createTargetMachine's first parameter from a triple
-        // string to an llvm::Triple. Guard so the same source builds on 18-22.
-#if LLVM_VERSION_MAJOR >= 21
-        auto targetMachine = target->createTargetMachine(
-            llvm::Triple(triple), "generic", "", opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
-#else
-        auto targetMachine = target->createTargetMachine(
-            triple, "generic", "", opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
-#endif
         module.setDataLayout(targetMachine->createDataLayout());
 
         std::error_code EC;
@@ -1050,6 +1094,7 @@ public:
 
 private:
     error::ErrorHandler &errorHandler;
+    bool useNativeCpu_ = false;   // --native: tune AOT codegen for the host CPU
     type_checker::FeatureManager featureManager;
     std::unique_ptr<compiler::MacroSystem> macroSystem;
     std::unique_ptr<runtime::AsyncSystem> asyncSystem;
@@ -1076,8 +1121,27 @@ private:
 
     void optimizeModule(llvm::Module &module, int level)
     {
+        // A TargetMachine threads host-CPU info (TargetTransformInfo) into the
+        // middle-end. Without it the optimizer assumes a baseline CPU, so the
+        // popcount idiom never lowers to @llvm.ctpop and the vectorizers don't
+        // know which vector ISA exists - which is why --native previously only
+        // affected the backend and produced no speedup. Targeting the module
+        // (triple + data layout) up front also gives the cost models accurate
+        // pointer/ABI sizes. A null TM (lookup failure) degrades to the old
+        // target-neutral behavior, which PassBuilder handles.
+        auto targetMachine = createConfiguredTargetMachine();
+        if (targetMachine)
+        {
+#if LLVM_VERSION_MAJOR >= 21
+            module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+#else
+            module.setTargetTriple(llvm::sys::getDefaultTargetTriple());
+#endif
+            module.setDataLayout(targetMachine->createDataLayout());
+        }
+
         // Create a function pass manager
-        llvm::PassBuilder passBuilder;
+        llvm::PassBuilder passBuilder(targetMachine.get());
         llvm::LoopAnalysisManager LAM;
         llvm::FunctionAnalysisManager FAM;
         llvm::CGSCCAnalysisManager CGAM;
@@ -1135,6 +1199,7 @@ void displayUsage()
               << "                           anything else = native executable\n"
               << "  --target <target>      Set compilation target (native, wasm)\n"
               << "  --borrow-check         Enable opt-in ownership / use-after-move checking\n"
+              << "  --native               Tune native output for this CPU (POPCNT/AVX/...); not portable\n"
               << "  --freestanding         Emit a no-libc/no-GC object for kernel/bare-metal\n"
               << "  --no-gc                Do not link the garbage collector (alloc -> malloc)\n"
               << "  --no-ffi               Disable FFI support\n"
@@ -1375,6 +1440,12 @@ int main(int argc, char *argv[])
         else if (arg == "--borrow-check")
         {
             options.borrowCheck = true;
+        }
+        else if (arg == "--native" || arg == "-march=native" || arg == "-mcpu=native")
+        {
+            // Tune AOT codegen for the build host (POPCNT/AVX/BMI/...). Faster
+            // but the resulting binary may not run on older CPUs.
+            options.nativeCpu = true;
         }
         else if (arg == "--freestanding")
         {
