@@ -257,6 +257,43 @@ if (-not $NoBundle) {
 
     Info ("bundled " + $bundled.Count + " DLL(s) into libexec")
     if ($bundled.Count -eq 0) { Warn "no DLLs bundled - check the mingw64 toolchain under $mingwBinDir" }
+
+    # ---- Self-contained native linker (ld.lld + mingw link inputs) ----------
+    # Lets `tocin file.to -o app.exe` produce a native binary with NO external
+    # gcc/clang. We vendor ld.lld.exe plus the CRT objects / static libs gcc
+    # would otherwise supply, and a data-driven recipe (installer/make-link-
+    # recipe.sh derives it from the real gcc spec). Non-fatal: if anything here
+    # fails the package still works, native -o just needs gcc on PATH as before.
+    Info "bundling native linker (ld.lld + link inputs)"
+    $linkDir = Join-Path $stage "libexec\link"
+    New-Item -ItemType Directory -Force -Path $linkDir | Out-Null
+    $lldSrc = Join-Path $mingwBinDir "ld.lld.exe"
+    if (Test-Path $lldSrc) {
+        Copy-Item $lldSrc (Join-Path $linkDir "ld.lld.exe") -Force
+        # ld.lld.exe shares tocin's shared-lib deps (libLLVM, libstdc++, ...),
+        # already bundled in libexec; tocin puts libexec on PATH when invoking it,
+        # so we don't duplicate those DLLs here.
+        # Prefer a static GC archive so the produced app.exe needs no GC DLL.
+        $gcArg = ""
+        foreach ($g in @("libgc.a","libgc.dll.a")) {
+            $gp = Join-Path $Msys2Root "mingw64\lib\$g"
+            if (Test-Path $gp) { $gcArg = "--gc '" + (ConvertTo-Msys $gp) + "'"; break }
+        }
+        $linkDirMsys = ConvertTo-Msys $linkDir
+        $rtMsys = ConvertTo-Msys (Join-Path $build "libtocin_runtime.a")
+        # Static C++/gcc runtime so app.exe is standalone (no libstdc++-6.dll etc).
+        $extra = "-static-libgcc -static-libstdc++ -lm -lpthread -lstdc++"
+        & $bash -lc "cd '$repoMsys' && bash installer/make-link-recipe.sh --gcc gcc --out-dir '$linkDirMsys' --runtime '$rtMsys' $gcArg --extra '$extra'"
+        if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $linkDir "link-recipe.txt"))) {
+            Info "native linker bundled: 'tocin file.to -o app.exe' needs no external compiler"
+        } else {
+            Warn "could not build the link recipe; native -o will fall back to requiring gcc on PATH"
+            Remove-Item -Recurse -Force $linkDir -ErrorAction SilentlyContinue
+        }
+    } else {
+        Warn "ld.lld.exe not in mingw64\bin (pacman -S mingw-w64-x86_64-lld) - native -o will require gcc on PATH"
+        Remove-Item -Recurse -Force $linkDir -ErrorAction SilentlyContinue
+    }
 } else {
     Info "skipping DLL bundling (-NoBundle): package will require MSYS2/mingw64 on PATH"
 }
