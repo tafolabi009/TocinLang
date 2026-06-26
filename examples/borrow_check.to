@@ -1,0 +1,30 @@
+// Opt-in ownership / move checking.  Compile with:
+//   tocin --borrow-check examples/borrow_check.to -o app
+//
+// By DEFAULT (no flag) Tocin is GC-based and class instances alias freely.
+// With --borrow-check, owned values (class/struct instances) follow Rust-like
+// move semantics: binding/passing/returning a value MOVES it, and using a moved
+// value is a compile error (B001). Reassignment revives. Copy types
+// (int/float/bool) are never moved.
+//
+// This file is written to PASS the checker. To see an error, add `return a.v;`
+// after `let b = a;` — `a` was moved into `b`.
+
+class Buffer { size: int; }
+
+def consume(b: Buffer) -> int {
+    return b.size;          // takes ownership of `b`
+}
+
+def main() -> int {
+    let a = Buffer(64);
+    let total = consume(a);    // `a` moved into consume(...) — not used again. OK.
+
+    let c = Buffer(16);
+    a = Buffer(8);             // revive `a` with a fresh value
+    let n = a.size + c.size;   // both live
+
+    let i = 10;
+    let j = i;                 // int is a copy type: `i` still usable
+    return total + n + i + j;  // 64 + (8+16) + 10 + 10 = 108
+}

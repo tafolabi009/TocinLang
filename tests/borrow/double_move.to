@@ -1,0 +1,3 @@
+class Box { v: int; }
+def sink(b: Box) -> int { return b.v; }
+def main() -> int { let a = Box(4); let r1 = sink(a); let r2 = sink(a); return r1 + r2; }

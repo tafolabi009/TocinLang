@@ -1,0 +1,2 @@
+class Box { v: int; }
+def main() -> int { let a = Box(5); let b = a; a = Box(7); return a.v + b.v; }
