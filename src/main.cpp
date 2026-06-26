@@ -124,20 +124,20 @@ extern "C" {
 }
 
 #if defined(_WIN32) && defined(__GNUC__)
-// On Windows/mingw the backend emits references to a few libgcc/CRT helper
-// symbols in generated code: __main (CRT init, called at the top of main) and a
-// stack-probe routine (___chkstk_ms / ___chkstk / __chkstk, depending on the
-// toolchain) for functions with large stack frames. These are statically linked
-// into this executable but are NOT exported, so the JIT's process-symbol
-// generator (which uses GetProcAddress) cannot find them by name. We register
-// their real addresses with the JIT below. Declared weak so that any name not
-// actually provided by the linked libgcc resolves to nullptr instead of failing
-// the link; we skip the null ones at registration time.
+// On Windows/mingw the backend emits references to two libgcc/CRT helper symbols
+// in generated code: __main (CRT init, called at the top of main) and
+// ___chkstk_ms (the x86-64 stack-probe routine for functions with large stack
+// frames). These are statically linked into this executable but are NOT
+// exported, so the JIT's process-symbol generator (which uses GetProcAddress)
+// cannot find them by name; we register their real addresses with the JIT below.
+//
+// Only symbols that actually exist in the linked libgcc/CRT may be named here:
+// unlike ELF, a PE/COFF *undefined* weak reference is NOT resolved to null, so
+// taking the address of a missing symbol breaks the link. These two are always
+// provided by mingw-w64 on x86-64.
 extern "C" {
     void __main(void) __attribute__((weak));
     void ___chkstk_ms(void) __attribute__((weak));
-    void ___chkstk(void) __attribute__((weak));
-    void __chkstk(void) __attribute__((weak));
 }
 #endif
 
@@ -636,8 +636,6 @@ public:
             };
             defabs("__main", reinterpret_cast<void *>(&__main));
             defabs("___chkstk_ms", reinterpret_cast<void *>(&___chkstk_ms));
-            defabs("___chkstk", reinterpret_cast<void *>(&___chkstk));
-            defabs("__chkstk", reinterpret_cast<void *>(&__chkstk));
             if (!mingwrt.empty())
                 llvm::cantFail(jit->getMainJITDylib().define(
                     llvm::orc::absoluteSymbols(std::move(mingwrt))));

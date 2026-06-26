@@ -4,6 +4,18 @@
 #include <algorithm>
 #include <cstring>
 
+// GCC's -O3 optimizer raises a spurious -Wfree-nonheap-object from inside the
+// std::variant<..., std::string, std::vector<uint8_t>, ...> special members
+// (copy-assign / destructor) when they are inlined: it mis-models the variant's
+// internal heap buffer as a stack object. These are instantiated across this
+// whole translation unit (every FFIValue copy/destroy), and GCC 16 attributes
+// the warning to the library header at the instantiation point, so a
+// function-local pragma does not catch it - suppress it for the whole file.
+// The variant operations are correct; only this false positive is silenced.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
+#endif
+
 namespace ffi {
 
 // FFIValue implementation
@@ -93,14 +105,6 @@ void FFIValue::cleanup() {
     errorMessage_.clear();
 }
 
-// GCC's -O3 optimizer raises a spurious -Wfree-nonheap-object when the
-// std::variant<..., std::string, std::vector<uint8_t>, ...> copy-assignment
-// below is inlined: it mis-models the variant's internal heap buffer as a
-// stack object. The variant copy is correct; silence only this diagnostic.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
-#endif
 void FFIValue::copyFrom(const FFIValue& other) {
     type_ = other.type_;
     value_ = other.value_;
@@ -109,9 +113,6 @@ void FFIValue::copyFrom(const FFIValue& other) {
     functionCallback_ = other.functionCallback_;
     errorMessage_ = other.errorMessage_;
 }
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 void FFIValue::moveFrom(FFIValue&& other) {
     type_ = other.type_;
