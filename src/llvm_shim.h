@@ -1,7 +1,13 @@
 #ifndef LLVM_SHIM_H
 #define LLVM_SHIM_H
 
-// LLVM shim header to handle different LLVM versions and include paths
+// LLVM shim header to handle different LLVM versions and include paths.
+// Pull in llvm-config.h first so LLVM_VERSION_MAJOR is defined for the
+// version-guarded compatibility code in the compiler (e.g. the createTargetMachine
+// triple-string -> llvm::Triple change in LLVM 21).
+#if __has_include(<llvm/Config/llvm-config.h>)
+#include <llvm/Config/llvm-config.h>
+#endif
 #if __has_include(<llvm/Support/Host.h>)
 #include <llvm/Support/Host.h>
 #define LLVM_HOST_HEADER_AVAILABLE 1

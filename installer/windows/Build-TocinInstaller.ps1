@@ -89,6 +89,22 @@ function Invoke-Mingw([string]$cmdline) {
     if ($LASTEXITCODE -ne 0) { Die "mingw64 command failed (exit $LASTEXITCODE): $cmdline" }
 }
 
+# Like Invoke-Mingw but retries on failure - for network-sensitive steps
+# (pacman downloads occasionally time out from a slow mirror).
+function Invoke-MingwRetry([string]$cmdline, [int]$tries = 4) {
+    if (-not (Test-Path $bash)) { Die "MSYS2 bash not found at $bash" }
+    for ($i = 1; $i -le $tries; $i++) {
+        & $bash -lc "cd '$repoMsys' && $cmdline"
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($i -lt $tries) {
+            $wait = $i * 5
+            Warn "attempt $i of $tries failed (exit $LASTEXITCODE) - retrying in ${wait}s (often a slow mirror)"
+            Start-Sleep -Seconds $wait
+        }
+    }
+    Die "command failed after $tries attempts: $cmdline"
+}
+
 # ---------------------------------------------------------------------------
 # 1. Ensure MSYS2
 # ---------------------------------------------------------------------------
@@ -121,7 +137,7 @@ if (-not $SkipDeps) {
     #    handled naturally here because each Invoke-Mingw call is a separate bash
     #    process (the package-install call below is the post-upgrade restart).
     Info "updating pacman and installing the mingw64 toolchain (first run can take a while)"
-    Invoke-Mingw "pacman -Syuu --noconfirm"
+    Invoke-MingwRetry "pacman -Syuu --noconfirm --disable-download-timeout"
     $pkgs = @(
         "mingw-w64-x86_64-gcc",
         "mingw-w64-x86_64-cmake",
@@ -135,7 +151,7 @@ if (-not $SkipDeps) {
     if ($WithZstd)   { $pkgs += "mingw-w64-x86_64-zstd" }
     if ($WithXml)    { $pkgs += "mingw-w64-x86_64-libxml2" }
     if ($WithPython) { $pkgs += "mingw-w64-x86_64-python" }
-    Invoke-Mingw ("pacman -S --needed --noconfirm " + ($pkgs -join " "))
+    Invoke-MingwRetry ("pacman -S --needed --noconfirm --disable-download-timeout " + ($pkgs -join " "))
 } else {
     Info "skipping dependency install (-SkipDeps)"
     if (-not (Test-Path $bash)) { Die "-SkipDeps set but MSYS2 bash not at $bash" }
@@ -149,7 +165,9 @@ $xml = "OFF"; if ($WithXml)   { $xml = "ON" }
 $zstd = "OFF"; if ($WithZstd) { $zstd = "ON" }
 
 Info "configuring Ninja Release. Python=$py XML=$xml zstd=$zstd"
-Invoke-Mingw "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWITH_PYTHON=$py -DWITH_XML=$xml -DWITH_ZSTD=$zstd"
+# Point CMake at this MSYS2's LLVM CMake package explicitly (the repo's default
+# Windows hint may not match this install root).
+Invoke-Mingw "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=/mingw64/lib/cmake/llvm -DWITH_PYTHON=$py -DWITH_XML=$xml -DWITH_ZSTD=$zstd"
 
 Info "building tocin + runtime (this is the long step)"
 Invoke-Mingw "cmake --build build --target tocin tocin_runtime_shared -j"
