@@ -13,12 +13,25 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+// POSIX sockets for the TCP networking runtime (Linux / macOS / BSD). On other
+// platforms the networking builtins compile to safe error-returning stubs.
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#define TOCIN_HAVE_POSIX_NET 1
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 // ===========================================================================
 // Memory: central allocator. When built with -DTOCIN_HAVE_GC and linked
@@ -557,4 +570,181 @@ extern "C"
         buf[n] = '\0';
         return buf;
     }
+}
+
+// Small helper: copy n bytes into a fresh GC-managed, NUL-terminated buffer
+// (__tocin_alloc is defined earlier in this file).
+namespace { char *tocin_dup(const char *s, size_t n) {
+    char *out = (char *)__tocin_alloc(n + 1);
+    if (!out) return nullptr;
+    std::memcpy(out, s, n);
+    out[n] = '\0';
+    return out;
+} }
+
+// ===========================================================================
+// Time. Wall-clock (epoch) and a monotonic clock for measuring durations.
+// ===========================================================================
+extern "C"
+{
+    int64_t __tocin_time_sec()
+    {
+        using namespace std::chrono;
+        return (int64_t)duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+    }
+    int64_t __tocin_time_ms()
+    {
+        using namespace std::chrono;
+        return (int64_t)duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+    }
+    int64_t __tocin_mono_nanos()
+    {
+        using namespace std::chrono;
+        return (int64_t)duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    }
+    void __tocin_sleep_ms(int64_t ms)
+    {
+        if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    }
+}
+
+// ===========================================================================
+// Hashing. FNV-1a (64-bit) for strings/bytes and a splitmix64 integer mixer.
+// Stable across runs — suitable for content addressing (a VCS object store),
+// hash tables, and bloom filters.
+// ===========================================================================
+extern "C"
+{
+    int64_t __tocin_hash_bytes(const void *p, int64_t n)
+    {
+        const unsigned char *b = (const unsigned char *)p;
+        uint64_t h = 1469598103934665603ULL; // FNV offset basis
+        for (int64_t i = 0; b && i < n; ++i) { h ^= b[i]; h *= 1099511628211ULL; }
+        return (int64_t)h;
+    }
+    int64_t __tocin_hash_str(const char *s)
+    {
+        if (!s) return (int64_t)1469598103934665603ULL;
+        return __tocin_hash_bytes(s, (int64_t)std::strlen(s));
+    }
+    int64_t __tocin_hash_int(int64_t x)
+    {
+        uint64_t z = (uint64_t)x + 0x9E3779B97F4A7C15ULL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        return (int64_t)(z ^ (z >> 31));
+    }
+}
+
+// ===========================================================================
+// Pseudo-random numbers. A per-thread xorshift64* generator. Deterministic
+// given a seed — good for simulations, sampling, and tests (not cryptography).
+// ===========================================================================
+namespace {
+    thread_local uint64_t g_rngState = 0x853c49e6748fea9bULL;
+}
+extern "C"
+{
+    void __tocin_rand_seed(int64_t seed)
+    {
+        g_rngState = (uint64_t)seed ? (uint64_t)seed : 0x853c49e6748fea9bULL;
+    }
+    int64_t __tocin_rand_next()
+    {
+        uint64_t x = g_rngState;
+        x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+        g_rngState = x;
+        uint64_t r = x * 0x2545F4914F6CDD1DULL;
+        return (int64_t)(r >> 1); // non-negative
+    }
+    int64_t __tocin_rand_range(int64_t lo, int64_t hi)
+    {
+        if (hi <= lo) return lo;
+        uint64_t span = (uint64_t)(hi - lo);
+        return lo + (int64_t)((uint64_t)__tocin_rand_next() % span);
+    }
+}
+
+// ===========================================================================
+// TCP networking (POSIX sockets). File descriptors are returned as int64.
+// These are the primitives a microservice or client needs; combine with `go`
+// goroutines for a concurrent server. Errors return -1 / empty string.
+// ===========================================================================
+extern "C"
+{
+#ifdef TOCIN_HAVE_POSIX_NET
+    int64_t __tocin_tcp_listen(int64_t port)
+    {
+        int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return -1;
+        int yes = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        sockaddr_in addr; std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons((uint16_t)port);
+        if (::bind(fd, (sockaddr *)&addr, sizeof(addr)) < 0) { ::close(fd); return -1; }
+        if (::listen(fd, 16) < 0) { ::close(fd); return -1; }
+        return (int64_t)fd;
+    }
+    int64_t __tocin_tcp_accept(int64_t fd)
+    {
+        int c = ::accept((int)fd, nullptr, nullptr);
+        return c < 0 ? -1 : (int64_t)c;
+    }
+    int64_t __tocin_tcp_connect(const char *host, int64_t port)
+    {
+        if (!host) return -1;
+        char portstr[16]; std::snprintf(portstr, sizeof(portstr), "%lld", (long long)port);
+        addrinfo hints; std::memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
+        addrinfo *res = nullptr;
+        if (::getaddrinfo(host, portstr, &hints, &res) != 0 || !res) return -1;
+        int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (fd < 0) { ::freeaddrinfo(res); return -1; }
+        if (::connect(fd, res->ai_addr, res->ai_addrlen) < 0) { ::close(fd); ::freeaddrinfo(res); return -1; }
+        ::freeaddrinfo(res);
+        return (int64_t)fd;
+    }
+    int64_t __tocin_tcp_send(int64_t fd, const char *s)
+    {
+        if (!s) return 0;
+        size_t len = std::strlen(s), sent = 0;
+        while (sent < len)
+        {
+            ssize_t n = ::send((int)fd, s + sent, len - sent, 0);
+            if (n <= 0) return -1;
+            sent += (size_t)n;
+        }
+        return (int64_t)sent;
+    }
+    char *__tocin_tcp_recv(int64_t fd)
+    {
+        char buf[65536];
+        ssize_t n = ::recv((int)fd, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) return tocin_dup("", 0);
+        return tocin_dup(buf, (size_t)n);
+    }
+    void __tocin_tcp_close(int64_t fd) { if (fd >= 0) ::close((int)fd); }
+#else
+    int64_t __tocin_tcp_listen(int64_t) { return -1; }
+    int64_t __tocin_tcp_accept(int64_t) { return -1; }
+    int64_t __tocin_tcp_connect(const char *, int64_t) { return -1; }
+    int64_t __tocin_tcp_send(int64_t, const char *) { return -1; }
+    char *__tocin_tcp_recv(int64_t) { return tocin_dup("", 0); }
+    void __tocin_tcp_close(int64_t) {}
+#endif
+}
+
+// ===========================================================================
+// Environment & process.
+// ===========================================================================
+extern "C"
+{
+    char *__tocin_env_get(const char *name)
+    {
+        const char *v = name ? std::getenv(name) : nullptr;
+        return v ? tocin_dup(v, std::strlen(v)) : tocin_dup("", 0);
+    }
+    void __tocin_sys_exit(int64_t code) { std::exit((int)code); }
 }

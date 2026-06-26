@@ -4,7 +4,7 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 126/126 `.to` programs passing, plus
+Last updated: this build. Test suite: 129/129 `.to` programs passing, plus
 opt-in borrow-check (5/5) and match-exhaustiveness (3/3) harnesses.
 
 ---
@@ -80,7 +80,11 @@ language (networking, crypto, OS APIs): call the C library.
    checker is move-only for now — `&`/`&mut` reference borrows and lifetimes are
    the remaining Rust-parity items (the move analysis is the foundation they
    build on).
-5. **No standard networking / HTTP / async-I/O library.** Reach for C FFI.
+5. **TCP networking is built in** (`tcpListen`/`tcpAccept`/`tcpConnect`/
+   `tcpSend`/`tcpRecv`/`tcpClose`, POSIX sockets) — enough to write a concurrent
+   server (pair with `go`) or a client, plus `time`/`hashing`/`random`/`env`
+   runtime modules. Higher-level protocols (HTTP, TLS) and async (epoll) I/O are
+   not yet provided — build them on the socket primitives or reach for C FFI.
 6. **Python/JavaScript FFI are scaffolding only** — the C path is the working
    one.
 

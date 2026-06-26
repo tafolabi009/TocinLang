@@ -1,0 +1,10 @@
+// expect: 9
+// Wall-clock and monotonic time. timeSec() is well past 2001; the monotonic
+// clock never goes backwards.
+def main() -> int {
+    let t = timeSec();
+    let a = monoNanos();
+    let b = monoNanos();
+    if t > 1000000000 && b >= a { return 9; }
+    return 0;
+}

@@ -1,0 +1,10 @@
+// expect: 7
+// FNV-1a string hashing is deterministic (same input -> same hash) and
+// distinguishes different inputs; the integer mixer is stable too.
+def main() -> int {
+    let same = hashStr("hello") == hashStr("hello");
+    let diff = hashStr("alpha") != hashStr("beta");
+    let mix  = hashInt(12345) == hashInt(12345);
+    if same && diff && mix { return 7; }
+    return 0;
+}

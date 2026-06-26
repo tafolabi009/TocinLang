@@ -1,0 +1,43 @@
+// tcp_echo.to — a concurrent TCP server and client over loopback.
+//
+// Shows the networking runtime that makes Tocin usable for microservices:
+//   tcpListen / tcpAccept / tcpConnect / tcpSend / tcpRecv / tcpClose,
+// combined with `go` goroutines (real OS threads) so the server runs
+// concurrently with the client. A real server would loop on tcpAccept and
+// `go handle(client)` each connection.
+//
+// Run it:
+//   tocin examples/tcp_echo.to --run
+// The exit code is 42 when the round-trip "ping" -> "pong" succeeds.
+
+def serve(port: int) {
+    let listener = tcpListen(port);
+    if listener < 0 { return; }
+    let client = tcpAccept(listener);   // blocks until a client connects
+    let request = tcpRecv(client);
+    if request == "ping" {
+        tcpSend(client, "pong");
+    } else {
+        tcpSend(client, "unknown");
+    }
+    tcpClose(client);
+    tcpClose(listener);
+}
+
+def main() -> int {
+    let port = 18420;
+
+    // Start the server on its own goroutine, then act as the client.
+    go serve(port);
+    sleepMs(300);                       // give the server time to bind + listen
+
+    let conn = tcpConnect("127.0.0.1", port);
+    if conn < 0 { return 1; }
+    tcpSend(conn, "ping");
+    let reply = tcpRecv(conn);          // expect "pong"
+    tcpClose(conn);
+    sleepMs(100);
+
+    if reply == "pong" { return 42; }
+    return 2;
+}
