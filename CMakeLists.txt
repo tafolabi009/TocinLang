@@ -74,7 +74,14 @@ if(LLVM_FOUND)
     set(LLVM_ENABLE_ZLIB ON)
 
     include_directories(${LLVM_INCLUDE_DIRS})
-    add_definitions(${LLVM_DEFINITIONS})
+    # LLVM_DEFINITIONS is a single space-separated string (e.g. on mingw it is
+    # "-D_GLIBCXX_USE_CXX11_ABI=1 -D_FILE_OFFSET_BITS=64 ..."). Passing it to
+    # add_definitions() verbatim makes the whole thing ONE bogus -D, so
+    # _GLIBCXX_USE_CXX11_ABI gets defined to a string containing '=' tokens,
+    # which corrupts libstdc++ <string> and breaks every translation unit. Split
+    # it into individual flags first.
+    separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND "${LLVM_DEFINITIONS}")
+    add_definitions(${LLVM_DEFINITIONS_LIST})
     link_directories(${LLVM_LIBRARY_DIRS})
 
     # Optional header test for Windows environments only

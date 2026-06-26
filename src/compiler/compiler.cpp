@@ -299,8 +299,13 @@ namespace compiler
             return false;
         }
 
-        // Set the module's target triple
+        // Set the module's target triple. LLVM 21 changed Module::setTargetTriple
+        // to take an llvm::Triple instead of a string.
+#if LLVM_VERSION_MAJOR >= 21
+        module->setTargetTriple(targetMachine->getTargetTriple());
+#else
         module->setTargetTriple(targetMachine->getTargetTriple().getTriple());
+#endif
 
         // Set the data layout
         module->setDataLayout(targetMachine->createDataLayout());
