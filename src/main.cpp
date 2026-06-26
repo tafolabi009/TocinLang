@@ -636,7 +636,12 @@ public:
     bool emitObjectFile(llvm::Module& module, const std::string& outputPath, bool asAssembly)
     {
         std::string triple = llvm::sys::getDefaultTargetTriple();
+        // LLVM 21 changed Module::setTargetTriple to take an llvm::Triple.
+#if LLVM_VERSION_MAJOR >= 21
+        module.setTargetTriple(llvm::Triple(triple));
+#else
         module.setTargetTriple(triple);
+#endif
 
         std::string error;
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, error);

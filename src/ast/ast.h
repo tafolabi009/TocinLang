@@ -7,6 +7,7 @@
 #include <vector>
 #include <stdexcept>
 #include <map>
+#include <cstdint> // int64_t (not transitively included on newer libstdc++)
 #include "types.h"
 
 // Forward declare these types from other namespaces
