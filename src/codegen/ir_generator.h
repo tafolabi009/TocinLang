@@ -81,6 +81,11 @@ namespace codegen
                     error::ErrorHandler &errorHandler);
         ~IRGenerator();
 
+        // Freestanding / kernel mode: no libc, no GC, no Tocin runtime. Builtins
+        // that need those (print, string ops, collections, file I/O, channels)
+        // become compile errors; raw memory + inline asm + arithmetic remain.
+        bool freestanding = false;
+
         /**
          * @brief Generate LLVM IR from an AST.
          *
@@ -180,10 +185,17 @@ namespace codegen
         // function-exit path only if it was dynamically reached, in LIFO order.
         struct DeferredStmt { ast::StmtPtr body; llvm::AllocaInst *reached; };
         std::vector<DeferredStmt> deferStack;
+        // RAII: class-typed locals initialized directly by a constructor for a
+        // class that defines __del__, to be auto-destroyed at every function
+        // exit (LIFO, guarded by a reached-flag). Destruction is a deterministic
+        // side-effect hook; memory itself remains GC-managed.
+        struct OwnedInstance { llvm::AllocaInst *slot; std::string className; llvm::AllocaInst *reached; };
+        std::vector<OwnedInstance> destructorStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, std::shared_ptr<ast::FunctionType>> funcReturnFnType; // function name -> its function-typed return signature
+        std::map<std::string, std::string> funcReturnClass;                       // mangled fn/method name -> class name of its return type
         std::map<std::string, ast::FunctionStmt *> genericFunctions;             // name -> generic function template
         std::map<std::string, ast::ClassStmt *> genericClasses;                  // name -> generic class template
         std::map<const ast::CallExpr *, std::string> genericCtorClass;           // generic constructor call -> mangled class name
@@ -222,6 +234,8 @@ namespace codegen
         // Emit function-scoped `defer` cleanups (LIFO, each guarded by its
         // reached-flag) at a function-exit point.
         void runDeferred();
+        // Emit __del__ calls for owned class instances at a function-exit point.
+        void runDestructors();
         // Cache of generated thunks, keyed by the wrapped target function.
         std::map<llvm::Function *, llvm::Function *> thunks;
 

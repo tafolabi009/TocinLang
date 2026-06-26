@@ -1,0 +1,17 @@
+// expect-output: drop2|drop1|
+// __del__ runs when a constructor-initialized local leaves scope, LIFO,
+// on every return path.
+class Res {
+    id: int;
+    def __del__(self) { print("drop"); print(intToStr(self.id)); print("|"); }
+}
+def use(flag: int) -> int {
+    let a = Res(1);
+    let b = Res(2);
+    if flag == 0 { return -1; }   // early return still drops b then a
+    return 0;
+}
+def main() -> int {
+    use(0);          // prints drop2|drop1|
+    return 0;
+}

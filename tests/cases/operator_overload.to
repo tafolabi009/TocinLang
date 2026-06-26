@@ -1,0 +1,15 @@
+// expect: 33
+class Vec2 {
+    x: int;
+    y: int;
+    def __add__(self, o: Vec2) -> Vec2 { return Vec2(self.x + o.x, self.y + o.y); }
+    def __eq__(self, o: Vec2) -> int { if self.x == o.x and self.y == o.y { return 1; } return 0; }
+}
+def main() -> int {
+    let a = Vec2(1, 2);
+    let b = Vec2(10, 20);
+    let c = a + b;
+    if (a == Vec2(1, 2)) == 0 { return 1; }
+    if (a == b) == 1 { return 2; }
+    return c.x + c.y;  // 33
+}

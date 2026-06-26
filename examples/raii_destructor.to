@@ -1,0 +1,38 @@
+// RAII destructors: define __del__(self) and it runs automatically when a
+// constructor-initialized local goes out of scope — on EVERY return path,
+// in LIFO (reverse construction) order. Deterministic cleanup on top of GC.
+//
+// Ownership rule: only locals initialized *directly* by a constructor are
+// destroyed. Aliases, parameters, and function results are not (so no
+// double-free). Returning an instance suppresses its destructor (ownership
+// escapes to the caller).
+
+class File {
+    fd: int;
+    def __del__(self) { println("close fd {}", self.fd); }
+}
+
+def copy(early: int) -> int {
+    let src = File(3);
+    let dst = File(7);
+    if early == 1 {
+        return 100;            // both files closed here (dst then src), LIFO
+    }
+    return 200;               // and here on the normal path
+}
+
+def open() -> File {
+    let f = File(42);
+    return f;                 // ownership escapes — NOT closed here
+}
+
+def main() -> int {
+    println("-- early exit --");
+    copy(1);                  // close fd 7 / close fd 3
+    println("-- normal exit --");
+    copy(0);                  // close fd 7 / close fd 3
+    println("-- returned instance --");
+    let kept = open();        // no close yet (ownership moved to 'kept')
+    println("kept fd = {}", kept.fd);
+    return 0;
+}
