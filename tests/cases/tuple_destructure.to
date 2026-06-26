@@ -1,0 +1,11 @@
+// expect: 42
+// Destructuring a tuple literal binds each name to its element losslessly,
+// including a heterogeneous (string, int) pair whose string compares by value.
+def main() -> int {
+    let (a, b, c) = (10, 20, 12); // a+b+c = 42
+    let (name, age) = ("hello", 5);
+    if name == "hello" && age == 5 {
+        return a + b + c;         // 42
+    }
+    return 0;
+}

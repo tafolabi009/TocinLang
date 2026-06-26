@@ -296,7 +296,7 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         // visitListExpr, so a list/array value is just a pointer.
         if (baseName == "channel" || baseName == "Channel" || baseName == "chan" ||
             baseName == "list" || baseName == "array" || baseName == "List" ||
-            baseName == "Array")
+            baseName == "Array" || baseName == "tuple")
             return llvm::PointerType::get(context, 0);
 
         if (false)
@@ -725,6 +725,71 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     }
 }
 
+void IRGenerator::visitDestructureStmt(ast::DestructureStmt *stmt)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+
+    auto bindLocal = [&](const std::string &name, llvm::Value *val,
+                         const ast::ExprPtr &srcExpr) {
+        llvm::AllocaInst *slot =
+            createEntryBlockAlloca(currentFunction, name, val->getType());
+        builder.CreateStore(val, slot);
+        namedValues[name] = slot;
+        // Carry element metadata when the source expression is known, so string
+        // elements compare by value and class elements allow member access.
+        if (srcExpr)
+        {
+            std::string cls = getExprClassName(srcExpr);
+            if (!cls.empty()) varClasses[name] = cls;
+            if (isStringExpr(srcExpr)) varIsString.insert(name); else varIsString.erase(name);
+        }
+    };
+
+    // Lossless path: `let (a, b) = (e0, e1)` — bind each name directly to its
+    // element value, preserving native types (float/string/class).
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+    {
+        if (auto cv = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            if (cv->name == "__tuple")
+            {
+                for (size_t i = 0; i < stmt->names.size(); ++i)
+                {
+                    if (i < call->arguments.size())
+                    {
+                        lastValue = nullptr;
+                        call->arguments[i]->accept(*this);
+                        if (!lastValue) return;
+                        bindLocal(stmt->names[i], lastValue, call->arguments[i]);
+                    }
+                    else
+                    {
+                        bindLocal(stmt->names[i], llvm::ConstantInt::get(i64, 0), nullptr);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    // Slot path: evaluate the initializer to a tuple pointer once, then load each
+    // element as a 64-bit slot (the tuple ABI).
+    lastValue = nullptr;
+    if (stmt->initializer) stmt->initializer->accept(*this);
+    llvm::Value *tup = lastValue;
+    if (!tup) return;
+    llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+    if (!tup->getType()->isPointerTy())
+        tup = builder.CreateIntToPtr(tup, ptrTy, "tup.ptr");
+    for (size_t i = 0; i < stmt->names.size(); ++i)
+    {
+        llvm::Value *p = builder.CreateGEP(i64, tup,
+            llvm::ConstantInt::get(i64, (int64_t)i), "tup.gep");
+        llvm::Value *elem = builder.CreateLoad(i64, p, stmt->names[i]);
+        bindLocal(stmt->names[i], elem, nullptr);
+    }
+}
+
 void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 {
     // Handle async functions
@@ -1080,6 +1145,41 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
 
 void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 {
+    // Tuple builtins (lowered by the parser). __tuple(a, b, ...) builds a heap
+    // slot buffer; __tupleGet(t, i) loads slot i (i is a constant literal).
+    if (auto bname = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+    {
+        if (bname->name == "__tuple")
+        {
+            std::vector<llvm::Value *> slots;
+            for (const auto &a : expr->arguments)
+            {
+                a->accept(*this);
+                if (!lastValue) return;
+                slots.push_back(normalizeToSlot(lastValue));
+            }
+            lastValue = makeTuple(slots);
+            return;
+        }
+        if (bname->name == "__tupleGet" && expr->arguments.size() == 2)
+        {
+            expr->arguments[0]->accept(*this);
+            llvm::Value *tup = lastValue;
+            if (!tup) return;
+            llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+            llvm::Type *ptrTy = llvm::PointerType::get(context, 0);
+            if (!tup->getType()->isPointerTy())
+                tup = builder.CreateIntToPtr(tup, ptrTy, "tup.ptr");
+            int64_t idx = 0;
+            if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[1]))
+                idx = lexer::parseIntegerLiteral(lit->value);
+            llvm::Value *p = builder.CreateGEP(i64, tup,
+                llvm::ConstantInt::get(i64, idx), "tup.gep");
+            lastValue = builder.CreateLoad(i64, p, "tup.elem");
+            return;
+        }
+    }
+
     // Algebraic-enum variant constructor: Variant(args) builds a tagged heap
     // value [i64 tag][slot...]. Checked first so a variant never falls through to
     // the generic call path.
@@ -3082,6 +3182,25 @@ llvm::Value *IRGenerator::makeADT(const ADTVariant &v, const std::vector<llvm::V
         llvm::Value *p = builder.CreateGEP(i64, obj,
             llvm::ConstantInt::get(i64, (int64_t)(i + 1)), "adt.fp");
         builder.CreateStore(args[i], p);
+    }
+    return obj;
+}
+
+// Allocate a tuple on the heap as a flat i64-slot buffer [slot0][slot1]...
+// `slots` are payload values already normalized to 64-bit slots.
+llvm::Value *IRGenerator::makeTuple(const std::vector<llvm::Value *> &slots)
+{
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    size_t n = slots.empty() ? 1 : slots.size();
+    llvm::ArrayType *bufTy = llvm::ArrayType::get(i64, n);
+    llvm::Function *mallocFn = stdLibFunctions["malloc"];
+    llvm::Value *size = llvm::ConstantExpr::getSizeOf(bufTy);
+    llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {size}, "tuple");
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        llvm::Value *p = builder.CreateGEP(i64, obj,
+            llvm::ConstantInt::get(i64, (int64_t)i), "tuple.fp");
+        builder.CreateStore(slots[i], p);
     }
     return obj;
 }

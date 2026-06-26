@@ -309,6 +309,22 @@ namespace type_checker
         currentType_ = nullptr;
     }
 
+    void TypeChecker::visitDestructureStmt(ast::DestructureStmt *stmt)
+    {
+        // Visit the initializer, then bind each pattern name. Element types are
+        // not tracked symbolically (tuple slots are 64-bit), so bind permissively
+        // as int — codegen recovers the real value for the literal case.
+        if (stmt->initializer)
+            stmt->initializer->accept(*this);
+        auto intType = makeBasic(ast::TypeKind::INT);
+        for (const auto &n : stmt->names)
+        {
+            if (environment_) environment_->define(n, intType, stmt->isConst);
+            if (globalEnv_ && environment_ == globalEnv_) globalEnv_->define(n, intType, stmt->isConst);
+        }
+        currentType_ = nullptr;
+    }
+
     void TypeChecker::visitMoveExpr(void *expr)
     {
         // Not supported; no-op

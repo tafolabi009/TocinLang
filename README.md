@@ -44,6 +44,9 @@ clear what is implemented versus planned.
   `match` (`case Add(a, b)`), and the compiler **enforces exhaustiveness** — a
   match that misses a variant (with no `default:`) is a compile error. This is
   the canonical way to build an AST; see `examples/adt_interpreter.to`.
+- **Tuples & multiple return** — `(a, b)` tuple literals, `def f() -> (int, int)`
+  returning several values, positional access `t.0`/`t.1`, and destructuring
+  `let (q, r) = divmod(a, b);`. A destructured literal keeps each element's type.
 - **Classes / structs** — fields, methods with `self`, construction, field read and
   mutation, and method calls.
 - **Traits & impl** — `trait` interfaces and `impl [Trait for] Type` blocks with
