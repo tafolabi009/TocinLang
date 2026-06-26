@@ -18,14 +18,15 @@ for f in "$DIR"/*.to; do
         echo "FAIL  $name  (should compile WITHOUT --borrow-check, but did not)"
         fail=$((fail+1)); continue
     fi
-    # 2. With the flag: "ok" files must pass; others must be rejected with B001.
+    # 2. With the flag: "ok" files must pass; others must be rejected with an
+    #    ownership diagnostic (B001 use-after-move or B002 borrow conflict).
     out="$("$TOCIN" --borrow-check "$f" -o "$TMP/o2.ll" 2>&1)"; rc=$?
     if [[ "$name" == *ok* ]]; then
         if [[ $rc -eq 0 ]]; then echo "PASS  $name  (accepted, as expected)"; pass=$((pass+1))
         else echo "FAIL  $name  (should be ACCEPTED under --borrow-check): $out"; fail=$((fail+1)); fi
     else
-        if [[ $rc -ne 0 && "$out" == *B001* ]]; then echo "PASS  $name  (rejected: B001 use-after-move)"; pass=$((pass+1))
-        else echo "FAIL  $name  (should be REJECTED with B001 under --borrow-check): rc=$rc $out"; fail=$((fail+1)); fi
+        if [[ $rc -ne 0 && ( "$out" == *B001* || "$out" == *B002* ) ]]; then code=B001; [[ "$out" == *B002* ]] && code=B002; echo "PASS  $name  (rejected: $code)"; pass=$((pass+1))
+        else echo "FAIL  $name  (should be REJECTED with B001/B002 under --borrow-check): rc=$rc $out"; fail=$((fail+1)); fi
     fi
 done
 echo "========================================================"

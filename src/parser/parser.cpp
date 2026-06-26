@@ -886,6 +886,27 @@ namespace parser
 
     ast::ExprPtr Parser::unary()
     {
+        // Borrow expressions: `&x` (shared) and `&mut x` (mutable). The `&` is
+        // lexed as BITWISE_AND; in prefix position (an operand, not between two
+        // operands) it introduces a borrow. The opt-in borrow checker enforces
+        // the aliasing rules; at run time a borrow is identity.
+        if (match(lexer::TokenType::BITWISE_AND))
+        {
+            lexer::Token op = previous();
+            bool isMut = match(lexer::TokenType::MUT);
+            ast::ExprPtr right = unary();
+            op.type = isMut ? lexer::TokenType::MUTABLE_BORROW
+                            : lexer::TokenType::BORROW;
+            return std::make_shared<ast::UnaryExpr>(op, op, right);
+        }
+        // `move x` explicitly transfers ownership out of `x` (checked by the
+        // borrow checker; identity at run time).
+        if (match(lexer::TokenType::MOVE))
+        {
+            lexer::Token op = previous();
+            ast::ExprPtr right = unary();
+            return std::make_shared<ast::UnaryExpr>(op, op, right);
+        }
         if (match(lexer::TokenType::BANG) || match(lexer::TokenType::MINUS) ||
             match(lexer::TokenType::BITWISE_NOT))
         {

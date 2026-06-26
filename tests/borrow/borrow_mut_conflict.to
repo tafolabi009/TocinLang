@@ -1,0 +1,8 @@
+// Two simultaneous &mut borrows are rejected.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(1);
+    let m1 = &mut a;
+    let m2 = &mut a;     // ERROR: 'a' already mutably borrowed
+    return m1.v + m2.v;
+}

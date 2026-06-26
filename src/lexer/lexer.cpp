@@ -30,6 +30,7 @@ namespace lexer
         {"generator", TokenType::GENERATOR}, {"coroutine", TokenType::COROUTINE}, {"channel", TokenType::CHANNEL},
         {"select", TokenType::SELECT}, {"spawn", TokenType::SPAWN}, {"go", TokenType::GO}, {"join", TokenType::JOIN},
         {"mutex", TokenType::MUTEX}, {"lock", TokenType::LOCK}, {"unlock", TokenType::UNLOCK},
+        {"mut", TokenType::MUT}, {"move", TokenType::MOVE},
         {"atomic", TokenType::ATOMIC}, {"volatile", TokenType::VOLATILE}, {"constexpr", TokenType::CONSTEXPR},
         {"inline", TokenType::INLINE}, {"extern", TokenType::EXTERN}, {"export", TokenType::EXPORT},
         {"module", TokenType::MODULE}, {"package", TokenType::PACKAGE}, {"namespace", TokenType::NAMESPACE},

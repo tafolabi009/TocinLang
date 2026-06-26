@@ -1,0 +1,8 @@
+// A &mut while a shared borrow is live is rejected.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(1);
+    let r = &a;
+    let m = &mut a;      // ERROR: 'a' already borrowed (shared)
+    return r.v + m.v;
+}

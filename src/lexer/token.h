@@ -165,6 +165,7 @@ namespace lexer
         ATOMIC,
         VOLATILE,
         MOVE,
+        MUT,
         BORROW,
         MUTABLE_BORROW,
         CONSTEXPR,

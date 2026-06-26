@@ -4,9 +4,9 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 139/139 `.to` programs passing, plus
-opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
-const + bounds + trait-bound (3/3) — harnesses.
+Last updated: this build. Test suite: 141/141 `.to` programs passing, plus
+opt-in borrow-check — move + `&`/`&mut` borrows (12/12), match-exhaustiveness
+(3/3), and safety — const + bounds + trait-bound (3/3) — harnesses.
 
 ---
 
@@ -96,14 +96,21 @@ These are the remaining items a Rust/C++-class language would want; none are
 blocked by a fundamental design flaw, but they are real work and are *not*
 implemented today:
 
-- `&`/`&mut` reference borrows and lifetimes (the borrow checker is move-only)
-  and generators (`yield`). **By-reference closure capture now works**: a
-  closure that *writes* a captured local shares the cell, so the mutation is
-  visible in the enclosing scope (read-only captures stay by-value snapshots).
-  The one nuance is escaping by-ref closures (a written-capture closure that
-  outlives its defining frame) — not reachable today because the type checker
-  does not yet permit calling a stored function-typed value; heap-promotion of
-  the cell is the upgrade for when it does.
+- Generators (`yield`) are not yet built. **By-reference closure capture now
+  works**: a closure that *writes* a captured local shares the cell, so the
+  mutation is visible in the enclosing scope (read-only captures stay by-value
+  snapshots). The one nuance is escaping by-ref closures (a written-capture
+  closure that outlives its defining frame) — not reachable today because the
+  type checker does not yet permit calling a stored function-typed value;
+  heap-promotion of the cell is the upgrade for when it does.
+- **`&`/`&mut` reference borrows now work** under `--borrow-check`: `&x` takes a
+  shared borrow and `&mut x` an exclusive one, with the standard rule (many
+  shared XOR one mutable) and lexical borrow lifetimes (a borrow ends when its
+  binding leaves scope). Conflicts — a second `&mut`, a `&mut` over a live `&`,
+  using/moving/mutating a value while it is borrowed — are fatal `B002`. What
+  remains is non-lexical (flow-sensitive) lifetimes and borrows through struct
+  fields / across function boundaries; the move analysis and these statement-
+  scoped borrows are the foundation those build on.
 - **Async runtime / M:N scheduler.** `async`/`await` parse and goroutines run on
   1:1 OS threads; a cooperative scheduler that suspends/resumes `await` on a
   worker pool is not yet built.
@@ -136,11 +143,13 @@ implemented today:
 4. **Generators, the power operator `**`, and `++`/`--` are not implemented.**
    Memory safety has two layers: GC by default (always safe — no use-after-free
    regardless), plus an **opt-in borrow checker** (`--borrow-check`) that adds
-   Rust-like compile-time move / use-after-move enforcement on owned values.
-   `defer` + RAII destructors (`__del__`) give deterministic cleanup. The borrow
-   checker is move-only for now — `&`/`&mut` reference borrows and lifetimes are
-   the remaining Rust-parity items (the move analysis is the foundation they
-   build on).
+   Rust-like compile-time enforcement on owned values: move / use-after-move
+   (`B001`) *and* `&`/`&mut` reference borrows with the shared-XOR-mutable rule
+   and lexical borrow lifetimes (`B002`). `defer` + RAII destructors (`__del__`)
+   give deterministic cleanup. What remains for full Rust parity is non-lexical
+   (flow-sensitive) lifetimes and borrows through struct fields / across
+   function boundaries — refinements on the statement-scoped borrows that work
+   today.
 5. **TCP networking is built in** (`tcpListen`/`tcpAccept`/`tcpConnect`/
    `tcpSend`/`tcpRecv`/`tcpClose`, POSIX sockets) — enough to write a concurrent
    server (pair with `go`) or a client, plus `time`/`hashing`/`random`/`env`

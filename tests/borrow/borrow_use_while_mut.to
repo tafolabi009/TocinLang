@@ -1,0 +1,7 @@
+// Using the original while it is mutably borrowed is rejected.
+class Box { v: int; }
+def main() -> int {
+    let a = Box(1);
+    let m = &mut a;
+    return a.v + m.v;    // ERROR: use of 'a' while mutably borrowed
+}

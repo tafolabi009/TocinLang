@@ -2684,6 +2684,18 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         return;
     }
 
+    // Borrow expressions (`&x`, `&mut x`) and `move x` are transparent at run
+    // time: they evaluate to the operand itself. Tocin references alias (a class
+    // instance is already a pointer); the opt-in borrow *checker* enforces the
+    // aliasing rules statically, so codegen treats a borrow as identity.
+    if (expr->op.type == lexer::TokenType::BORROW ||
+        expr->op.type == lexer::TokenType::MUTABLE_BORROW ||
+        expr->op.type == lexer::TokenType::MOVE)
+    {
+        lastValue = operand;
+        return;
+    }
+
     switch (expr->op.type)
     {
     case lexer::TokenType::MINUS:
@@ -3474,6 +3486,16 @@ std::string IRGenerator::getExprClassName(const ast::ExprPtr &expr)
 {
     if (!expr)
         return "";
+    // Borrow / move expressions are transparent: `&x`, `&mut x`, `move x` have
+    // the same class as `x`, so a `let r = &obj` binding tracks obj's class and
+    // field/method access through the reference resolves correctly.
+    if (auto un = std::dynamic_pointer_cast<ast::UnaryExpr>(expr))
+    {
+        if (un->op.type == lexer::TokenType::BORROW ||
+            un->op.type == lexer::TokenType::MUTABLE_BORROW ||
+            un->op.type == lexer::TokenType::MOVE)
+            return getExprClassName(un->right);
+    }
     if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
     {
         if (var->name == "self" || var->name == "this")

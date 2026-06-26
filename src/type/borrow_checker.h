@@ -1,14 +1,22 @@
 #pragma once
 
-// Opt-in ownership / borrow checker (move + use-after-move analysis).
+// Opt-in ownership / borrow checker (move + use-after-move + reference borrows).
 //
 // Tocin is GC-based and lets class instances alias freely by default, so this
 // pass is OFF unless `--borrow-check` is passed. When on, it enforces Rust-like
-// move semantics on *owned* values (class/struct instances): moving a value
-// (binding it elsewhere, passing it by value, returning it, or `move x`)
-// invalidates the source, and using a moved value is a compile error.
-// Reassigning a moved variable revives it. Copy types (int/float/bool/string)
-// are never moved. The pass never changes codegen; it only reports diagnostics.
+// rules on *owned* values (class/struct instances):
+//
+//   Moves: moving a value (binding it elsewhere, passing it by value, returning
+//   it, or `move x`) invalidates the source; using a moved value is a compile
+//   error (B001). Reassigning a moved variable revives it. Copy types
+//   (int/float/bool/string) are never moved.
+//
+//   Borrows: `&x` takes a shared borrow and `&mut x` an exclusive one. While a
+//   `&mut x` is live you cannot use, move, mutate, or re-borrow `x`; while any
+//   `&x` is live you cannot mutably borrow, move, or mutate `x` (B002). Borrows
+//   are released when the borrowing binding leaves scope (lexical lifetimes).
+//
+// The pass never changes codegen; it only reports diagnostics.
 
 #include "../ast/ast.h"
 #include "../error/error_handler.h"
@@ -30,7 +38,17 @@ namespace type_checker
 
     private:
         enum class State { Owned, Moved };
-        using ScopeMap = std::unordered_map<std::string, State>;
+
+        // Per-variable ownership + borrow bookkeeping.
+        struct VarInfo
+        {
+            State state = State::Owned;
+            int shared = 0;          // # of live shared borrows OF this variable
+            bool mut = false;        // a live &mut borrow OF this variable exists
+            std::string borrowOf;    // if this var is a reference, the var it borrows
+            bool borrowMut = false;  // ... and whether that borrow is mutable
+        };
+        using ScopeMap = std::unordered_map<std::string, VarInfo>;
         using Snapshot = std::vector<ScopeMap>;
 
         error::ErrorHandler &errorHandler;
@@ -45,9 +63,9 @@ namespace type_checker
 
         // Scope + state helpers.
         void pushScope() { scopes.emplace_back(); }
-        void popScope() { if (!scopes.empty()) scopes.pop_back(); }
+        void popScope();                              // releases borrows held here
         void declareOwned(const std::string &name);
-        State *find(const std::string &name); // nearest scope entry, or null
+        VarInfo *find(const std::string &name);       // nearest scope entry, or null
 
         // Recursive analysis.
         void checkStmt(const ast::StmtPtr &stmt);
@@ -56,11 +74,17 @@ namespace type_checker
         void consume(const ast::ExprPtr &expr);    // move (by-value) context
         const ast::VariableExpr *asBareVar(const ast::ExprPtr &expr);
 
+        // Borrow helpers. Returns true if `expr` was a borrow and was handled.
+        bool isBorrow(const ast::ExprPtr &expr, bool &isMut, const ast::VariableExpr *&target);
+        void takeBorrow(const std::string &refName, const ast::VariableExpr *target, bool isMut);
+        bool hasLiveBorrow(const std::string &name); // shared>0 or mut
+
         // Branch join: a variable moved on ANY analyzed path is moved after.
         Snapshot snapshot() const { return scopes; }
         void restore(const Snapshot &s) { scopes = s; }
         void mergeMoved(const std::vector<Snapshot> &ends);
 
         void errMoved(const std::string &name, const lexer::Token &tok);
+        void errBorrow(const std::string &msg, const lexer::Token &tok);
     };
 } // namespace type_checker
