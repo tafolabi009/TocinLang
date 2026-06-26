@@ -36,6 +36,18 @@
 #include <llvm/Support/CodeGen.h>
 #include <cstdlib>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
+// Platform APIs for locating this executable (used to find the bundled linker).
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
 
 // The Tocin runtime (channels/goroutines) lives in the static core library.
 // Declared here so the JIT can register their addresses; referencing them in
@@ -190,6 +202,35 @@ extern "C" {
 #include "type/extension_functions.h"
 #include "runtime/concurrency.h"
 #include "runtime/linq.h"
+
+/**
+ * @brief Absolute directory containing the running tocin executable.
+ *
+ * Used to locate the optional self-contained linker bundle (a vendored ld.lld
+ * plus the CRT objects / import libs) that lets `-o <exe>` produce a native
+ * binary without a system gcc/clang on PATH. Returns "" if it can't be found.
+ */
+static std::string tocinExecutableDir()
+{
+#if defined(_WIN32)
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, buf, static_cast<DWORD>(sizeof(buf)));
+    if (n == 0 || n >= sizeof(buf)) return {};
+    std::string p(buf, n);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return {};
+    std::string p(buf);
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf));
+    if (n <= 0) return {};
+    std::string p(buf, static_cast<size_t>(n));
+#endif
+    auto pos = p.find_last_of("/\\");
+    return pos == std::string::npos ? std::string() : p.substr(0, pos);
+}
 
 /**
  * @brief Enhanced compiler structure with all new features
@@ -732,8 +773,99 @@ public:
     /**
      * @brief Link an object file into a native executable using the system C toolchain.
      */
+    // Result of attempting the self-contained bundled linker.
+    enum class BundledLink { Ok, Failed, NotBundled };
+
+    // Link <objPath> -> <exePath> using a vendored ld.lld driven by a data-driven
+    // recipe shipped next to the compiler (libexec/link/). The recipe is an
+    // ld.lld argument list (whitespace/newline separated) with placeholders:
+    //   %LINKDIR% -> absolute path of the link/ bundle dir
+    //   %OBJ%     -> the input object
+    //   %OUT%     -> the output executable
+    // Returns NotBundled when no bundle is present (caller falls back to the C
+    // driver), Ok on success, or Failed (error reported) when the bundled linker
+    // is present but the link fails. Keeping the recipe as data means the link
+    // line can be corrected without rebuilding the compiler.
+    BundledLink tryBundledLink(const std::string& objPath, const std::string& exePath)
+    {
+        namespace fs = std::filesystem;
+        std::string dir = tocinExecutableDir();
+        if (dir.empty()) return BundledLink::NotBundled;
+        fs::path linkDir = fs::path(dir) / "link";
+#if defined(_WIN32)
+        fs::path lld = linkDir / "ld.lld.exe";
+#else
+        fs::path lld = linkDir / "ld.lld";
+#endif
+        fs::path recipePath = linkDir / "link-recipe.txt";
+        std::error_code ec;
+        if (!fs::exists(lld, ec) || !fs::exists(recipePath, ec))
+            return BundledLink::NotBundled;
+
+        std::ifstream in(recipePath);
+        if (!in) return BundledLink::NotBundled;
+        std::stringstream buf;
+        buf << in.rdbuf();
+        std::string args = buf.str();
+
+        auto substAll = [&](const std::string& key, const std::string& val) {
+            for (size_t p = args.find(key); p != std::string::npos;
+                 p = args.find(key, p + val.size()))
+                args.replace(p, key.size(), val);
+        };
+        substAll("%LINKDIR%", linkDir.string());
+        substAll("%OBJ%", objPath);
+        substAll("%OUT%", exePath);
+
+        // Pass the (possibly long) argument list via an @response file so command
+        // length limits and path quoting are not a concern.
+        fs::path resp = fs::path(exePath).parent_path() / ".tocin-link.rsp";
+        {
+            std::ofstream o(resp);
+            o << args;
+        }
+        // The bundled ld.lld is dynamically linked against the same shared libs
+        // (libLLVM, libstdc++, ...) that sit next to tocin in libexec. Prepend
+        // our own directory to PATH for the child so it finds them, instead of
+        // duplicating ~100MB of DLLs into link/.
+        std::string oldPath = std::getenv("PATH") ? std::getenv("PATH") : "";
+#if defined(_WIN32)
+        _putenv_s("PATH", (dir + ";" + oldPath).c_str());
+#else
+        std::string oldLd = std::getenv("LD_LIBRARY_PATH") ? std::getenv("LD_LIBRARY_PATH") : "";
+        setenv("PATH", (dir + ":" + oldPath).c_str(), 1);
+        setenv("LD_LIBRARY_PATH", (dir + ":" + oldLd).c_str(), 1);
+#endif
+        std::string cmd = "\"" + lld.string() + "\" @\"" + resp.string() + "\"";
+        int rc = std::system(cmd.c_str());
+#if defined(_WIN32)
+        _putenv_s("PATH", oldPath.c_str());
+#else
+        setenv("PATH", oldPath.c_str(), 1);
+#endif
+        fs::remove(resp, ec);
+        if (rc != 0) {
+            errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
+                                     "Bundled linker (ld.lld) failed (exit " +
+                                         std::to_string(rc) + "). Recipe: " +
+                                         recipePath.string(),
+                                     "", 0, 0);
+            return BundledLink::Failed;
+        }
+        return BundledLink::Ok;
+    }
+
     bool linkExecutable(const std::string& objPath, const std::string& exePath)
     {
+        // Prefer the self-contained bundled linker (vendored ld.lld + CRT/import
+        // libs) so native output needs no external gcc/clang. Fall through to the
+        // C driver only when no bundle is present.
+        switch (tryBundledLink(objPath, exePath)) {
+            case BundledLink::Ok:         return true;
+            case BundledLink::Failed:     return false;
+            case BundledLink::NotBundled: break;
+        }
+
         // Pick a C toolchain driver to link with. $CC wins; otherwise probe the
         // usual driver names and use the first that actually runs. mingw-w64
         // ships 'gcc' (there is no 'cc'), so it is tried first on Windows.
