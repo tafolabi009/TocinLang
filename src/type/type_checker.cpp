@@ -874,9 +874,16 @@ namespace type_checker
         if (stmt->type)
         {
             varType = canonicalize(stmt->type);
+            // List/array element types are not tracked precisely (and a
+            // `list<Trait>` is intentionally heterogeneous), so don't flag an
+            // array literal against a declared list/array annotation.
+            bool listAnnot = false;
+            if (auto gt = std::dynamic_pointer_cast<ast::GenericType>(stmt->type))
+                listAnnot = (gt->name == "list" || gt->name == "array" ||
+                             gt->name == "List" || gt->name == "Array");
             // If both an annotation and an initializer exist and they clearly
             // disagree (both concrete & known), report a mismatch.
-            if (initType && !isUnknown(initType) && !isUnknown(varType) &&
+            if (!listAnnot && initType && !isUnknown(initType) && !isUnknown(varType) &&
                 !isAssignable(initType, varType))
             {
                 errorHandler_.reportError(

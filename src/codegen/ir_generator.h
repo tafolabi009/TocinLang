@@ -209,6 +209,20 @@ namespace codegen
         struct ADTVariant { std::string enumName; int64_t tag; std::vector<ast::TypePtr> fields; };
         std::map<std::string, ADTVariant> adtVariants;                          // variant name & EnumName.variant -> info
         std::map<std::string, std::vector<std::string>> adtEnumVariants;        // enum name -> ordered variant names
+
+        // --- Trait objects / dynamic dispatch ---------------------------------
+        // A trait object is a heap box { i64 typeId, ptr data }. typeId selects
+        // the concrete class; data points at its instance. A method call on a
+        // trait-typed value switches on typeId to the concrete Class_method.
+        std::set<std::string> traitNames;                                       // declared trait names
+        std::map<std::string, std::vector<std::string>> traitMethodOrder;       // trait -> ordered method names
+        std::map<std::string, std::set<std::string>> traitImpls;               // trait -> classes that impl it
+        std::map<std::string, int64_t> classTypeId;                            // class name -> stable runtime type id
+        std::map<std::string, ast::FunctionStmt *> functionDecls;              // top-level fn name -> decl (for param types)
+        std::map<std::string, std::string> varTraitType;                       // local/param name -> trait type it is declared as
+        std::map<std::string, std::string> varArrayElemTrait;                  // array var -> trait type of its elements (for trait-object vectors)
+        std::string pendingElemTrait;                                          // when building a list<Trait> literal, box each element as this trait
+        llvm::StructType *traitObjTy = nullptr;                                 // { i64 typeId, ptr data }
         std::map<std::string, llvm::Type *> typeBindings;                        // active type-parameter bindings during instantiation
         std::map<std::string, llvm::Function *> stdLibFunctions;                   // Standard library functions
         std::map<std::string, ClassInfo> classTypes;                               // Class type information
@@ -351,6 +365,18 @@ namespace codegen
         // Construct a tuple on the heap as a flat i64-slot buffer [slot0][slot1]…
         // `slots` are already normalized to 64-bit slots. Returns an opaque ptr.
         llvm::Value *makeTuple(const std::vector<llvm::Value *> &slots);
+
+        // Trait objects. getTraitObjType is { i64 typeId, ptr data }. classIdOf
+        // assigns/returns a class's stable typeId. makeTraitObject boxes a
+        // concrete instance. emitDynCall dispatches `method` on a trait-object
+        // value across every class implementing `trait`.
+        llvm::StructType *getTraitObjType();
+        int64_t classIdOf(const std::string &className);
+        llvm::Value *makeTraitObject(const std::string &className, llvm::Value *instancePtr);
+        llvm::Value *emitDynCall(const std::string &trait, const std::string &method,
+                                 llvm::Value *traitObj, const std::vector<llvm::Value *> &args);
+        // If `type` names a trait, return that name, else "".
+        std::string traitNameOf(const ast::TypePtr &type);
 
         // Monomorphize a generic function for a concrete set of type bindings.
         llvm::Function *emitGenericInstance(ast::FunctionStmt *stmt,

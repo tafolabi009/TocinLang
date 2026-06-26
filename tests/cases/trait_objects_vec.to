@@ -1,0 +1,19 @@
+// expect: 84
+// Heterogeneous collection: a list<Shape> holds different concrete types, each
+// boxed as a trait object, and `for s in shapes` dispatches per element.
+trait Shape {
+    def area(self) -> int;
+}
+class Circle { r: int; }
+impl Shape for Circle { def area(self) -> int { return self.r * self.r * 3; } }
+class Rect { w: int; h: int; }
+impl Shape for Rect { def area(self) -> int { return self.w * self.h; } }
+
+def main() -> int {
+    let shapes: list<Shape> = [Circle(5), Rect(2, 3), Circle(1)];
+    let total = 0;
+    for s in shapes {
+        total = total + s.area(); // 75 + 6 + 3
+    }
+    return total; // 84
+}

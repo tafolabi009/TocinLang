@@ -574,6 +574,18 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
     llvm::Type *varType = stmt->type ? getLLVMType(stmt->type) : nullptr;
 
+    // `let xs: list<SomeTrait> = [...]` -> each concrete element is boxed into a
+    // trait object so the collection is heterogeneous and dispatches per element.
+    std::string elemTrait;
+    if (auto gt = std::dynamic_pointer_cast<ast::GenericType>(stmt->type))
+    {
+        if ((gt->name == "list" || gt->name == "array" || gt->name == "List" ||
+             gt->name == "Array") && !gt->typeArguments.empty())
+            elemTrait = traitNameOf(gt->typeArguments[0]);
+    }
+    std::string savedPending = pendingElemTrait;
+    pendingElemTrait = elemTrait;
+
     // Evaluate the initializer exactly once, here. Never reuse a stale
     // `lastValue` left over from a previous statement (it may even belong to a
     // different function, which produced "does not dominate all uses"). For an
@@ -583,6 +595,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     {
         lastValue = nullptr;
         stmt->initializer->accept(*this);
+        pendingElemTrait = savedPending;
         if (!lastValue)
             return;
         initVal = wrapIfRawFunction(lastValue); // `let f = someFunc;` -> closure
@@ -591,11 +604,15 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     }
     else if (!stmt->type)
     {
+        pendingElemTrait = savedPending;
         errorHandler.reportError(error::ErrorCode::T032_CANNOT_INFER_TYPE,
                                  "Cannot infer type for variable '" + stmt->name + "' without initializer",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         return;
     }
+    pendingElemTrait = savedPending;
+    if (!elemTrait.empty())
+        varArrayElemTrait[stmt->name] = elemTrait; // for-each over this var dispatches per element
 
     if (!varType)
     {
@@ -619,6 +636,17 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
         vcls = stmt->type->toString();
     if (!vcls.empty())
         varClasses[stmt->name] = vcls;
+
+    // `let x: SomeTrait = concrete;` -> box the instance into a trait object so
+    // method calls on x dispatch dynamically (not statically to the concrete type).
+    std::string vtrait = traitNameOf(stmt->type);
+    if (!vtrait.empty() && !vcls.empty() && traitImpls.count(vtrait) &&
+        traitImpls[vtrait].count(vcls) && initVal)
+    {
+        initVal = makeTraitObject(vcls, initVal);
+        varTraitType[stmt->name] = vtrait;
+        varClasses.erase(stmt->name); // it's a trait object now, not the concrete class
+    }
 
     // RAII: register a destructor call for a local initialized *directly* by a
     // constructor of a class that defines __del__. Aliases, parameters, and
@@ -981,6 +1009,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     varArrayElem.clear();
     varFuncSig.clear();
     varIsString.clear();
+    varTraitType.clear();
 
     // Create allocas for parameters and store values
     idx = 0;
@@ -993,6 +1022,10 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
             builder.CreateStore(&arg, alloca);
             namedValues[stmt->parameters[idx].name] = alloca;
             recordArrayParam(stmt->parameters[idx].name, stmt->parameters[idx].type);
+            // A parameter declared as a trait type is a trait object -> dispatch
+            // its method calls dynamically.
+            std::string ptrait = traitNameOf(stmt->parameters[idx].type);
+            if (!ptrait.empty()) varTraitType[stmt->parameters[idx].name] = ptrait;
         }
         idx++;
     }
@@ -1359,6 +1392,32 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             lastExprClassName = mangled;
             genericCtorClass[expr] = mangled;
             return;
+        }
+    }
+
+    // Dynamic dispatch: receiver is a value whose static type is a trait, so
+    // its concrete type is only known at run time. Dispatch through the trait
+    // object's typeId to the matching concrete method.
+    if (auto methodCallee = std::dynamic_pointer_cast<ast::GetExpr>(expr->callee))
+    {
+        if (auto recvVar = std::dynamic_pointer_cast<ast::VariableExpr>(methodCallee->object))
+        {
+            auto tit = varTraitType.find(recvVar->name);
+            if (tit != varTraitType.end() && traitImpls.count(tit->second))
+            {
+                methodCallee->object->accept(*this);
+                llvm::Value *to = lastValue;
+                if (!to) return;
+                std::vector<llvm::Value *> args;
+                for (const auto &a : expr->arguments)
+                {
+                    a->accept(*this);
+                    if (!lastValue) return;
+                    args.push_back(lastValue);
+                }
+                llvm::Value *r = emitDynCall(tit->second, methodCallee->name, to, args);
+                if (r) { lastValue = r; return; }
+            }
         }
     }
 
@@ -2148,13 +2207,30 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     }
     else
     {
+        // If the callee's declared parameter is a trait, box a concrete argument
+        // into a trait object so the call dispatches dynamically inside.
+        ast::FunctionStmt *decl = nullptr;
+        if (!calleeName.empty())
+        {
+            auto dit = functionDecls.find(calleeName);
+            if (dit != functionDecls.end()) decl = dit->second;
+        }
         for (size_t i = 0; i < expr->arguments.size(); ++i)
         {
             expr->arguments[i]->accept(*this);
             if (!lastValue)
                 return;
+            llvm::Value *av = lastValue;
+            if (decl && i < decl->parameters.size())
+            {
+                std::string ptrait = traitNameOf(decl->parameters[i].type);
+                std::string argCls = getExprClassName(expr->arguments[i]);
+                if (!ptrait.empty() && !argCls.empty() &&
+                    traitImpls.count(ptrait) && traitImpls[ptrait].count(argCls))
+                    av = makeTraitObject(argCls, av);
+            }
             llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
-            args.push_back(coerceArg(lastValue, pt));
+            args.push_back(coerceArg(av, pt));
         }
     }
     lastValue = builder.CreateCall(funcType, callee, args);
@@ -2463,6 +2539,16 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
 
     llvm::AllocaInst *iterVar = builder.CreateAlloca(elemTy, nullptr, variable);
     namedValues[variable] = iterVar;
+
+    // If the elements are trait objects (explicit `for s: Trait in xs`, or `xs`
+    // was declared list<Trait>), the loop variable dispatches dynamically.
+    {
+        std::string loopTrait = traitNameOf(variableType);
+        if (loopTrait.empty())
+            if (auto iv = std::dynamic_pointer_cast<ast::VariableExpr>(stmt->iterable))
+                if (varArrayElemTrait.count(iv->name)) loopTrait = varArrayElemTrait[iv->name];
+        if (!loopTrait.empty()) varTraitType[variable] = loopTrait;
+    }
 
     // Counter variable.
     llvm::AllocaInst *indexVar = builder.CreateAlloca(i64, nullptr, "loop.index");
@@ -2974,12 +3060,24 @@ void IRGenerator::visitListExpr(ast::ListExpr *expr)
 
     // Determine the element type from the first element (default to i64).
     llvm::Type *elemTy = i64;
+    std::string elemTrait = pendingElemTrait; // capture before nested evals clear it
     std::vector<llvm::Value *> elems;
     for (auto &e : expr->elements)
     {
+        std::string saved = pendingElemTrait;
+        pendingElemTrait.clear(); // nested literals shouldn't inherit this
         e->accept(*this);
+        pendingElemTrait = saved;
         if (!lastValue) return;
-        elems.push_back(lastValue);
+        llvm::Value *ev = lastValue;
+        // Box a concrete element into a trait object for a list<Trait> literal.
+        if (!elemTrait.empty())
+        {
+            std::string ecls = getExprClassName(e);
+            if (!ecls.empty() && traitImpls.count(elemTrait) && traitImpls[elemTrait].count(ecls))
+                ev = makeTraitObject(ecls, ev);
+        }
+        elems.push_back(ev);
     }
     if (!elems.empty())
         elemTy = elems[0]->getType();
@@ -3440,6 +3538,118 @@ llvm::Value *IRGenerator::makeTuple(const std::vector<llvm::Value *> &slots)
     return obj;
 }
 
+// ---- Trait objects / dynamic dispatch ------------------------------------
+llvm::StructType *IRGenerator::getTraitObjType()
+{
+    if (!traitObjTy)
+    {
+        llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+        llvm::Type *ptr = llvm::PointerType::get(context, 0);
+        traitObjTy = llvm::StructType::create(context, {i64, ptr}, "tocin.traitobj");
+    }
+    return traitObjTy;
+}
+
+int64_t IRGenerator::classIdOf(const std::string &className)
+{
+    auto it = classTypeId.find(className);
+    if (it != classTypeId.end()) return it->second;
+    int64_t id = (int64_t)classTypeId.size() + 1; // ids start at 1 (0 = none)
+    classTypeId[className] = id;
+    return id;
+}
+
+std::string IRGenerator::traitNameOf(const ast::TypePtr &type)
+{
+    if (!type) return "";
+    std::string n = type->toString();
+    return traitNames.count(n) ? n : "";
+}
+
+// Box a concrete instance into a heap { i64 typeId, ptr data } trait object.
+llvm::Value *IRGenerator::makeTraitObject(const std::string &className, llvm::Value *instancePtr)
+{
+    llvm::StructType *st = getTraitObjType();
+    llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::Function *mallocFn = stdLibFunctions["malloc"];
+    llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+    llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn, {size}, "traitobj");
+    llvm::Value *idP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "to.idp");
+    builder.CreateStore(llvm::ConstantInt::get(i64, classIdOf(className)), idP);
+    llvm::Value *dataP = builder.CreateGEP(st, obj,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "to.datap");
+    if (!instancePtr->getType()->isPointerTy())
+        instancePtr = builder.CreateIntToPtr(instancePtr, ptr, "to.data");
+    builder.CreateStore(instancePtr, dataP);
+    return obj;
+}
+
+// Dispatch `method` on a trait object across every class implementing `trait`:
+// load the typeId, then an if-chain that calls the matching Class_method(data, args).
+llvm::Value *IRGenerator::emitDynCall(const std::string &trait, const std::string &method,
+                                      llvm::Value *traitObj, const std::vector<llvm::Value *> &args)
+{
+    auto implsIt = traitImpls.find(trait);
+    if (implsIt == traitImpls.end() || implsIt->second.empty())
+        return nullptr;
+    llvm::Type *i32 = llvm::Type::getInt32Ty(context);
+    llvm::Type *i64 = llvm::Type::getInt64Ty(context);
+    llvm::Type *ptr = llvm::PointerType::get(context, 0);
+    llvm::StructType *st = getTraitObjType();
+
+    llvm::Value *toPtr = traitObj->getType()->isPointerTy()
+                             ? traitObj : builder.CreateIntToPtr(traitObj, ptr, "to.ptr");
+    llvm::Value *idP = builder.CreateGEP(st, toPtr,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 0)}, "to.idp");
+    llvm::Value *id = builder.CreateLoad(i64, idP, "to.id");
+    llvm::Value *dataP = builder.CreateGEP(st, toPtr,
+        {llvm::ConstantInt::get(i32, 0), llvm::ConstantInt::get(i32, 1)}, "to.datap");
+    llvm::Value *data = builder.CreateLoad(ptr, dataP, "to.data");
+
+    // Return type comes from any concrete implementation's method signature.
+    llvm::Type *retTy = i64;
+    for (const auto &cls : implsIt->second)
+        if (auto *f = module->getFunction(cls + "_" + method)) { retTy = f->getReturnType(); break; }
+
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *contB = llvm::BasicBlock::Create(context, "dyn.cont", fn);
+    std::vector<std::pair<llvm::Value *, llvm::BasicBlock *>> incoming;
+
+    for (const auto &cls : implsIt->second)
+    {
+        llvm::Function *m = module->getFunction(cls + "_" + method);
+        if (!m) continue;
+        llvm::BasicBlock *callB = llvm::BasicBlock::Create(context, "dyn." + cls, fn);
+        llvm::BasicBlock *nextB = llvm::BasicBlock::Create(context, "dyn.next", fn);
+        llvm::Value *eq = builder.CreateICmpEQ(id, llvm::ConstantInt::get(i64, classIdOf(cls)), "dyn.is");
+        builder.CreateCondBr(eq, callB, nextB);
+
+        builder.SetInsertPoint(callB);
+        std::vector<llvm::Value *> callArgs;
+        callArgs.push_back(data);
+        for (auto *a : args) callArgs.push_back(a);
+        llvm::Value *r = builder.CreateCall(m->getFunctionType(), m, callArgs);
+        if (!retTy->isVoidTy()) incoming.push_back({r, builder.GetInsertBlock()});
+        builder.CreateBr(contB);
+
+        builder.SetInsertPoint(nextB);
+    }
+    // No match: yield a zero/default (defensive — the type checker should prevent it).
+    if (!retTy->isVoidTy())
+        incoming.push_back({llvm::Constant::getNullValue(retTy), builder.GetInsertBlock()});
+    builder.CreateBr(contB);
+
+    builder.SetInsertPoint(contB);
+    if (retTy->isVoidTy())
+        return llvm::ConstantInt::get(i64, 0);
+    llvm::PHINode *phi = builder.CreatePHI(retTy, (unsigned)incoming.size(), "dyn.r");
+    for (auto &pr : incoming) phi->addIncoming(pr.first, pr.second);
+    return phi;
+}
+
 llvm::FunctionType *IRGenerator::llvmFnTypeOf(const std::shared_ptr<ast::FunctionType> &ft)
 {
     if (!ft)
@@ -3829,6 +4039,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     varIsString.clear();
     varClasses.clear();
     varArrayElem.clear();
+    varTraitType.clear();
     unsigned i = 0;
     for (auto &arg : function->args())
     {
@@ -3838,6 +4049,10 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
         builder.CreateStore(&arg, alloca);
         namedValues[pname] = alloca;
         recordArrayParam(pname, stmt->parameters[i].type);
+        // A parameter declared with a trait type is a trait object: record it so
+        // method calls on it dispatch dynamically.
+        std::string ptrait = traitNameOf(stmt->parameters[i].type);
+        if (!ptrait.empty()) varTraitType[pname] = ptrait;
         ++i;
     }
     if (stmt->body)
@@ -4938,10 +5153,23 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
             if (cls->isGeneric())
                 genericClasses[cls->name] = cls.get(); // instantiated lazily per type argument
             else
+            {
                 registerClassType(cls.get());
+                classIdOf(cls->name); // assign a stable runtime type id
+            }
         }
         else if (auto en = std::dynamic_pointer_cast<ast::EnumStmt>(s))
             visitEnumStmt(en.get());
+        else if (auto tr = std::dynamic_pointer_cast<ast::TraitStmt>(s))
+        {
+            // Record the trait and the declaration order of its methods (the
+            // dispatch key) so trait-typed values can dispatch dynamically.
+            traitNames.insert(tr->name);
+            auto &order = traitMethodOrder[tr->name];
+            order.clear();
+            for (auto &m : tr->methods)
+                if (m) order.push_back(m->name);
+        }
     }
 
     // Then forward-declare free functions and method prototypes.
@@ -4953,6 +5181,7 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
                 genericFunctions[fn->name] = fn.get();  // record template for lazy instantiation
             else
                 declareFunctionProto(fn.get());
+            functionDecls[fn->name] = fn.get(); // so call sites can read declared param types
             // Record a function-typed return so callers can recover the
             // signature of a closure produced by calling this function.
             if (auto rft = std::dynamic_pointer_cast<ast::FunctionType>(fn->returnType))
@@ -4985,6 +5214,10 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
             for (auto &m : impl->methods)
                 if (m && m->body)
                     declareMethodProto(typeName, cit->second.classType, m.get());
+            // Record that `typeName` implements `impl->traitName`, for trait-object
+            // dynamic dispatch and (later) bound checking.
+            if (!impl->traitName.empty())
+                traitImpls[impl->traitName].insert(typeName);
         }
     }
 }

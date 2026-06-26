@@ -1,0 +1,45 @@
+// trait_objects.to — open dynamic dispatch (trait objects).
+//
+// A trait declares behavior; each `impl Trait for Type` provides it. A value
+// whose static type is the trait is a *trait object*: it carries its concrete
+// type at run time and dispatches virtually — Tocin's equivalent of Go
+// interfaces, Rust `dyn Trait`, or C++ virtual methods. This is what lets a
+// single collection hold many concrete types and treat them uniformly.
+//
+// Run it:
+//   tocin examples/trait_objects.to --run
+// Exit code is the total area of a mixed list of shapes (84).
+
+trait Shape {
+    def area(self) -> int;
+    def name(self) -> string;
+}
+
+class Circle { r: int; }
+impl Shape for Circle {
+    def area(self) -> int { return self.r * self.r * 3; }
+    def name(self) -> string { return "circle"; }
+}
+
+class Rect { w: int; h: int; }
+impl Shape for Rect {
+    def area(self) -> int { return self.w * self.h; }
+    def name(self) -> string { return "rect"; }
+}
+
+// `s: Shape` is a trait object — the call dispatches to the real type.
+def describe(s: Shape) {
+    println("{} has area {}", s.name(), s.area());
+}
+
+def main() -> int {
+    // A heterogeneous collection of trait objects.
+    let shapes: list<Shape> = [Circle(5), Rect(2, 3), Circle(1)];
+
+    let total = 0;
+    for s in shapes {
+        describe(s);              // virtual call per element
+        total = total + s.area();
+    }
+    return total; // 75 + 6 + 3 = 84
+}

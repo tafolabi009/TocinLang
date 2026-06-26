@@ -1,0 +1,22 @@
+// expect: 162
+// Trait objects / open dynamic dispatch: a value typed as a trait carries its
+// concrete type at run time and dispatches virtually. Works through a
+// trait-typed parameter and a trait-typed `let` binding.
+trait Shape {
+    def area(self) -> int;
+}
+class Circle { r: int; }
+impl Shape for Circle { def area(self) -> int { return self.r * self.r * 3; } }
+class Rect { w: int; h: int; }
+impl Shape for Rect { def area(self) -> int { return self.w * self.h; } }
+
+// One function, many concrete types — resolved dynamically per call.
+def areaOf(s: Shape) -> int { return s.area(); }
+
+def main() -> int {
+    let a: Shape = Circle(5);          // 75
+    let b: Shape = Rect(2, 3);         // 6
+    return areaOf(a) + areaOf(b)       // 75 + 6
+         + areaOf(Circle(4))           // 48
+         + areaOf(Rect(3, 11));        // 33   -> total 162
+}
