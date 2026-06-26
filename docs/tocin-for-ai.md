@@ -736,7 +736,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 
 ## 8. GOTCHAS / PITFALLS (read before writing — each is verified)
 
-1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). They affect the **innermost** enclosing loop only — there are no labeled breaks. (`switch` aliases `match`; `defer` runs LIFO at function return. Still unimplemented: `panic`, `assert`, `yield`, ownership keywords — see §3.)
+1. **`break` / `continue` work in every loop** (`for i in a..b`, `for v in arr`, `while`). Unlabeled, they affect the **innermost** loop; a loop may carry a label (`outer: for ...`) and `break outer;` / `continue outer;` target it. (`switch` aliases `match`; `defer` runs LIFO at function return. Still unimplemented: `panic`, `assert`, `yield`, ownership keywords — see §3.)
 2. **Use `None`, not `null`.** `null` is a reserved word the parser doesn't accept as a value (`Expected expression`). The empty value is `None` (the null pointer).
 3. **`len` is for array literals only.** `len("hello")` returns garbage (it reads the first 8 bytes of the string as an i64 "length"). For strings use **`strLen`**. `len` works on `[1,2,3]` and `list<int>` params; `vecLen` works on `vector` handles; `mapLen` on `map` handles.
 4. **Mixed int/float arithmetic auto-promotes the int to float.** `5 + 3.0` → `8.0`; `10 / 4.0` → `2.5`. Two ints stay int and `/` truncates (`5 / 2` → `2`). To force float division of two ints, make one a float (`x * 1.0 / y`).
@@ -773,7 +773,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 - Generics: generic functions and generic classes, monomorphized by **inferred** type arguments.
 - Traits with `impl Trait for Type` and inherent `impl Type` methods.
 - Enums with integer values (auto and explicit, incl. negatives).
-- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop), `match`/`switch` (value equality + `Some/Ok/Err/None` + algebraic-enum variant patterns with payload binding, checked for exhaustiveness), and `defer <stmt>` (LIFO cleanup at function return).
+- Control flow: `if`/`elif`/`else`, `while`, `for ... in a..b`, `for v in arr`, `break`/`continue` (innermost loop, or a named outer loop via `label: for ...` + `break label;`), `match`/`switch` (value equality + `Some/Ok/Err/None` + algebraic-enum variant patterns with payload binding, checked for exhaustiveness), and `defer <stmt>` (LIFO cleanup at function return).
 - Exceptions: `throw` / `try` / `catch` / `finally` (setjmp-based, integer/handle payload).
 - `Option`/`Result` boxes and null-safety operators `?:` `?.` `!!`.
 - Fixed array literals (`[..]`, `len`, indexing/assignment) and dynamic `vector` + `map` (int- and string-keyed) builtins.
@@ -789,7 +789,7 @@ Note how the loop avoids `break`/`continue` (unsupported) by using boolean flags
 
 **Tocin cannot (yet):**
 - `panic`/`recover` / `assert` / `yield` / generators / ownership (`move`/`borrow`) — reserved but unimplemented. (`switch` aliases `match`; `defer` is implemented.)
-- Capture **by reference** (capture is by value/snapshot); lambda bodies that are blocks (a lambda body is one expression); labeled `break`/`continue`.
+- Capture **by reference** (capture is by value/snapshot); lambda bodies that are blocks (a lambda body is one expression).
 - Capture from nested `def` (those are non-capturing — use a lambda).
 - The power operator `**` and `++`/`--`.
 - Turbofish / explicit generic type arguments (let them be inferred).

@@ -392,6 +392,18 @@ next iteration. Both work in **all** loop forms — range `for`, for-each `for`,
 and `while` — and act on the innermost loop when loops are nested. In a range or
 for-each loop, `continue` still advances the iterator before the next iteration.
 
+A loop may be **labeled** (`name: for ...` / `name: while ...`), and
+`break name;` / `continue name;` target that loop — the way to exit or advance
+an *outer* loop from inside a nested one:
+
+```tocin
+outer: for i in 0..5 {
+    for j in 0..5 {
+        if i * j > 6 { break outer; }   // leaves both loops
+    }
+}
+```
+
 ```tocin
 def main() -> int {
     let sum = 0;

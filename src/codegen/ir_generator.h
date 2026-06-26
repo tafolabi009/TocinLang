@@ -176,6 +176,7 @@ namespace codegen
         std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
         std::set<std::string> varIsString;                                        // Variables statically known to hold strings
         std::vector<std::pair<llvm::BasicBlock *, llvm::BasicBlock *>> loopStack; // {continue target, break target} per enclosing loop
+        std::vector<std::string> loopLabels;                                      // label per enclosing loop ("" if unlabeled), index-aligned with loopStack
         // Pending cleanups an early `return` must run while unwinding out of
         // try/finally scopes: the finally block (may be null) and whether the
         // exception handler registered for this try must also be popped.

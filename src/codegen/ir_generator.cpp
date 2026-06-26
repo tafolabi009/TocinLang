@@ -2207,8 +2207,10 @@ void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
 
     // break -> afterBlock, continue -> condBlock (re-checks the condition).
     loopStack.push_back({condBlock, afterBlock});
+    loopLabels.push_back(stmt->label);
     stmt->body->accept(*this);
     loopStack.pop_back();
+    loopLabels.pop_back();
 
     // Restore environment after exiting scope
     restoreEnvironment();
@@ -2264,8 +2266,10 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
             builder.SetInsertPoint(bodyBB);
             // continue -> incBB (advances the counter), break -> afterBB
             loopStack.push_back({incBB, afterBB});
+            loopLabels.push_back(stmt->label);
             if (stmt->body) stmt->body->accept(*this);
             loopStack.pop_back();
+            loopLabels.pop_back();
             if (!builder.GetInsertBlock()->getTerminator())
                 builder.CreateBr(incBB);
 
@@ -2335,8 +2339,10 @@ void IRGenerator::visitForStmt(ast::ForStmt *stmt)
 
     // continue -> incBlock (advances the index), break -> afterBlock
     loopStack.push_back({incBlock, afterBlock});
+    loopLabels.push_back(stmt->label);
     if (stmt->body) stmt->body->accept(*this);
     loopStack.pop_back();
+    loopLabels.pop_back();
     if (!builder.GetInsertBlock()->getTerminator())
         builder.CreateBr(incBlock);
 
@@ -3825,33 +3831,49 @@ void IRGenerator::visitThrowStmt(ast::ThrowStmt *stmt)
     lastValue = nullptr;
 }
 
+// Resolve a loop target by label: returns the index into loopStack, or -1.
+// An empty label selects the innermost loop (top of stack).
+static int resolveLoopTarget(const std::vector<std::string> &labels,
+                             const std::string &target)
+{
+    if (labels.empty()) return -1;
+    if (target.empty()) return (int)labels.size() - 1;
+    for (int i = (int)labels.size() - 1; i >= 0; --i)
+        if (labels[i] == target) return i;
+    return -1;
+}
+
 void IRGenerator::visitBreakStmt(ast::BreakStmt *stmt)
 {
-    (void)stmt;
-    if (loopStack.empty())
+    int idx = resolveLoopTarget(loopLabels, stmt->targetLabel);
+    if (idx < 0)
     {
         errorHandler.reportError(error::ErrorCode::S004_INVALID_STATEMENT,
-                                 "'break' used outside of a loop",
+                                 stmt->targetLabel.empty()
+                                     ? "'break' used outside of a loop"
+                                     : "'break' refers to unknown loop label '" + stmt->targetLabel + "'",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         return;
     }
     if (!builder.GetInsertBlock()->getTerminator())
-        builder.CreateBr(loopStack.back().second); // break target
+        builder.CreateBr(loopStack[idx].second); // break target
     lastValue = nullptr;
 }
 
 void IRGenerator::visitContinueStmt(ast::ContinueStmt *stmt)
 {
-    (void)stmt;
-    if (loopStack.empty())
+    int idx = resolveLoopTarget(loopLabels, stmt->targetLabel);
+    if (idx < 0)
     {
         errorHandler.reportError(error::ErrorCode::S004_INVALID_STATEMENT,
-                                 "'continue' used outside of a loop",
+                                 stmt->targetLabel.empty()
+                                     ? "'continue' used outside of a loop"
+                                     : "'continue' refers to unknown loop label '" + stmt->targetLabel + "'",
                                  "", 0, 0, error::ErrorSeverity::ERROR);
         return;
     }
     if (!builder.GetInsertBlock()->getTerminator())
-        builder.CreateBr(loopStack.back().first); // continue target
+        builder.CreateBr(loopStack[idx].first); // continue target
     lastValue = nullptr;
 }
 

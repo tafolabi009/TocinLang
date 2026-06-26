@@ -67,10 +67,11 @@ language (networking, crypto, OS APIs): call the C library.
    a heap address keeps that block alive). For request-scoped servers this is a
    non-issue in practice.
 2. **Capture is by value, not by reference.** Closures snapshot captured
-   locals; mutating the original afterward doesn't change the copy. No labeled
-   `break`/`continue`. (`const` bindings are enforced — reassigning one is a
-   compile error — and array indexing is bounds-checked by default, panicking on
-   an out-of-range access; `--freestanding` omits the check for systems code.)
+   locals; mutating the original afterward doesn't change the copy. (`const`
+   bindings are enforced — reassigning one is a compile error; array indexing is
+   bounds-checked by default, panicking on an out-of-range access, with
+   `--freestanding` omitting the check for systems code; and `break`/`continue`
+   support outer-loop labels.)
 3. **Collection elements are 64-bit slots.** `vector`/`map`/channel payloads
    are designed for `int`. Pointers/strings round-trip as raw addresses but
    there is no element-type tracking, so storing strings in a `vector` is
