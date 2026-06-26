@@ -4,7 +4,7 @@ An honest assessment of what Tocin can and cannot build today, written against
 the real in-tree compiler (every claim below is backed by a program that
 compiles and runs — see `tests/cases/` and `examples/`).
 
-Last updated: this build. Test suite: 131/131 `.to` programs passing, plus
+Last updated: this build. Test suite: 134/134 `.to` programs passing, plus
 opt-in borrow-check (5/5), match-exhaustiveness (3/3), and safety —
 const + bounds (2/2) — harnesses.
 

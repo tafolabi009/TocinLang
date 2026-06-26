@@ -131,7 +131,7 @@ primary        ::= INT | FLOAT | STRING | "true" | "false" | "None" | IDENT
 | `const` | Immutable binding: like `let`, but reassigning it is a compile error (T013). |
 | `if` / `elif` / `else` | Conditional. Condition needs no parentheses; body needs braces. |
 | `while` | While loop. |
-| `for ... in` | Iterate a range `a..b` or index an array (`for i in 0..len(a)`). |
+| `for ... in` | Iterate a range `a..b`, an array (`for v in arr`), or any class instance with a `next(self) -> Option` method (the iterator protocol). |
 | `in` | Part of `for x in ...`. |
 | `return` | Return from a function (optionally with a value). |
 | `match` / `case` / `default` | Pattern match: int/float equality, `Some/Ok/Err/None`, and algebraic-enum variant patterns `Circle(r)`/`Rect(w, h)`/`Empty` with field binding. Matches on an algebraic enum must be exhaustive (cover every variant or add `default:`). |

@@ -368,6 +368,29 @@ for v in arr {
 
 Both loop forms support `break` and `continue` (see below).
 
+### `for x in <iterator>` (iterator protocol)
+
+`for x in obj` also works on any **class instance whose type defines a method
+`next(self) -> Option`**: each iteration calls `obj.next()`, binds the payload
+of a `Some(v)` to `x`, and stops on `None`. This is how you iterate a custom
+collection or a lazy sequence (the equivalent of Rust's `Iterator` or Python's
+iterator protocol).
+
+```tocin
+class Range {
+    cur: int; stop: int;
+    def next(self) -> Option {
+        if self.cur >= self.stop { return None; }
+        let v = self.cur; self.cur = self.cur + 1; return Some(v);
+    }
+}
+
+for x in Range(0, 5) { println("{}", x); }   // 0 1 2 3 4
+```
+
+`break`/`continue` (and labels) work here as in any loop; `continue` re-enters
+the loop by calling `next()` again.
+
 ### `return`
 
 ```tocin

@@ -1,0 +1,41 @@
+// iterators.to — custom iterators via the `next() -> Option` protocol.
+//
+// `for x in it` works on any object whose class defines `next(self) -> Option`:
+// returning `Some(v)` yields `v` and continues, returning `None` ends the loop.
+// This is Tocin's equivalent of Rust's `Iterator` / Python's iterator protocol,
+// and it composes with `break`/`continue` and labels like any loop.
+//
+// Run it:
+//   tocin examples/iterators.to --run
+// Exit code is the count of primes below 20 (8).
+
+// Yields cur, cur+1, ..., stop-1.
+class Range {
+    cur: int;
+    stop: int;
+    def next(self) -> Option {
+        if self.cur >= self.stop { return None; }
+        let v = self.cur;
+        self.cur = self.cur + 1;
+        return Some(v);
+    }
+}
+
+def isPrime(n: int) -> bool {
+    if n < 2 { return false; }
+    let d = 2;
+    while d * d <= n {
+        if n % d == 0 { return false; }
+        d = d + 1;
+    }
+    return true;
+}
+
+def main() -> int {
+    let count = 0;
+    for n in Range(0, 20) {
+        if isPrime(n) { count = count + 1; }
+    }
+    println("primes below 20: {}", count);
+    return count; // 8 (2,3,5,7,11,13,17,19)
+}

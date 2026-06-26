@@ -1,0 +1,32 @@
+// expect: 22
+// The iterator protocol: any class with a `next(self) -> Option` method can be
+// driven by `for x in it` — Some(x) yields x, None ends the loop. Custom
+// iterators compose with break/continue like any loop.
+class Counter {
+    cur: int;
+    stop: int;
+    def next(self) -> Option {
+        if self.cur >= self.stop { return None; }
+        let v = self.cur;
+        self.cur = self.cur + 1;
+        return Some(v);
+    }
+}
+
+class Evens {
+    cur: int;
+    stop: int;
+    def next(self) -> Option {
+        if self.cur >= self.stop { return None; }
+        let v = self.cur;
+        self.cur = self.cur + 2;
+        return Some(v);
+    }
+}
+
+def main() -> int {
+    let sum = 0;
+    for x in Counter(0, 5) { sum = sum + x; }   // 0+1+2+3+4 = 10
+    for e in Evens(0, 8) { sum = sum + e; }      // 0+2+4+6   = 12
+    return sum;                                   // 22
+}
