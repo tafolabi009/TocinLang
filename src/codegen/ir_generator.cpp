@@ -765,7 +765,14 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     }
 
     // Track array element type so indexing into this variable loads/stores the
-    // right element type.
+    // right element type. An explicit `list<T>` annotation is authoritative
+    // (covers `let a: list<float> = zeros(n)` and any other initializer).
+    if (auto gt = std::dynamic_pointer_cast<ast::GenericType>(stmt->type))
+    {
+        if ((gt->name == "list" || gt->name == "array" || gt->name == "List" ||
+             gt->name == "Array") && !gt->typeArguments.empty())
+            varArrayElem[stmt->name] = getLLVMType(gt->typeArguments[0]);
+    }
     if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
     {
         varArrayElem[stmt->name] =
@@ -1807,6 +1814,28 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "ptradd");
                 lastValue = builder.CreatePtrToInt(g, i64b, "ptraddr"); return; }
+            if ((funcName == "newArray" || funcName == "zeros" || funcName == "newFloatArray") && na == 1) {
+                // Dynamically-sized, zero-initialized array with the standard
+                // [i64 length][n 8-byte slots] layout, so len()/indexing/for-in
+                // all work. `newArray` -> int elements, `zeros`/`newFloatArray`
+                // -> float. This is the missing `zeros(n)` every numeric
+                // language has; element type comes from the variable's list<T>
+                // annotation, this just allocates + zeroes.
+                auto n = slot(0); if (!n) return;
+                llvm::Value *bytes = builder.CreateAdd(
+                    llvm::ConstantInt::get(i64b, 8),
+                    builder.CreateMul(n, llvm::ConstantInt::get(i64b, 8)), "arr.bytes");
+                llvm::Value *buf = builder.CreateCall(rt("__tocin_alloc", ptrb, {i64b}), {bytes}, "newarr");
+                builder.CreateStore(n, buf);                       // length header
+                // zero the element region [8 .. 8+n*8)
+                llvm::Value *elemsPtr = builder.CreateGEP(
+                    llvm::Type::getInt8Ty(context), buf, llvm::ConstantInt::get(i64b, 8), "arr.elems");
+                builder.CreateCall(rt("memset", ptrb, {ptrb, i32b, i64b}),
+                    {elemsPtr, llvm::ConstantInt::get(i32b, 0), builder.CreateMul(n, llvm::ConstantInt::get(i64b, 8))});
+                lastValue = buf;
+                lastExprArrayElem = (funcName == "newArray") ? i64b
+                                    : llvm::Type::getDoubleTy(context);
+                return; }
             if (funcName == "strFromAddr" && na == 1) { // reinterpret an int address as a string
                 // Closes the loop for string-valued containers: a string stored
                 // in a vector/map slot comes back as its i64 address; this turns

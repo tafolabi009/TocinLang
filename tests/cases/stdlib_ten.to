@@ -1,0 +1,72 @@
+import std.testing;
+import math.basic;
+import ml.ten;
+
+def main() -> int {
+    testBegin();
+    // --- recurrence correctness: impulse response == mag^t * e^{i t freq}
+    let T = 6; let K = 1;
+    let br: list<float> = zeros(T * K);
+    let bi: list<float> = zeros(T * K);
+    br[0] = 1.0;                          // unit impulse at t=0
+    let mag = [0.9]; let freq = [0.5];
+    let cr: list<float> = zeros(T * K);
+    let ci: list<float> = zeros(T * K);
+    tenScan(br, bi, mag, freq, cr, ci, T, K);
+    check("scan t0 real", approxEqTol(cr[0], tenClosedFormReal(0.9, 0.5, 0), 0.0001));
+    check("scan t3 real", approxEqTol(cr[3], tenClosedFormReal(0.9, 0.5, 3), 0.0001));
+    check("scan t3 imag", approxEqTol(ci[3], tenClosedFormImag(0.9, 0.5, 3), 0.0001));
+    check("scan t5 real", approxEqTol(cr[5], tenClosedFormReal(0.9, 0.5, 5), 0.0001));
+    let m0 = sqrt(cr[0]*cr[0] + ci[0]*ci[0]);
+    let m5 = sqrt(cr[5]*cr[5] + ci[5]*ci[5]);
+    check("eigenstate decays over time", m5 < m0);
+
+    // --- eigen init
+    let K2 = 8;
+    let mag2: list<float> = zeros(K2);
+    let freq2: list<float> = zeros(K2);
+    tenEigenInit(mag2, freq2, K2);
+    check("freq[0]=0", approxEqTol(freq2[0], 0.0, 0.0001));
+    check("freq increasing", freq2[7] > freq2[1]);
+    check("mag in (0,1)", mag2[0] > 0.0);
+    check("mag < 1", mag2[7] < 1.0);
+
+    // --- full layer forward pass (T=3, D=4, K=2, H=8)
+    let Tt = 3; let D = 4; let Kk = 2; let Hh = 8;
+    let x = [1.0,0.0,-1.0,0.5,  0.2,0.3,0.1,-0.4,  -0.5,0.6,0.0,0.2];
+    let outp: list<float> = zeros(Tt * D);
+    let inProj = [0.1,0.2,-0.1,0.0, 0.0,0.1,0.2,-0.1, -0.2,0.1,0.0,0.1, 0.1,-0.1,0.1,0.2];
+    let outProj = [0.1,0.0,-0.1,0.2, 0.2,0.1,0.0,-0.1, -0.1,0.2,0.1,0.0, 0.0,-0.1,0.2,0.1];
+    let gateW: list<float> = zeros(D * D);      // zeros -> gate = sigmoid(-2), suppressed
+    let mlpW1: list<float> = zeros(Hh * D);
+    let mlpW2: list<float> = zeros(D * Hh);
+    let magL: list<float> = zeros(Kk);
+    let freqL: list<float> = zeros(Kk);
+    tenEigenInit(magL, freqL, Kk);
+    let xn: list<float> = zeros(Tt*D);
+    let drives: list<float> = zeros(Tt*2*Kk);
+    let crL: list<float> = zeros(Tt*Kk);
+    let ciL: list<float> = zeros(Tt*Kk);
+    let eig: list<float> = zeros(2*Tt*Kk);
+    let recon: list<float> = zeros(Tt*D);
+    let gate: list<float> = zeros(Tt*D);
+    let xn2: list<float> = zeros(Tt*D);
+    let mlpHid: list<float> = zeros(Tt*Hh);
+    tenLayerForward(x, outp, inProj, outProj, gateW, mlpW1, mlpW2, magL, freqL,
+                    xn, drives, crL, ciL, eig, recon, gate, xn2, mlpHid, Tt, D, Kk, Hh);
+    check("layer changed the sequence", (outp[0] != x[0]) || (outp[5] != x[5]));
+    check("output finite", outp[0] < 1000000.0);
+    check("residual close (gate suppressed)", approxEqTol(outp[0], x[0], 0.6));
+
+    // --- mixing: identity coupling leaves eigenstates unchanged
+    let cmix: list<float> = zeros(2);
+    let cimix: list<float> = zeros(2);
+    cmix[0] = 3.0; cmix[1] = 5.0;
+    let ident = [1.0, 0.0, 0.0, 1.0];    // 1 head, Kh=2 identity
+    let scratch: list<float> = zeros(2);
+    tenMix(cmix, cimix, ident, scratch, 1, 2, 1);
+    check("identity mix preserves", approxEqTol(cmix[0], 3.0, 0.0001));
+    check("identity mix preserves 2", approxEqTol(cmix[1], 5.0, 0.0001));
+
+    return testSummary();
+}
