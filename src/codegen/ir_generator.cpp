@@ -1807,6 +1807,18 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "ptradd");
                 lastValue = builder.CreatePtrToInt(g, i64b, "ptraddr"); return; }
+            if (funcName == "strFromAddr" && na == 1) { // reinterpret an int address as a string
+                // Closes the loop for string-valued containers: a string stored
+                // in a vector/map slot comes back as its i64 address; this turns
+                // that address back into a usable string value (no copy).
+                auto a = slot(0); if (!a) return;
+                lastValue = builder.CreateIntToPtr(a, ptrb, "s.fromaddr"); return; }
+            if (funcName == "bufToStr" && na == 2) {    // copy n bytes -> NUL-terminated string
+                // The missing piece for O(n) string building: assemble bytes in
+                // a raw buffer (data/strbuf) then materialize one string, instead
+                // of O(n^2) repeated `+` concatenation.
+                auto p = pptr(0); auto n = slot(1); if (!p || !n) return;
+                lastValue = builder.CreateCall(rt("__tocin_buf_to_str", ptrb, {ptrb, i64b}), {p, n}, "b2s"); return; }
             if (funcName == "loadByte" && na == 2) {    // *(u8*)(p+off) zero-extended
                 std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;

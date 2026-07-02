@@ -394,6 +394,17 @@ extern "C"
         return p;
     }
     int64_t __tocin_str_len(const char *s) { return s ? (int64_t)std::strlen(s) : 0; }
+    // Materialize n raw bytes as a NUL-terminated string (the back half of the
+    // string-builder pattern: build bytes in a buffer, convert once).
+    char *__tocin_buf_to_str(const char *p, int64_t n)
+    {
+        if (!p || n < 0) n = 0;
+        char *out = (char *)__tocin_alloc_atomic((size_t)n + 1);
+        if (!out) return nullptr;
+        std::memcpy(out, p, (size_t)n);
+        out[n] = '\0';
+        return out;
+    }
     int64_t __tocin_str_char_at(const char *s, int64_t i)
     {
         if (!s) return -1;
