@@ -634,6 +634,12 @@ void IRGenerator::tagBufferAccess(llvm::Instruction *inst, const std::string &bu
 void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
     curTok_ = stmt->token;
+    // Module-level `let`/`const` (no enclosing function): declared as an LLVM
+    // global by predeclareGlobals and initialized in __tocin_global_init, so
+    // there is nothing to do on the main visit. (Reaching here with a null
+    // function would otherwise try to stack-allocate outside a function.)
+    if (currentFunction == nullptr && globalVars_.count(stmt->name))
+        return;
     llvm::Type *varType = stmt->type ? getLLVMType(stmt->type) : nullptr;
 
     // `let xs: list<SomeTrait> = [...]` -> each concrete element is boxed into a
@@ -1010,6 +1016,13 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     // Save the current function context
     llvm::Function *previousFunction = currentFunction;
     currentFunction = function;
+
+    // main() runs the module's global initializers before anything else, so
+    // globals with computed initializers (alloc(), expressions) are live for
+    // the whole program.
+    if (funcName == "main" && !globalInitStmts_.empty())
+        if (llvm::Function *initFn = module->getFunction("__tocin_global_init"))
+            builder.CreateCall(initFn, {});
 
     // Fresh symbol tables for this function body.
     namedValues.clear();
@@ -5348,6 +5361,31 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
 
         if (!alloca)
         {
+            // Not a local: it may be a module-level global. Store through the
+            // GlobalVariable, coercing rhs to its storage type.
+            auto gv = globalVars_.find(name);
+            if (gv != globalVars_.end())
+            {
+                llvm::Type *gty = gv->second->getValueType();
+                if (rhs->getType() != gty)
+                {
+                    if (rhs->getType()->isIntegerTy() && gty->isIntegerTy())
+                        rhs = builder.CreateIntCast(rhs, gty, true, "g.icast");
+                    else if (rhs->getType()->isPointerTy() && gty->isIntegerTy())
+                        rhs = builder.CreatePtrToInt(rhs, gty, "g.p2i");
+                    else if (rhs->getType()->isIntegerTy() && gty->isPointerTy())
+                        rhs = builder.CreateIntToPtr(rhs, gty, "g.i2p");
+                    else if (rhs->getType()->isFloatingPointTy() && gty->isFloatingPointTy())
+                        rhs = builder.CreateFPCast(rhs, gty, "g.fcast");
+                    else if (canConvertImplicitly(rhs->getType(), gty))
+                        rhs = implicitConversion(rhs, gty);
+                }
+                if (rhs->getType() == gty)
+                {
+                    builder.CreateStore(rhs, gv->second);
+                    return true;
+                }
+            }
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                      "Undefined variable: " + name,
                                      std::string(expr->token.filename),
@@ -5587,6 +5625,113 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     }
 }
 
+llvm::Type *IRGenerator::inferGlobalType(ast::VariableStmt *stmt)
+{
+    if (stmt->type)
+        if (llvm::Type *t = getLLVMType(stmt->type))
+            return t;
+    // No annotation: infer from the initializer's shape. Strings/arrays and any
+    // reference-shaped value are pointers; floats are double; everything else
+    // (ints, and address-returning builtins like alloc) is i64.
+    if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(stmt->initializer))
+    {
+        if (lit->literalType == ast::LiteralExpr::LiteralType::FLOAT)
+            return llvm::Type::getDoubleTy(context);
+        if (lit->literalType == ast::LiteralExpr::LiteralType::STRING)
+            return llvm::PointerType::get(context, 0);
+    }
+    if (std::dynamic_pointer_cast<ast::ArrayLiteralExpr>(stmt->initializer) ||
+        std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
+        return llvm::PointerType::get(context, 0);
+    return llvm::Type::getInt64Ty(context);
+}
+
+void IRGenerator::predeclareGlobals(ast::StmtPtr ast)
+{
+    // Collect top-level variable declarations and materialize each as a zero/
+    // null-initialized LLVM global. Their real initializers run later in
+    // __tocin_global_init (emitGlobalInit), which main() invokes first.
+    std::vector<ast::StmtPtr> *body = nullptr;
+    if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(ast))
+        body = &blk->statements;
+    else if (auto mod = std::dynamic_pointer_cast<ast::ModuleStmt>(ast))
+        body = &mod->body;
+    if (!body)
+        return;
+
+    for (auto &s : *body)
+    {
+        auto var = std::dynamic_pointer_cast<ast::VariableStmt>(s);
+        if (!var || !var->initializer)
+            continue;
+        llvm::Type *ty = inferGlobalType(var.get());
+        auto *gv = new llvm::GlobalVariable(
+            *module, ty, /*isConstant=*/false,
+            llvm::GlobalValue::InternalLinkage,
+            llvm::Constant::getNullValue(ty), var->name);
+        globalVars_[var->name] = gv;
+        globalInitStmts_.push_back(var.get());
+    }
+    if (globalInitStmts_.empty())
+        return;
+    // Declare the init function now so main() can emit a call to it before its
+    // body is filled in by emitGlobalInit().
+    llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+        llvm::Function::ExternalLinkage, "__tocin_global_init", *module);
+}
+
+void IRGenerator::emitGlobalInit()
+{
+    if (globalInitStmts_.empty())
+        return;
+    llvm::Function *initFn = module->getFunction("__tocin_global_init");
+    if (!initFn)
+        return;
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "entry", initFn);
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    llvm::Function *savedFn = currentFunction;
+    auto savedNamed = namedValues;
+    currentFunction = initFn;
+    namedValues.clear();
+    builder.SetInsertPoint(bb);
+
+    for (auto *stmt : globalInitStmts_)
+    {
+        auto git = globalVars_.find(stmt->name);
+        if (git == globalVars_.end())
+            continue;
+        lastValue = nullptr;
+        stmt->initializer->accept(*this);
+        llvm::Value *v = lastValue;
+        if (!v)
+            continue;
+        llvm::Type *gty = git->second->getValueType();
+        // Coerce the initializer value to the global's storage type.
+        if (v->getType() != gty)
+        {
+            if (v->getType()->isPointerTy() && gty->isIntegerTy())
+                v = builder.CreatePtrToInt(v, gty, "g.p2i");
+            else if (v->getType()->isIntegerTy() && gty->isPointerTy())
+                v = builder.CreateIntToPtr(v, gty, "g.i2p");
+            else if (v->getType()->isIntegerTy() && gty->isIntegerTy())
+                v = builder.CreateIntCast(v, gty, true, "g.icast");
+            else if (v->getType()->isFloatingPointTy() && gty->isFloatingPointTy())
+                v = builder.CreateFPCast(v, gty, "g.fcast");
+            else if (canConvertImplicitly(v->getType(), gty))
+                v = implicitConversion(v, gty);
+        }
+        if (v->getType() == gty)
+            builder.CreateStore(v, git->second);
+    }
+    builder.CreateRetVoid();
+
+    currentFunction = savedFn;
+    namedValues = savedNamed;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
+}
+
 std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
 {
     if (!ast)
@@ -5603,9 +5748,16 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
     // Pass 1: forward-declare all top-level functions, classes and methods so
     // declaration order doesn't matter (mutual recursion, use-before-def).
     predeclareTopLevel(ast);
+    // Pass 1b: declare module-level globals (before bodies, so any function -
+    // including main - resolves references to them).
+    predeclareGlobals(ast);
 
     // Pass 2: visit the AST to generate IR
     ast->accept(*this);
+
+    // Pass 3: emit the global-initializer function body (after all functions
+    // exist, so initializers may call them). main() already calls it.
+    emitGlobalInit();
 
     // Exit the global scope
     exitScope();
@@ -6482,6 +6634,14 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
     if (alloca)
     {
         lastValue = builder.CreateLoad(alloca->getAllocatedType(), alloca, expr->name);
+        return;
+    }
+    // Module-level global: load through the GlobalVariable (a local of the same
+    // name would have shadowed it via the alloca lookup above).
+    auto gv = globalVars_.find(expr->name);
+    if (gv != globalVars_.end())
+    {
+        lastValue = builder.CreateLoad(gv->second->getValueType(), gv->second, expr->name);
         return;
     }
     // A bare top-level function name used as a value is a first-class function

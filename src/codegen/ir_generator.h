@@ -204,6 +204,16 @@ namespace codegen
         // copy `let b = a;` is not tracked, so it conservatively may-alias).
         llvm::MDNode *restrictDomain_ = nullptr;                                    // lazily created alias-scope domain
         std::map<std::string, llvm::MDNode *> bufferScopes_;                        // buffer var name -> its alias scope (per function)
+        // Module-level (global) variables. Declared up front as LLVM globals;
+        // their initializer expressions run in an implicit __tocin_global_init()
+        // that main() calls first (so globals with non-constant initializers -
+        // alloc(), computed values - work). Reads/writes route here when a name
+        // isn't a local.
+        std::map<std::string, llvm::GlobalVariable *> globalVars_;
+        std::vector<ast::VariableStmt *> globalInitStmts_;                          // in declaration order
+        void predeclareGlobals(ast::StmtPtr ast);                                   // create the GlobalVariables
+        void emitGlobalInit();                                                      // fill in __tocin_global_init body
+        llvm::Type *inferGlobalType(ast::VariableStmt *stmt);                       // type for a global's storage
         // Tag a load/store with this buffer variable's alias scope and mark it
         // noalias against every other tracked buffer. No-op if name isn't tracked.
         void tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar);

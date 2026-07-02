@@ -1,0 +1,74 @@
+// Tocin standard library: a minimal test harness written in Tocin.
+//
+// Lets Tocin programs assert on their own behavior and print a pass/fail
+// summary - the foundation for a real test culture and for gaining confidence
+// in a self-hosted compiler. State is kept in a small global counter buffer so
+// tests read naturally (no context object to thread through every call).
+//
+// Usage:
+//   import std.testing;
+//   def main() -> int {
+//       testBegin();
+//       check("addition", 2 + 2 == 4);
+//       checkEq("len", strLen("abc"), 3);
+//       return testSummary();   // 0 if all passed, 1 otherwise (process exit code)
+//   }
+
+// Global counters: slot 0 = passed, slot 1 = failed. Allocated once.
+let __testState = alloc(16);
+
+def testBegin() -> int {
+    storeInt(__testState, 0, 0);
+    storeInt(__testState, 8, 0);
+    return 0;
+}
+
+def __testPass() -> int {
+    storeInt(__testState, 0, loadInt(__testState, 0) + 1);
+    return 0;
+}
+
+def __testFail() -> int {
+    storeInt(__testState, 8, loadInt(__testState, 8) + 1);
+    return 0;
+}
+
+// Assert a boolean condition (pass `cond` as an int: 1/0 or any comparison).
+def check(name: string, cond: int) -> int {
+    if cond != 0 {
+        println("  ok   {}", name);
+        return __testPass();
+    }
+    println("  FAIL {}", name);
+    return __testFail();
+}
+
+// Assert integer equality, printing both values on mismatch.
+def checkEq(name: string, got: int, want: int) -> int {
+    if got == want {
+        println("  ok   {}", name);
+        return __testPass();
+    }
+    println("  FAIL {}  (got {}, want {})", name, got, want);
+    return __testFail();
+}
+
+// Assert string equality (value comparison).
+def checkStrEq(name: string, got: string, want: string) -> int {
+    if strEq(got, want) == 1 {
+        println("  ok   {}", name);
+        return __testPass();
+    }
+    println("  FAIL {}  (got \"{}\", want \"{}\")", name, got, want);
+    return __testFail();
+}
+
+// Print the summary line and return a process exit code: 0 if every check
+// passed, 1 if any failed.
+def testSummary() -> int {
+    let passed = loadInt(__testState, 0);
+    let failed = loadInt(__testState, 8);
+    println("{} passed, {} failed", passed, failed);
+    if failed == 0 { return 0; }
+    return 1;
+}

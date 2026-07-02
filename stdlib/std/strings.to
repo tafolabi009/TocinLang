@@ -1,0 +1,129 @@
+// Tocin standard library: string utilities.
+//
+// Higher-level helpers built on the compiler's string builtins (strLen,
+// charAt, substring, concat via `+`, intToStr, the is*/to*Char predicates).
+// These are the operations a lexer, parser, formatter, or VCS reaches for
+// constantly - the string-processing core that string-heavy tooling needs.
+//
+// Conventions: indices are byte offsets; character codes are ints (ASCII).
+// Predicates return 1/0. Functions returning a string never alias their input.
+
+// ---- trimming ----------------------------------------------------------------
+
+// Remove leading and trailing ASCII whitespace.
+def strTrim(s: string) -> string {
+    let n = strLen(s);
+    let start = 0;
+    while start < n {
+        if isSpace(charAt(s, start)) == 1 { start = start + 1; } else { break; }
+    }
+    let end = n;
+    while end > start {
+        if isSpace(charAt(s, end - 1)) == 1 { end = end - 1; } else { break; }
+    }
+    return substring(s, start, end - start);
+}
+
+def strTrimLeft(s: string) -> string {
+    let n = strLen(s);
+    let start = 0;
+    while start < n {
+        if isSpace(charAt(s, start)) == 1 { start = start + 1; } else { break; }
+    }
+    return substring(s, start, n - start);
+}
+
+def strTrimRight(s: string) -> string {
+    let n = strLen(s);
+    let end = n;
+    while end > 0 {
+        if isSpace(charAt(s, end - 1)) == 1 { end = end - 1; } else { break; }
+    }
+    return substring(s, 0, end);
+}
+
+// ---- building ----------------------------------------------------------------
+
+// Concatenate `s` with itself `count` times ("ab", 3 -> "ababab").
+def strRepeat(s: string, count: int) -> string {
+    let out = "";
+    let i = 0;
+    while i < count { out = out + s; i = i + 1; }
+    return out;
+}
+
+// Left-pad `s` with `pad` (a single char code) to at least `width` bytes.
+def strPadLeft(s: string, width: int, pad: int) -> string {
+    let need = width - strLen(s);
+    if need <= 0 { return s; }
+    let prefix = "";
+    let i = 0;
+    while i < need { prefix = prefix + charToStr(pad); i = i + 1; }
+    return prefix + s;
+}
+
+// Right-pad `s` with `pad` (a single char code) to at least `width` bytes.
+def strPadRight(s: string, width: int, pad: int) -> string {
+    let out = s;
+    let i = strLen(s);
+    while i < width { out = out + charToStr(pad); i = i + 1; }
+    return out;
+}
+
+// Reverse the bytes of `s` ("abc" -> "cba"). ASCII-oriented.
+def strReverse(s: string) -> string {
+    let out = "";
+    let i = strLen(s) - 1;
+    while i >= 0 { out = out + charToStr(charAt(s, i)); i = i - 1; }
+    return out;
+}
+
+// ---- inspection --------------------------------------------------------------
+
+// Count non-overlapping occurrences of the byte `ch` in `s`.
+def strCountChar(s: string, ch: int) -> int {
+    let n = strLen(s);
+    let c = 0;
+    let i = 0;
+    while i < n { if charAt(s, i) == ch { c = c + 1; } i = i + 1; }
+    return c;
+}
+
+// Last index of byte `ch`, or -1 if absent.
+def strLastIndexOf(s: string, ch: int) -> int {
+    let i = strLen(s) - 1;
+    while i >= 0 { if charAt(s, i) == ch { return i; } i = i - 1; }
+    return -1;
+}
+
+// 1 if `s` is a non-empty run of ASCII digits (optionally a leading '-'), else 0.
+def strIsInt(s: string) -> int {
+    let n = strLen(s);
+    if n == 0 { return 0; }
+    let i = 0;
+    if charAt(s, 0) == 45 { if n == 1 { return 0; } i = 1; }   // '-'
+    while i < n {
+        if isDigit(charAt(s, i)) == 0 { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// Parse a decimal integer, returning `fallback` when `s` isn't a valid int.
+// (A checked wrapper over strToInt, which otherwise returns 0 on garbage.)
+def strParseIntOr(s: string, fallback: int) -> int {
+    if strIsInt(s) == 1 { return strToInt(s); }
+    return fallback;
+}
+
+// Case-insensitive ASCII equality.
+def strEqualsIgnoreCase(a: string, b: string) -> int {
+    let n = strLen(a);
+    if n != strLen(b) { return 0; }
+    let i = 0;
+    while i < n {
+        if toLowerChar(charAt(a, i)) != toLowerChar(charAt(b, i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}

@@ -1,0 +1,22 @@
+import std.strings;
+import std.testing;
+
+def main() -> int {
+    testBegin();
+    // strings
+    checkStrEq("trim", strTrim("  hi  "), "hi");
+    checkStrEq("trimLeft", strTrimLeft("  hi  "), "hi  ");
+    checkStrEq("trimRight", strTrimRight("  hi  "), "  hi");
+    checkStrEq("repeat", strRepeat("ab", 3), "ababab");
+    checkStrEq("padLeft", strPadLeft("42", 5, 48), "00042");
+    checkStrEq("padRight", strPadRight("42", 5, 46), "42...");
+    checkStrEq("reverse", strReverse("abc"), "cba");
+    checkEq("countChar", strCountChar("banana", 97), 3);
+    checkEq("lastIndexOf", strLastIndexOf("a.b.c", 46), 3);
+    checkEq("isInt yes", strIsInt("-123"), 1);
+    checkEq("isInt no", strIsInt("12x"), 0);
+    checkEq("parseIntOr ok", strParseIntOr("77", -1), 77);
+    checkEq("parseIntOr bad", strParseIntOr("7x", -1), -1);
+    checkEq("eqIgnoreCase", strEqualsIgnoreCase("HeLLo", "hello"), 1);
+    return testSummary();
+}
