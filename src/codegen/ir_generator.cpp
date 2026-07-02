@@ -598,8 +598,8 @@ void IRGenerator::emitTrapIf(llvm::Value *condFail, const std::string &msg)
     if (!std::string(curTok_.filename).empty())
         loc = std::string(curTok_.filename) + ":" + std::to_string(curTok_.line) +
               ":" + std::to_string(curTok_.column);
-    llvm::Value *msgStr = builder.CreateGlobalStringPtr(msg, "panic.msg");
-    llvm::Value *locStr = builder.CreateGlobalStringPtr(loc, "panic.loc");
+    llvm::Value *msgStr = builder.CreateGlobalString(msg, "panic.msg");
+    llvm::Value *locStr = builder.CreateGlobalString(loc, "panic.loc");
     builder.CreateCall(panicFn, {msgStr, locStr});
     builder.CreateUnreachable();
     builder.SetInsertPoint(contBB);
