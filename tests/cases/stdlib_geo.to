@@ -1,0 +1,39 @@
+import std.testing;
+import math.geometry;
+import math.linear;
+import embedded.gpio;
+
+def main() -> int {
+    testBegin();
+    // geometry
+    check("dist2 3-4-5", dist2(0.0,0.0,3.0,4.0) == 5.0);
+    check("length3", length3(2.0,3.0,6.0) == 7.0);
+    check("crossZ", crossZ(1.0,0.0, 0.0,1.0) == 1.0);
+    check("triArea", triangleArea2(0.0,0.0, 4.0,0.0, 0.0,3.0) == 6.0);
+    check("dot3", dot3(1.0,2.0,3.0, 4.0,5.0,6.0) == 32.0);
+
+    // linear: [[1,2],[3,4]] * [[5,6],[7,8]] = [[19,22],[43,50]]
+    let a = [1.0,2.0,3.0,4.0];
+    let b = [5.0,6.0,7.0,8.0];
+    let c = [0.0,0.0,0.0,0.0];
+    matMul(a, b, c, 2, 2, 2);
+    check("matMul[0]", c[0] == 19.0);
+    check("matMul[3]", c[3] == 50.0);
+    check("trace", matTrace(a, 2) == 5.0);
+    let v = [1.0, 1.0];
+    let out = [0.0, 0.0];
+    matVecMul(a, v, out, 2, 2);
+    check("matVec[0]", out[0] == 3.0);   // 1*1 + 2*1
+    check("vecDot", vecDot(a, b) == 70.0); // 5+12+21+32
+
+    // gpio against a fake register block in RAM (24 bytes of registers)
+    let regs = alloc(64);
+    volatileStore32(regs, 0, 0); volatileStore32(regs, 4, 0);
+    pinMode(regs, 3, 1);                 // pin 3 output
+    check("dir bit set", ((volatileLoad32(regs, 0) >> 3) & 1) == 1);
+    writePort(regs, 0);
+    toggle(regs, 5);
+    check("toggle sets bit5", ((volatileLoad32(regs, 4) >> 5) & 1) == 1);
+
+    return testSummary();
+}
