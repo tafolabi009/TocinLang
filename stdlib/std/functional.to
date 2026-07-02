@@ -1,0 +1,105 @@
+// Tocin standard library: std.functional
+//
+// Higher-order sequence operations over `list<int>` with `(int)->int` and
+// predicate callbacks - the map/filter/fold/zip surface Rust, Python, and JS
+// all provide. Transformations return fresh arrays (via zeros/newArray or a
+// vector for size-unknown results), leaving inputs untouched.
+
+// Apply f to every element, returning a new array of the results.
+def mapInts(xs: list<int>, f: (int) -> int) -> list<int> {
+    let n = len(xs);
+    let out: list<int> = newArray(n);
+    for i in 0..n { out[i] = f(xs[i]); }
+    return out;
+}
+
+// Keep only elements where pred(x) == 1, returning a new (compacted) array.
+def filterInts(xs: list<int>, pred: (int) -> int) -> list<int> {
+    let v = vecNew();
+    for i in 0..len(xs) { if pred(xs[i]) == 1 { vecPush(v, xs[i]); } }
+    let out = vecToArray(v);
+    vecFree(v);
+    return out;
+}
+
+// Left fold: acc = f(acc, x) across the list, starting from `init`.
+// (Tocin callbacks are single-arg, so f packs (acc,x) via the pair helper:
+//  here f takes x and the caller closes over acc — instead we expose the
+//  common reductions directly, plus a generic 2-arg version below.)
+def foldInts(xs: list<int>, init: int, f: (int, int) -> int) -> int {
+    let acc = init;
+    for i in 0..len(xs) { acc = f(acc, xs[i]); }
+    return acc;
+}
+
+// zipWith: out[i] = f(a[i], b[i]) over the shorter length.
+def zipWith(a: list<int>, b: list<int>, f: (int, int) -> int) -> list<int> {
+    let n = len(a) < len(b) ? len(a) : len(b);
+    let out: list<int> = newArray(n);
+    for i in 0..n { out[i] = f(a[i], b[i]); }
+    return out;
+}
+
+// Predicate reductions.
+def anyInt(xs: list<int>, pred: (int) -> int) -> int {
+    for i in 0..len(xs) { if pred(xs[i]) == 1 { return 1; } }
+    return 0;
+}
+def allInt(xs: list<int>, pred: (int) -> int) -> int {
+    for i in 0..len(xs) { if pred(xs[i]) == 0 { return 0; } }
+    return 1;
+}
+def countWhere(xs: list<int>, pred: (int) -> int) -> int {
+    let c = 0;
+    for i in 0..len(xs) { if pred(xs[i]) == 1 { c = c + 1; } }
+    return c;
+}
+def findFirst(xs: list<int>, pred: (int) -> int, dflt: int) -> int {
+    for i in 0..len(xs) { if pred(xs[i]) == 1 { return xs[i]; } }
+    return dflt;
+}
+
+// takeWhile / dropWhile: prefix where pred holds / the remainder.
+def takeWhile(xs: list<int>, pred: (int) -> int) -> list<int> {
+    let v = vecNew();
+    let i = 0;
+    while i < len(xs) { if pred(xs[i]) == 1 { vecPush(v, xs[i]); i = i + 1; } else { i = len(xs); } }
+    let out = vecToArray(v); vecFree(v); return out;
+}
+def dropWhile(xs: list<int>, pred: (int) -> int) -> list<int> {
+    let n = len(xs);
+    let start = 0;
+    while start < n { if pred(xs[start]) == 1 { start = start + 1; } else { start = n + 1000000; } }
+    if start > n { start = start - 1000000; }   // undo the sentinel jump
+    let v = vecNew();
+    let i = start;
+    while i < n { vecPush(v, xs[i]); i = i + 1; }
+    let out = vecToArray(v); vecFree(v); return out;
+}
+
+// Build [start, start+1, ..., end-1] as an array (like Python range / Rust ..).
+def rangeList(start: int, end: int) -> list<int> {
+    let n = end - start;
+    if n < 0 { n = 0; }
+    let out: list<int> = newArray(n);
+    let i = 0;
+    while i < n { out[i] = start + i; i = i + 1; }
+    return out;
+}
+
+// Reverse into a new array (non-mutating, unlike data.algorithms.reverse).
+def reversed(xs: list<int>) -> list<int> {
+    let n = len(xs);
+    let out: list<int> = newArray(n);
+    for i in 0..n { out[i] = xs[n - 1 - i]; }
+    return out;
+}
+
+// Concatenate two arrays into a new one.
+def concatInts(a: list<int>, b: list<int>) -> list<int> {
+    let na = len(a); let nb = len(b);
+    let out: list<int> = newArray(na + nb);
+    for i in 0..na { out[i] = a[i]; }
+    for i in 0..nb { out[na + i] = b[i]; }
+    return out;
+}
