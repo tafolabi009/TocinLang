@@ -67,6 +67,13 @@ def approxEq(a: float, b: float) -> int {
     return d <= EPSILON ? 1 : 0;
 }
 
+// Float near-equality within a caller-supplied absolute tolerance.
+def approxEqTol(a: float, b: float, tol: float) -> int {
+    let d = a - b;
+    if d < 0.0 { d = -d; }
+    return d <= tol ? 1 : 0;
+}
+
 // Base-b logarithm.
 def logBase(x: float, b: float) -> float { return log(x) / log(b); }
 

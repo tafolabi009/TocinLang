@@ -1,0 +1,32 @@
+import std.testing;
+import math.basic;
+import math.differential;
+import math.stats_advanced;
+
+def cube(x: float) -> float { return x * x * x; }
+def parab(x: float) -> float { return x * x - 4.0; }
+
+def main() -> int {
+    testBegin();
+    // derivative of x^3 at 2 is 12
+    check("derivative", approxEqTol(derivative(cube, 2.0), 12.0, 0.001));
+    // integral of x^3 over [0,2] = 4
+    check("simpson", approxEqTol(integrateSimpson(cube, 0.0, 2.0, 100), 4.0, 0.001));
+    check("trapezoid", approxEqTol(integrateTrapezoid(cube, 0.0, 2.0, 1000), 4.0, 0.01));
+    // root of x^2-4 near 3 is 2
+    check("newton", approxEqTol(newtonRoot(parab, 3.0, 0.000001, 50), 2.0, 0.001));
+    check("bisect", approxEqTol(bisectRoot(parab, 0.0, 5.0, 0.000001, 100), 2.0, 0.001));
+
+    // advanced stats: perfect positive correlation
+    let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [2.0, 4.0, 6.0, 8.0, 10.0];
+    check("correlation=1", approxEqTol(correlation(x, y), 1.0, 0.0001));
+    let coef = [0.0, 0.0];
+    linearRegression(x, y, coef);
+    check("regression slope=2", approxEqTol(coef[0], 2.0, 0.0001));
+    check("regression intercept=0", approxEqTol(coef[1], 0.0, 0.0001));
+    check("erf(0)=0", approxEqTol(erf(0.0), 0.0, 0.0001));
+    check("normalCdf(0)=0.5", approxEqTol(normalCdf(0.0, 0.0, 1.0), 0.5, 0.001));
+
+    return testSummary();
+}
