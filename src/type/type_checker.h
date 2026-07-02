@@ -189,6 +189,15 @@ namespace type_checker
         std::unordered_map<std::string, std::unordered_set<std::string>> adtEnumVariants_; // enum name -> variant set
         std::unordered_map<std::string, std::vector<ast::TypePtr>> adtVariantFields_;  // variant name -> payload field types
 
+        // Names that are legal in identifier position but are not ordinary
+        // variables: declared module names (module M { } / import m.sub) and
+        // functions with a trailing variadic parameter (arity-checked loosely).
+        std::unordered_set<std::string> knownModules_;
+        std::unordered_set<std::string> variadicFns_;
+        // Register an enum's members/variants (shared by pass-1 hoisting and
+        // visitEnumStmt so forward references to variants resolve).
+        void registerEnum(ast::EnumStmt *stmt);
+
         // Module related methods
         bool loadModule(const std::string &moduleName);
         bool importSymbol(const std::string &moduleName, const std::string &symbolName,

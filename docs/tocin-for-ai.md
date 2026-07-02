@@ -357,6 +357,25 @@ Two calling styles:
 | `envGet(name)` | `(string) -> string` | environment variable value, or "" |
 | `sysExit(code)` | `(int) -> int` | terminate the process with `code` |
 
+**Raw memory & systems** (addresses are plain `int`s; the load/store builtins lower to inline loads/stores — no runtime calls, so they optimize like C pointer code)
+| Builtin | Signature | Behavior |
+|---|---|---|
+| `alloc(n)` | `(int) -> int` | GC-managed heap buffer of `n` bytes; returns its address |
+| `free(p)` | `(int) -> int` | release (no-op under GC); returns 0 |
+| `memcpy(dst, src, n)` / `memset(dst, byte, n)` | `(int, int, int) -> int` | C semantics; return `dst` |
+| `ptrAdd(p, off)` | `(int, int) -> int` | address + byte offset |
+| `loadByte(p, off)` / `storeByte(p, off, v)` | 2/3 ints | 8-bit load (zero-extended) / store (truncating) |
+| `loadInt(p, off)` / `storeInt(p, off, v)` | 2/3 ints | 64-bit load / store |
+
+**Kernel / MMIO primitives** (for drivers and OS work; all widths in bits, loads zero-extend, stores truncate)
+| Builtin | Signature | Behavior |
+|---|---|---|
+| `volatileLoad8/16/32/64(p, off)` | `(int, int) -> int` | `volatile` load — never elided, merged, or reordered vs other volatile ops. Use for device registers. |
+| `volatileStore8/16/32/64(p, off, v)` | `(int, int, int) -> int` | `volatile` store; returns 0 |
+| `fence()` | `() -> int` | full sequentially-consistent hardware memory barrier |
+| `asm("tmpl")` | template literal | raw side-effecting assembly, no operands (`asm("cli")`, `asm("hlt")`) |
+| `asm(tmpl, constraints, args...)` | literals + ints | constrained assembly (LLVM/GCC syntax, AT&T dialect): at most one leading `"=..."` output, one constraint per input, `~{...}` clobbers. Returns the output operand (or 0). Examples: `let t = asm("rdtsc", "={ax},~{dx}")`, `let s = asm("lea 100($1), $0", "=r,r", x)`, `asm("outb %b1, %w0", "{dx},{ax}", port, val)` |
+
 **Option / Result / channels**
 | Builtin | Signature | Returns |
 |---|---|---|
@@ -745,7 +764,9 @@ This loop uses boolean flags for illustration, but `break`/`continue` (including
 ## 7. Idioms and conventions
 
 - **Every program needs `def main()`.** Annotate it `-> int` and `return` an int; that int becomes the process exit code. `return 0;` for success.
-- **Run with** `./build/tocin file.to --run`; compile to a binary with `-o name` (extension picks format: `.ll` IR, `.s` asm, `.o` object, otherwise an executable). `--dump-ir` prints LLVM IR. Default optimization is `-O2`.
+- **Run with** `./build/tocin file.to --run`; compile to a binary with `-o name` (extension picks format: `.ll` IR, `.s` asm, `.o` object, otherwise an executable). `--dump-ir` prints LLVM IR. Default optimization is `-O2`; use `-O3 --native` for maximum speed on the build machine (`--native` enables host-CPU features — POPCNT/AVX — and is not portable to older CPUs).
+- **Type checking is strict by default:** undeclared identifiers, wrong argument counts, clear operator/return-type violations, and assignment to undeclared variables are compile ERRORS that block codegen (with `file:line:col` locations). `--permissive` prints them but compiles anyway (not recommended; kept for migration).
+- **Whole-program optimization is automatic** when producing an executable or running with `--run`: everything except `main` is internalized, so unused functions are eliminated and cross-function inlining/specialization is unrestricted. Pure computations on compile-time-known inputs may be **folded at compile time** (like C/Rust at -O3) — benchmark with runtime-derived inputs.
 - **Naming:** functions/variables/fields `lowerCamelCase`; types/classes/enums/traits `UpperCamelCase`; enum members `UpperCamelCase`. (Conventional, not enforced.)
 - **Booleans as ints:** stdlib and idiomatic code represent truth as `int` `0`/`1` (e.g. `mapHasStr` returns `1`/`0`, `isPrime` returns `1`/`0`). Compare explicitly: `if mapHasStr(m, k) == 1 { ... }`.
 - **`{}` formatting** is the normal way to print: `println("name={} age={}", name, age)`.
@@ -789,7 +810,7 @@ This loop uses boolean flags for illustration, but `break`/`continue` (including
 
 **Tocin can today:**
 - Compile to native code via LLVM (default `-O2`, ~9% of C on compute), or JIT-run directly (`--run`).
-- **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), char predicates, and `asm("...")` are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
+- **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), **volatile MMIO access (`volatileLoad8/16/32/64`, `volatileStore8/16/32/64`), memory barriers (`fence()`)**, char predicates, and **inline assembly — both `asm("cli")` and the constrained form `asm(tmpl, constraints, args...)` for port I/O, MSRs, and control registers** — are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
 - **Opt-in borrow checker** (`--borrow-check`, OFF by default): adds Rust-like move / use-after-move enforcement on owned (class/struct) values. Binding to another variable, passing by value, or returning a value MOVES it; using a moved value is a `B001` error; reassignment revives; copy types (int/float/bool/string) are never moved. WITHOUT the flag, class instances alias freely (GC-managed) — so only enable it for code you want move-checked. Move-only for now (no `&`/`&mut` borrows or lifetimes yet).
 - Functions (incl. mutual recursion, forward references, inferred return types, **nested `def`** — non-capturing), first-class function values and function-typed parameters, and **capturing closures** (single-expression lambdas that capture enclosing locals by value and can escape their scope).
 - Classes/structs with fields, methods, `self`, implicit positional constructors, direct field mutation, **operator overloading** (define `__add__`/`__sub__`/`__mul__`/`__div__`/`__mod__` and `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__` as methods — binary operators on instances dispatch to them), and **RAII destructors** (`__del__(self)` runs automatically when a constructor-initialized local leaves scope, LIFO, on every return path).

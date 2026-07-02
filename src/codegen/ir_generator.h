@@ -194,6 +194,11 @@ namespace codegen
         struct OwnedInstance { llvm::AllocaInst *slot; std::string className; llvm::AllocaInst *reached; };
         std::vector<OwnedInstance> destructorStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
+        // Source cursor for diagnostics: updated at visit entry points so
+        // reportError sites deep in codegen can attach a file:line:column
+        // instead of the useless "",0,0. Approximate (statement/expression
+        // granularity) but always at least the enclosing construct.
+        lexer::Token curTok_{};
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, std::shared_ptr<ast::FunctionType>> funcReturnFnType; // function name -> its function-typed return signature

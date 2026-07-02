@@ -30,6 +30,8 @@
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Transforms/Scalar/LoopInterchange.h>
+#include <llvm/Transforms/Scalar/LoopPassManager.h>
 // JIT execution (ORCv2) and native object emission
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
@@ -292,13 +294,15 @@ public:
         bool noGC;         // don't link the garbage collector (alloc -> malloc)
         bool borrowCheck;  // opt-in ownership / use-after-move analysis
         bool nativeCpu;    // tune AOT codegen for the host CPU (POPCNT/AVX/...)
+        bool permissive;   // do not block compilation on (non-fatal) type errors
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
               enableFFI(true), enableConcurrency(true), enableAdvancedFeatures(true),
               enableMacros(true), enableAsync(true), enableDebugger(false),
               enableWASM(false), target("native"), enablePackageManager(true), run(false),
-              freestanding(false), noGC(false), borrowCheck(false), nativeCpu(false) {}
+              freestanding(false), noGC(false), borrowCheck(false), nativeCpu(false),
+              permissive(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -351,6 +355,15 @@ public:
         checker.check(program);
 
         if (errorHandler.hasFatalErrors())
+        {
+            return false;
+        }
+
+        // Strict by default: any ERROR-severity diagnostic (undeclared
+        // identifier, arity mismatch, operator/return type violation, ...)
+        // blocks compilation. --permissive restores the old lenient behavior:
+        // diagnostics are still printed, but codegen proceeds anyway.
+        if (!options.permissive && errorHandler.hasErrors())
         {
             return false;
         }
@@ -434,6 +447,11 @@ public:
                     parser::Parser ps(toks);
                     auto sub = ps.parse();
                     process(sub, fs::path(file).parent_path().string()); // imported module's imports first
+                    // Keep the import statement itself in the merged program:
+                    // codegen ignores it, but the type checker uses it to learn
+                    // module aliases (`import math.basic` makes `math` legal in
+                    // qualified calls like math.add(...)).
+                    merged.push_back(s);
                 }
                 else if (s)
                 {
@@ -455,9 +473,26 @@ public:
         auto context = std::make_unique<llvm::LLVMContext>();
         auto module = std::make_unique<llvm::Module>(filename, *context);
 
+        useNativeCpu_ = options.nativeCpu;   // read by createConfiguredTargetMachine()
+
+        // Give the module its real triple and data layout BEFORE IR generation.
+        // Alignment is stamped on allocas/loads/stores at creation time, so an
+        // empty layout here left i64 accesses with the default ABI alignment of
+        // 4 (visible as `align 4` on 8-byte loads in the emitted code), which
+        // penalizes the vectorizer. Doing it up front also lets every middle-end
+        // cost model see the real pointer/ABI sizes.
+        if (auto tm = createConfiguredTargetMachine())
+        {
+#if LLVM_VERSION_MAJOR >= 21
+            module->setTargetTriple(tm->getTargetTriple());
+#else
+            module->setTargetTriple(tm->getTargetTriple().str());
+#endif
+            module->setDataLayout(tm->createDataLayout());
+        }
+
         codegen::IRGenerator generator(*context, std::move(module), errorHandler);
         generator.freestanding = options.freestanding;
-        useNativeCpu_ = options.nativeCpu;   // read by emitObjectFile()
 
         // Generate LLVM IR from the AST
         auto generatedModule = generator.generate(program);
@@ -475,6 +510,33 @@ public:
                                      "Invalid LLVM IR generated: " + verifierErrors,
                                      filename, 0, 0);
             return false;
+        }
+
+        // Whole-program view: a self-contained executable (or a JIT run) has
+        // main as its only entry point, so every other definition can be
+        // internalized. This is what unlocks cross-function -O3 - full inlining
+        // freedom, argument specialization, and dead-code elimination
+        // (LTO-style, in one module). Skipped for .ll/.s/.o outputs (they may
+        // be linked against other objects) and --freestanding (the kernel's
+        // entry symbols must stay visible to the external linker script).
+        auto hasSuffix = [](const std::string& s, const std::string& suffix) {
+            return s.size() >= suffix.size() &&
+                   s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        const std::string& outPath = options.outputFile;
+        const bool partialOutput = hasSuffix(outPath, ".ll") || hasSuffix(outPath, ".s") ||
+                                   hasSuffix(outPath, ".o") || hasSuffix(outPath, ".obj");
+        const bool wholeProgram = !options.freestanding &&
+                                  (options.run || (!outPath.empty() && !partialOutput));
+        if (wholeProgram)
+        {
+            for (auto &F : *generatedModule)
+                if (!F.isDeclaration() && F.hasExternalLinkage() && F.getName() != "main")
+                    F.setLinkage(llvm::GlobalValue::InternalLinkage);
+            for (auto &G : generatedModule->globals())
+                if (G.hasInitializer() && G.hasExternalLinkage() &&
+                    !G.getName().starts_with("llvm."))
+                    G.setLinkage(llvm::GlobalValue::InternalLinkage);
         }
 
         // Optimize if requested
@@ -1142,6 +1204,20 @@ private:
 
         // Create a function pass manager
         llvm::PassBuilder passBuilder(targetMachine.get());
+
+        // GCC turns the classic i-j-k matmul into a vectorizable kernel with
+        // loop interchange at -O3; LLVM ships the pass but keeps it out of the
+        // default pipeline. Run it right before the vectorizers at -O3 so
+        // column-strided inner loops become contiguous and vectorize.
+        if (level >= 3)
+        {
+            passBuilder.registerVectorizerStartEPCallback(
+                [](llvm::FunctionPassManager &FPM, llvm::OptimizationLevel) {
+                    FPM.addPass(llvm::createFunctionToLoopPassAdaptor(
+                        llvm::LoopInterchangePass()));
+                });
+        }
+
         llvm::LoopAnalysisManager LAM;
         llvm::FunctionAnalysisManager FAM;
         llvm::CGSCCAnalysisManager CGAM;
@@ -1200,6 +1276,7 @@ void displayUsage()
               << "  --target <target>      Set compilation target (native, wasm)\n"
               << "  --borrow-check         Enable opt-in ownership / use-after-move checking\n"
               << "  --native               Tune native output for this CPU (POPCNT/AVX/...); not portable\n"
+              << "  --permissive           Print type errors but compile anyway (not recommended)\n"
               << "  --freestanding         Emit a no-libc/no-GC object for kernel/bare-metal\n"
               << "  --no-gc                Do not link the garbage collector (alloc -> malloc)\n"
               << "  --no-ffi               Disable FFI support\n"
@@ -1446,6 +1523,12 @@ int main(int argc, char *argv[])
             // Tune AOT codegen for the build host (POPCNT/AVX/BMI/...). Faster
             // but the resulting binary may not run on older CPUs.
             options.nativeCpu = true;
+        }
+        else if (arg == "--permissive")
+        {
+            // Lenient mode: type errors are printed but do not block codegen
+            // (the pre-strict behavior). Fatal errors still stop compilation.
+            options.permissive = true;
         }
         else if (arg == "--freestanding")
         {
