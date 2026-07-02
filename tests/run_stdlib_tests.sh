@@ -1,19 +1,32 @@
 #!/usr/bin/env bash
-# Run every Tocin-level stdlib test (tests/cases/stdlib_*.to) via the compiler's
-# JIT and assert a zero exit code (each uses std.testing's testSummary, which
-# returns 0 only if all its checks passed). Fails loudly on the first bad exit.
+#
+# run_stdlib_tests.sh — JIT end-to-end runner for tests that need the Tocin
+# runtime (vectors/maps/strings/alloc, module imports, std.testing). These
+# can't run under the lli-based scripts/run_to_tests.sh because lli cannot
+# resolve the __tocin_* runtime symbols, so they live in tests/jit/ and run
+# via `tocin --run` (the JIT registers the runtime in-process).
+#
+# Pass criteria per file: exit code 0, unless it declares `// expect: N`
+# (then exit must equal N). std.testing's testSummary() already returns
+# nonzero on any failed check, so those files self-report.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOCIN="${TOCIN:-$ROOT/build/tocin}"
+DIR="${1:-$ROOT/tests/jit}"
+export TOCIN_PATH="${TOCIN_PATH:-$ROOT/stdlib}"
+
 fail=0
-for t in "$ROOT"/tests/cases/stdlib_*.to; do
+for t in "$DIR"/*.to; do
+  [ -e "$t" ] || continue
   name="$(basename "$t")"
-  if out="$("$TOCIN" "$t" --run 2>&1)"; then
-    summary="$(printf '%s\n' "$out" | tail -1)"
-    echo "PASS  $name  ($summary)"
+  want="$(grep -m1 -oE '// *expect: *[0-9]+' "$t" | grep -oE '[0-9]+' || true)"
+  [ -n "$want" ] || want=0
+  out="$("$TOCIN" "$t" --run 2>&1)"; got=$?
+  if [ "$got" -eq "$want" ]; then
+    echo "PASS  $name  ($(printf '%s\n' "$out" | tail -1))"
   else
-    echo "FAIL  $name"
-    printf '%s\n' "$out" | tail -5
+    echo "FAIL  $name  (exit $got, expected $want)"
+    printf '%s\n' "$out" | tail -6
     fail=1
   fi
 done
