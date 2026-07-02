@@ -394,6 +394,25 @@ These are `.to` files under `stdlib/std/`, resolved by `import std.<name>;`. Imp
 - **`import std.strings;`** — string processing built on the char builtins: `strTrim(s)` / `strTrimLeft` / `strTrimRight`, `strRepeat(s,n)`, `strPadLeft(s,width,padChar)` / `strPadRight`, `strReverse(s)`, `strCountChar(s,ch)`, `strLastIndexOf(s,ch)`, `strIsInt(s)`, `strParseIntOr(s,fallback)` (checked parse), `strEqualsIgnoreCase(a,b)`. All return strings or `int`; char args are ASCII codes.
 - **`import std.testing;`** — a Tocin-native test harness: `testBegin()`, `check(name, cond)`, `checkEq(name, got, want)`, `checkStrEq(name, got, want)`, then `return testSummary();` (prints `N passed, M failed` and returns 0 if all passed, 1 otherwise — use it as `main`'s exit code).
 
+Beyond `std.*`, these domain modules also compile and run (import by path, e.g. `import math.stats;`). Names are globally unique (Tocin has no namespaces yet, so no two modules define the same function). Each has a test in `tests/cases/stdlib_*.to`; run them all with `tests/run_stdlib_tests.sh`.
+- **`import math.basic;`** — float helpers (`signf`, `clampf`, `lerp`, `hypot`, `cbrt`, `degToRad`/`radToDeg`, `approxEq`/`approxEqTol`) + int helpers (`iabs`, `ipow`, `isqrt`, `iclamp`).
+- **`import math.stats;`** — `sum`/`mean`/`minv`/`maxv`/`spread`, `variance`/`stddev` (population) and `sampleVariance`/`sampleStddev`, `median`, `dot`, `covariance` over `list<float>`.
+- **`import math.geometry;`** — 2D/3D `dot`/`length`/`dist`, `cross{X,Y,Z}`, `atan2f`, `angle2`, shape area/volume, `triangleArea2`.
+- **`import math.linear;`** — dense linear algebra over flat row-major `list<float>`: `matMul`, `matTranspose`, `matVecMul`, `matTrace`, `vecDot`/`vecNorm`/`vecNormalize`.
+- **`import math.differential;`** — numerical calculus over `(float)->float`: `derivative`, `integrateSimpson`/`integrateTrapezoid`, `newtonRoot`/`bisectRoot`, `eulerIntegrate`.
+- **`import math.stats_advanced;`** — `correlation`, `linearRegression`, `zscoreNormalize`, `minMaxScale`, `normalPdf`/`normalCdf`, `erf`.
+- **`import data.algorithms;`** — in-place `sort` (quicksort) / `insertionSort`, `binarySearch`/`linearSearch`, `isSorted`, `reverse`, `argMin`/`argMax`, `intSum`/`intProduct`/`countEq` over `list<int>`.
+- **`import data.structures;`** — `Stack` (`stackNew`/`stackPush`/`stackPop`/…), FIFO `Queue` (`queueNew`/`enqueue`/`dequeue`), int `Set` and `Counter` over the map builtins; handles use the `vector`/`map` types.
+- **`import embedded.gpio;`** — MMIO GPIO driver over the volatile primitives: `pinMode`, `digitalRead`/`digitalWrite`, `toggle`, `readPort`/`writePort`, `barrier`. Works under `--freestanding`.
+- **`import audio;`** — DSP over `list<float>`: `genSine`/`genSquare`/`genSaw`, `gain`, `mix`, `clip`, `applyEnvelope`, `rms`/`peak`, `normalize`, `lowpass`, `midiToFreq`.
+- **`import game.graphics;`** — software RGBA rasterizer over a raw framebuffer: `createFramebuffer`, `setPixel`/`getChannel`, `clear`, `fillRect`/`drawRect`, `drawLine` (Bresenham), `fillCircle`.
+- **`import ml.neural_network;`** — feed-forward NN over flat `list<float>`: `sigmoid`/`relu`/`tanhf` (+ derivatives), `softmax`, `denseForward`, `mseLoss`/`crossEntropy`, and a backprop `trainStep` (learns XOR in the tests).
+- **`import ml.deep_learning;`** — training utilities: `argmax`, `oneHot`, `accuracy`, `meanAbsError`, `rSquared`, `heScale`/`xavierScale`, `initWeights`, `lrExpDecay`/`lrStepDecay`.
+- **`import ml.computer_vision;`** — 8-bit grayscale image ops over raw buffers: `threshold`, `invert`, `brighten`, `boxBlur`, `sobel`, `histogram`, `resize`.
+- **`import web.http;`** — HTTP/1.1 helpers: `httpMethod`/`httpPath`/`httpRoute`, `buildResponse`/`ok`/`okJson`/`notFound`/`statusText`, and a `serve`/`serveOnce`/`serveLoop` server over the tcp builtins.
+- **`import net.advanced;`** — HTTP client: `urlHost`/`urlPort`/`urlPath`, `httpGet`/`httpPost`, `responseStatus`/`responseBody`.
+- **`import web.websocket;`** — RFC 6455 frame codec over byte buffers: `writeFrame`, `frameOpcode`/`framePayloadLen`/`framePayloadOffset`, `unmaskPayload`.
+
 ```tocin
 import std.linq;
 def main() -> int {
