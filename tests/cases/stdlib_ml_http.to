@@ -1,0 +1,55 @@
+import std.testing;
+import web.http;
+import ml.neural_network;
+
+def main() -> int {
+    testBegin();
+    // HTTP parsing + building
+    let req = "GET /health HTTP/1.1\r\nHost: x\r\n\r\n";
+    checkStrEq("method", httpMethod(req), "GET");
+    checkStrEq("path", httpPath(req), "/health");
+    checkEq("route match", httpRoute(req, "GET", "/health"), 1);
+    checkEq("route miss", httpRoute(req, "POST", "/health"), 0);
+    let resp = buildResponse(200, "text/plain", "hi");
+    check("resp has status", strContains(resp, "200 OK") == 1);
+    check("resp has len", strContains(resp, "Content-Length: 2") == 1);
+    check("resp has body", strContains(resp, "hi") == 1);
+
+    // Neural net: learn XOR. Loss must drop substantially over training.
+    let w1 = [0.3, -0.2, 0.5, 0.4, -0.3, 0.1, 0.2, 0.6];  // 4 hidden x 2 in
+    let b1 = [0.0, 0.0, 0.0, 0.0];
+    let w2 = [0.4, -0.5, 0.3, 0.2];                        // 1 out x 4 hidden
+    let b2 = [0.0];
+    let h = [0.0, 0.0, 0.0, 0.0];
+    let o = [0.0];
+    // XOR dataset
+    let X0 = [0.0, 0.0]; let Y0 = [0.0];
+    let X1 = [0.0, 1.0]; let Y1 = [1.0];
+    let X2 = [1.0, 0.0]; let Y2 = [1.0];
+    let X3 = [1.0, 1.0]; let Y3 = [0.0];
+    let firstLoss = trainStep(w1,b1,w2,b2, X0,Y0, h,o, 2,4,1, 0.5);
+    let epoch = 0;
+    while epoch < 5000 {
+        trainStep(w1,b1,w2,b2, X0,Y0, h,o, 2,4,1, 0.5);
+        trainStep(w1,b1,w2,b2, X1,Y1, h,o, 2,4,1, 0.5);
+        trainStep(w1,b1,w2,b2, X2,Y2, h,o, 2,4,1, 0.5);
+        trainStep(w1,b1,w2,b2, X3,Y3, h,o, 2,4,1, 0.5);
+        epoch = epoch + 1;
+    }
+    let lastLoss = trainStep(w1,b1,w2,b2, X1,Y1, h,o, 2,4,1, 0.5);
+    check("nn learned (loss dropped 10x+)", lastLoss < firstLoss / 10.0);
+    // after training, XOR(0,1) should predict close to 1
+    denseForwardCheck(w1,b1,w2,b2,h,o);
+    check("nn predicts XOR(0,1)~1", o[0] > 0.8);
+    let sm = [0.0, 0.0, 0.0];
+    softmax([1.0, 2.0, 3.0], sm);
+    check("softmax normalized", approxSum(sm));
+    return testSummary();
+}
+def denseForwardCheck(w1: list<float>, b1: list<float>, w2: list<float>, b2: list<float>, h: list<float>, o: list<float>) -> int {
+    let X1 = [0.0, 1.0];
+    for i in 0..4 { let acc = b1[i]; for j in 0..2 { acc = acc + w1[i*2+j]*X1[j]; } h[i] = sigmoid(acc); }
+    let acc = b2[0]; for j in 0..4 { acc = acc + w2[j]*h[j]; } o[0] = sigmoid(acc);
+    return 0;
+}
+def approxSum(sm: list<float>) -> int { let s = 0.0; for i in 0..len(sm) { s = s + sm[i]; } let d = s - 1.0; if d < 0.0 { d = -d; } return d < 0.001 ? 1 : 0; }
