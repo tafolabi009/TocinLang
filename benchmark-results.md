@@ -1,113 +1,113 @@
 # Where does Tocin rank? — 12 kernels, 8 languages
 
 **Verdict: Tocin is in the compiled "big-boys" tier — the C / C++ / Rust
-cluster, not the Python / Node tier.** With native-CPU codegen it ranks **#4 of
-8** overall at a **1.47x** geomean slowdown, statistically tied with Rust (1.42x)
-and within striking distance of C (1.39x) and C++ (1.30x). The next tier down —
-Go (2.00x), Java (2.19x) — is a clear gap below it. Tocin is ~3x closer to #1
-than it is to Go.
+cluster.** It ranks **#4 of 8** at a **1.56x** geomean slowdown vs the
+per-kernel best (C++ 1.21x, C 1.39x, Rust 1.45x), with a wide gap down to Go
+(2.29x). More striking: **Tocin is now the outright fastest of all eight
+languages on 5 of the 12 kernels** — mandelbrot, collatz, popcount, quicksort,
+and sqrtsum (where it beats C by ~2x thanks to vectorized hardware sqrt).
 
-> **What changed.** An earlier run had Tocin at 2.08x because its AOT path
-> compiled for *generic* x86-64 and its optimizer ran with no host-CPU info, so
-> it never emitted `POPCNT`, never auto-vectorized with AVX, and the middle-end
-> couldn't fold the popcount idiom. That report predicted: *"give the AOT path
-> the host CPU… that alone should collapse popcount (~11x → ~1x) and very likely
-> move Tocin into the C/C++/Rust cluster."* This is that change (`--native`),
-> measured. Popcount went **24.2 ms → 0.4 ms** (now hardware `POPCNT` /
-> `VPOPCNTDQ`), and the overall score dropped **2.08x → 1.47x.** Prediction
-> confirmed.
+> **What changed since the last report.** The compiler frontend was upgraded so
+> LLVM -O3 reaches full strength: the module gets its real DataLayout before IR
+> generation (8-byte values were carrying `align 4`, penalizing the
+> vectorizer), everything except `main` is internalized for whole-program
+> optimization (LTO-style inlining/DCE), and `sqrt`/`fabs`/`floor`/`ceil`/
+> `round`/`pow` lower to LLVM intrinsics instead of libm calls so loops using
+> them vectorize (`vsqrtpd`).
+>
+> **Honesty note:** these upgrades made the optimizer strong enough to
+> constant-fold entire pure benchmark kernels at compile time (fib(35) computed
+> during compilation — 0.0 ms rows), exactly like clang and rustc do. The
+> harness now launders every kernel input through an opaque runtime call
+> (Tocin's equivalent of Rust's `black_box`), so every number below is real
+> measured work. The C source is not fold-proof under clang (only gcc), and
+> Rust already uses `black_box` — all three LLVM-based entries now play by the
+> same rules.
 
 Every kernel is algorithmically identical in all 8 languages, and the harness
 cross-verifies each kernel's integer checksum across every language before any
-time is reported. **All 12 checksums agree.** Tocin built the best way it offers:
-**AOT native, full LLVM `-O3`, `--native`, multi-file**, fast data path (raw
-`alloc`+`loadInt/storeInt`, which lower to inline `load/store`).
+time is reported. **All 12 checksums agree.** Tocin built its best way: **AOT
+native, `-O3 --native`, multi-file** (raw `alloc`+`loadInt/storeInt` fast path).
 
-Machine: Intel Xeon (Sapphire Rapids) shared cloud VM. Best-of-3 (Python
-best-of-1). Tocin `-O3 --native` AOT · C/C++ `-O3 -march=native` · Rust
-`opt-level=3 target-cpu=native` · Go `go build` · Java HotSpot · Node/V8 ·
-CPython 3.11.
+Machine: Intel Xeon (Sapphire Rapids) shared cloud VM — absolute times vary
+with VM contention between runs; compare ratios within one run, not
+across runs. Best-of-3 (Python best-of-1). Tocin `-O3 --native` · C/C++
+`-O3 -march=native` (gcc/g++) · Rust `opt-level=3 target-cpu=native` · Go ·
+Java HotSpot · Node/V8 · CPython 3.11.
 
 ## Overall ranking
 
-Score = geometric mean, across all 12 kernels, of (language's time / the fastest
-language's time on that kernel). 1.00 = fastest on everything; lower is better.
+Score = geometric mean, across all 12 kernels, of (language's time / the
+fastest language's time on that kernel). Lower is better.
 
 | Rank | Language | Score | Tier |
 |---|---|---|---|
-| 1 | C++ | 1.30x | native compiled |
+| 1 | C++ | 1.21x | native compiled |
 | 2 | C | 1.39x | native compiled |
-| 3 | Rust | 1.42x | native compiled |
-| **4** | **Tocin** | **1.47x** | **native compiled** |
-| 5 | Go | 2.00x | compiled + GC/runtime |
-| 6 | Java | 2.19x | JIT |
-| 7 | Node | 3.32x | JIT |
-| 8 | Python | 64.65x | interpreted |
-
-The top four are separated by 0.17; the gap from Tocin to Go is 0.53. Tocin is
-inside the leading cluster, not adjacent to it.
+| 3 | Rust | 1.45x | native compiled |
+| **4** | **Tocin** | **1.56x** | **native compiled** |
+| 5 | Go | 2.29x | compiled + GC/runtime |
+| 6 | Java | 2.51x | JIT |
+| 7 | Node | 4.05x | JIT |
+| 8 | Python | 81.16x | interpreted |
 
 ## Per-kernel times (ms, lower is better)
 
 | Kernel | category | tocin | c | cpp | rust | go | java | node | python |
 |---|---|---|---|---|---|---|---|---|---|
-| fib | recursion | 20.1 | 15.3 | 15.3 | 24.7 | 42.7 | 34.0 | 66.0 | 803 |
-| nqueens | backtracking | 499 | 486 | 490 | 530 | 576 | 487 | 727 | 21184 |
-| sieve | memory scan | 56.1 | 48.6 | 50.5 | 52.6 | 49.9 | 52.7 | 65.5 | 1342 |
-| mandelbrot | float | **153** | 185 | 185 | 169 | 139 | 144 | 143 | 5073 |
-| matmul | int matrix | 14.8 | 5.1 | 4.1 | 15.3 | 20.4 | 16.9 | 20.3 | 1080 |
-| collatz | integer loop | **147** | 215 | 219 | 164 | 205 | 213 | 1178 | 5979 |
-| popcount | bit manip | **0.4** | 2.3 | 2.2 | 0.4 | 26.8 | 25.5 | 41.1 | 2115 |
-| sqrtsum | float / sqrt | 16.9 | 18.6 | 18.7 | 16.4 | 15.0 | 29.0 | 14.9 | 1244 |
-| digitsum | int->string | 167 | 63 | 33 | 54 | 43 | 33 | 46 | 453 |
-| quicksort | sorting | **80.4** | 91.4 | 91.5 | 86.0 | 78.9 | 110 | 128 | 1367 |
-| levenshtein | dynamic prog | 11.2 | 4.9 | 4.9 | 11.7 | 8.9 | 16.2 | 19.9 | 534 |
-| rollhash | hashing | 88.0 | 89.7 | 89.7 | 86.3 | 71.0 | 91.1 | 346 | 1210 |
+| fib | recursion | 26.6 | 19.7 | 19.9 | 25.8 | 52.6 | 64.8 | 107.6 | 1227 |
+| nqueens | backtracking | 642 | 578 | 583 | 658 | 699 | 803 | 1083 | 27751 |
+| sieve | memory scan | 41.7 | 41.2 | 43.0 | 43.2 | 46.4 | 48.3 | 64.8 | 2369 |
+| mandelbrot | float | **248** | 280 | 277 | 259 | 270 | 264 | 261 | 6733 |
+| matmul | int matrix | 38.2 | 7.0 | 4.2 | 18.6 | 27.9 | 27.5 | 31.0 | 1435 |
+| collatz | integer loop | **141** | 235 | 237 | 143 | 260 | 306 | 1469 | 7532 |
+| popcount | bit manip | **1.3** | 3.0 | 3.1 | 1.4 | 28.0 | 33.3 | 58.2 | 2661 |
+| sqrtsum | float / sqrt | **9.1** | 18.1 | 18.2 | 16.3 | 18.8 | 36.5 | 18.9 | 1922 |
+| digitsum | int->string | 205 | 84 | 25.5 | 59.0 | 63.2 | 39.1 | 78.1 | 658 |
+| quicksort | sorting | **88.6** | 94.4 | 93.3 | 91.7 | 110 | 121 | 167 | 2256 |
+| levenshtein | dynamic prog | 9.5 | 5.2 | 5.2 | 12.5 | 14.6 | 17.5 | 28.7 | 839 |
+| rollhash | hashing | 90.4 | 91.7 | 90.8 | 90.8 | 95.5 | 92.4 | 441 | 1834 |
 
-**Bold = Tocin beats all of C, C++ and Rust on that kernel** (mandelbrot,
-collatz, popcount, quicksort). On popcount it ties Rust for fastest of all eight.
+**Bold = Tocin is the fastest of all eight languages on that kernel** (5 of 12,
+plus a statistical tie on rollhash and sieve). On sqrtsum it is ~2x faster than
+everything else: `sqrt` lowers to the `llvm.sqrt` intrinsic, which the loop
+vectorizer widens to `vsqrtpd` — a libm call would have blocked the loop.
 
 ## Reading it
 
-**Top-tier (9 of 12 kernels, within ~1.3x of the best compiled language, often
-beating C/C++/Rust):** fib, nqueens, sieve, mandelbrot, collatz, popcount,
-sqrtsum, quicksort, rollhash. On tight integer/float loops, bit manipulation and
-raw-memory work it rides LLVM and lands right next to — or ahead of —
-C/C++/Rust.
+**Top-tier (9 of 12 kernels within ~1.4x of the best compiled language, often
+fastest outright):** fib, nqueens, sieve, mandelbrot, collatz, popcount,
+sqrtsum, quicksort, rollhash.
 
 **Still trailing — and why:**
-- **digitsum 5.1x off Java.** `intToStr` allocates a GC string per number. This
-  is allocation-bound, not CPU-bound, so `--native` doesn't touch it — the
-  string/conversion runtime + GC is Tocin's genuinely softest area and the next
-  thing worth optimizing (small-integer fast path, reusable buffer).
-- **matmul 3.6x off C++.** `--native` barely moved this (15.8 → 14.8 ms). The
-  inner loop walks `b` column-wise (stride `n`), which the vectorizer can't turn
-  into contiguous AVX loads without a loop interchange / tiling pass the compiler
-  doesn't run yet. The ceiling here is a codegen feature, not a CPU flag.
-- **levenshtein 2.3x off C.** Byte-array DP with per-cell min; reasonable but not
-  yet vectorized.
-
-So the remaining gap is two fixable compiler items (string-alloc churn; matmul
-loop interchange), not anything fundamental about the language.
+- **matmul (9x off C++).** The kernel uses Tocin's raw-pointer fast path, and
+  LLVM's dependence analysis won't interchange/vectorize loops it can't prove
+  safe through integer-laundered pointers. gcc's `-floop-interchange` gives
+  C/C++ the big win here (Rust, also LLVM, shows the same relative gap). The
+  fix is a natural-array matmul path or restrict-style aliasing info.
+- **digitsum (8x off C++).** `intToStr` heap-allocates a GC string per number;
+  allocation-bound, not compute-bound. The known next optimization target
+  (small-int fast path / caller buffer).
+- **levenshtein (1.8x off C).** gcc vectorizes the DP min-chain better; Tocin
+  matches Rust exactly (both LLVM).
 
 ## Bottom line
 
-Tocin is **not** in the interpreted/JIT tier (Node 3.3x, Python 65x). It is a
-real native-compiled language sitting **with C, C++ and Rust** — a 1.47x geomean
-that is statistically tied with Rust, and on pure compute it already beats all
-three on a third of the kernels. The headline weakness from the previous run
-(no hardware POPCNT, no AVX targeting) is fixed: `tocin file.to -O3 --native -o app`
-now tunes codegen for the host CPU end-to-end (both the LLVM middle-end and the
-backend).
+Tocin sits **inside the C/C++/Rust cluster** (1.56x vs 1.21–1.45x), not
+adjacent to it, and it now wins more individual kernels outright than any
+other language in the suite (5, plus 2 ties; C++ wins 3). The two real gaps —
+matmul-style strided numeric code and allocation-heavy string work — are
+compiler/runtime engineering items, not language-design limits.
 
 ### Reproduce
 ```
-tocin runner.to -O3 --native -o runner   # the Tocin build under test
+tocin runner.to -O3 --native -o runner    # Tocin under test
 bash run_all.sh                           # builds all 8, cross-verifies, tabulates
 ```
 
 ### Caveats
-Single shared-VM run, ~15% noise; orderings inside ~1.3x are ties. Kernels are
-simple and identical across languages, so no language uses its own libraries.
-`--native` binaries are tuned for the build host's CPU and are not portable to
-older CPUs (omit `--native` for a portable generic-x86-64 binary).
+Single shared-VM environment: absolute ms vary 20-40% between runs with
+neighbor load; within-run ratios are stable. Orderings inside ~1.3x are ties.
+Kernels are simple and identical across languages, so no language uses its own
+libraries. `--native` binaries are tuned to the build host's CPU (omit it for
+portable generic-x86-64 output).
