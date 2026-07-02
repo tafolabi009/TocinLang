@@ -806,6 +806,7 @@ extern "C"
     // panic). Emitted by the compiler before each checked `arr[i]` access.
     void __tocin_oob(int64_t idx, int64_t len)
     {
+        std::fflush(stdout);   // don't lose output already printed
         std::fprintf(stderr,
             "panic: index out of bounds: the length is %lld but the index is %lld\n",
             (long long)len, (long long)idx);
@@ -820,6 +821,7 @@ extern "C"
     // up instead of just a crash.
     void __tocin_panic(const char *msg, const char *loc)
     {
+        std::fflush(stdout);   // don't lose output already printed
         if (loc && loc[0])
             std::fprintf(stderr, "panic: %s at %s\n", msg ? msg : "aborted", loc);
         else

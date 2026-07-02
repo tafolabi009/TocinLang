@@ -295,6 +295,7 @@ public:
         bool borrowCheck;  // opt-in ownership / use-after-move analysis
         bool nativeCpu;    // tune AOT codegen for the host CPU (POPCNT/AVX/...)
         bool permissive;   // do not block compilation on (non-fatal) type errors
+        bool checkOnly;    // `tocin check`: stop after type checking (no codegen)
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
@@ -302,7 +303,7 @@ public:
               enableMacros(true), enableAsync(true), enableDebugger(false),
               enableWASM(false), target("native"), enablePackageManager(true), run(false),
               freestanding(false), noGC(false), borrowCheck(false), nativeCpu(false),
-              permissive(false) {}
+              permissive(false), checkOnly(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -366,6 +367,13 @@ public:
         if (!options.permissive && errorHandler.hasErrors())
         {
             return false;
+        }
+
+        // `tocin check`: the front half (parse + strict type check) is the
+        // whole job — perfect for editor save-hooks and CI gates. Skip codegen.
+        if (options.checkOnly)
+        {
+            return true;
         }
 
         // Opt-in ownership / borrow analysis. Off by default; never changes
@@ -1264,6 +1272,8 @@ private:
 void displayUsage()
 {
     std::cout << "Usage: tocin [options] [filename]\n"
+              << "       tocin check <file.to>   Typecheck only (no codegen); exit 0 if clean\n"
+              << "       tocin new <name>        Scaffold a new project directory\n"
               << "Options:\n"
               << "  --help, -h             Display this help message\n"
               << "  --version, -V          Print the compiler version and exit\n"
@@ -1453,7 +1463,54 @@ int main(int argc, char *argv[])
     EnhancedCompiler::CompilationOptions options;
     std::string filename;
 
-    for (int i = 1; i < argc; ++i)
+    // Subcommands (cargo/go-style). `tocin check f.to` = typecheck only;
+    // `tocin new name` scaffolds a project directory.
+    int argStart = 1;
+    bool checkOnly = false;
+    if (argc >= 2 && std::string(argv[1]) == "check")
+    {
+        checkOnly = true;
+        argStart = 2;
+    }
+    else if (argc >= 3 && std::string(argv[1]) == "new")
+    {
+        namespace fs = std::filesystem;
+        std::string name = argv[2];
+        std::error_code ec;
+        if (fs::exists(name, ec))
+        {
+            std::cerr << "error: '" << name << "' already exists" << std::endl;
+            return 1;
+        }
+        fs::create_directories(name, ec);
+        if (ec)
+        {
+            std::cerr << "error: cannot create directory '" << name << "': " << ec.message() << std::endl;
+            return 1;
+        }
+        std::ofstream mainTo(fs::path(name) / "main.to");
+        mainTo << "// " << name << " — created by `tocin new`\n"
+               << "\n"
+               << "def main() -> int {\n"
+               << "    println(\"Hello from " << name << "!\");\n"
+               << "    return 0;\n"
+               << "}\n";
+        std::ofstream readme(fs::path(name) / "README.md");
+        readme << "# " << name << "\n\n"
+               << "Run it:\n\n"
+               << "```\n"
+               << "tocin main.to --run          # JIT\n"
+               << "tocin main.to -O3 -o " << name << "   # native binary\n"
+               << "tocin check main.to          # typecheck only\n"
+               << "```\n";
+        std::ofstream gitignore(fs::path(name) / ".gitignore");
+        gitignore << "/" << name << "\n*.o\n*.ll\n*.s\n";
+        std::cout << "Created " << name << "/ (main.to, README.md, .gitignore)\n"
+                  << "  cd " << name << " && tocin main.to --run" << std::endl;
+        return 0;
+    }
+
+    for (int i = argStart; i < argc; ++i)
     {
         std::string arg = argv[i];
 
@@ -1604,10 +1661,27 @@ int main(int argc, char *argv[])
                        std::istreambuf_iterator<char>());
     file.close();
 
+    options.checkOnly = checkOnly;
+
     // Compile the source
     if (!compiler.compile(source, filename, options))
     {
+        // Summary line so the tally is visible after a wall of diagnostics.
+        int ec = errorHandler.errorCount();
+        int wc = errorHandler.warningCount();
+        std::cerr << (ec == 1 ? "1 error" : std::to_string(ec) + " errors");
+        if (wc > 0)
+            std::cerr << ", " << (wc == 1 ? "1 warning" : std::to_string(wc) + " warnings");
+        std::cerr << " generated." << std::endl;
         return 1;
+    }
+    if (checkOnly)
+    {
+        int wc = errorHandler.warningCount();
+        std::cout << filename << ": OK"
+                  << (wc > 0 ? " (" + std::to_string(wc) + " warning" + (wc == 1 ? "" : "s") + ")" : "")
+                  << std::endl;
+        return 0;
     }
 
 // Clean up Python if it was initialized

@@ -31,6 +31,9 @@ namespace type_checker
         void define(const std::string &name, ast::TypePtr type, bool isConstant);
         ast::TypePtr lookup(const std::string &name) const;
         bool assign(const std::string &name, ast::TypePtr type);
+        // Append every name visible from this scope (walking the parent chain)
+        // into `out` — used for "did you mean ...?" typo suggestions.
+        void collectNames(std::vector<std::string> &out) const;
         // True if `name` resolves (through the scope chain) to a `const` binding.
         bool isConstant(const std::string &name) const;
 
@@ -199,6 +202,8 @@ namespace type_checker
         // Register an enum's members/variants (shared by pass-1 hoisting and
         // visitEnumStmt so forward references to variants resolve).
         void registerEnum(ast::EnumStmt *stmt);
+        // Closest in-scope/builtin name within a small edit distance, or "".
+        std::string suggestName(const std::string &name) const;
 
         // Module related methods
         bool loadModule(const std::string &moduleName);

@@ -45,6 +45,14 @@ namespace type_checker
         return false;
     }
 
+    void Environment::collectNames(std::vector<std::string> &out) const
+    {
+        for (const auto &kv : variables_)
+            out.push_back(kv.first);
+        if (parent_)
+            parent_->collectNames(out);
+    }
+
     bool Environment::isConstant(const std::string &name) const
     {
         auto it = variables_.find(name);
@@ -1507,12 +1515,73 @@ namespace type_checker
         // used to be a location-less codegen failure (or a silent miscompile)
         // into a precise compile-time error. `--permissive` downgrades this to
         // a non-blocking diagnostic (the driver gates on hasErrors()).
+        std::string suggestion = suggestName(expr->name);
         errorHandler_.reportError(
             error::ErrorCode::T002_UNDEFINED_VARIABLE,
-            "Use of undeclared identifier '" + expr->name + "'",
+            "Use of undeclared identifier '" + expr->name + "'" +
+                (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"),
             std::string(expr->token.filename), expr->token.line, expr->token.column,
             error::ErrorSeverity::ERROR);
         currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+    }
+
+    // Bounded Levenshtein distance (early-exit above `maxD`). Small inputs only.
+    static int editDistance(const std::string &a, const std::string &b, int maxD)
+    {
+        int la = (int)a.size(), lb = (int)b.size();
+        if (la - lb > maxD || lb - la > maxD)
+            return maxD + 1;
+        std::vector<int> prev(lb + 1), cur(lb + 1);
+        for (int j = 0; j <= lb; ++j) prev[j] = j;
+        for (int i = 1; i <= la; ++i)
+        {
+            cur[0] = i;
+            int rowMin = cur[0];
+            for (int j = 1; j <= lb; ++j)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+                rowMin = std::min(rowMin, cur[j]);
+            }
+            if (rowMin > maxD)
+                return maxD + 1;   // no way back under the bound
+            std::swap(prev, cur);
+        }
+        return prev[lb];
+    }
+
+    std::string TypeChecker::suggestName(const std::string &name) const
+    {
+        // Candidates: everything in scope, plus builtins, module aliases, and
+        // enum variants. Threshold: 1 edit for short names, 2 for length >= 5 —
+        // tight enough to avoid absurd suggestions.
+        std::vector<std::string> candidates;
+        if (environment_)
+            environment_->collectNames(candidates);
+        for (const auto &kv : builtinArities())
+            candidates.push_back(kv.first);
+        for (const auto &m : knownModules_)
+            candidates.push_back(m);
+        for (const auto &kv : adtVariantEnum_)
+            candidates.push_back(kv.first);
+
+        const int maxD = name.size() >= 5 ? 2 : 1;
+        std::string best;
+        int bestD = maxD + 1;
+        for (const auto &c : candidates)
+        {
+            if (c == name || c.rfind("__", 0) == 0)
+                continue;
+            int d = editDistance(name, c, maxD);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = c;
+                if (d == 1 && name.size() >= 5)
+                    break;   // good enough; stop scanning
+            }
+        }
+        return bestD <= maxD ? best : "";
     }
 
     void TypeChecker::visitExpressionStmt(ast::ExpressionStmt *stmt)

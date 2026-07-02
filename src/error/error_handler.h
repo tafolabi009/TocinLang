@@ -342,6 +342,8 @@ namespace error
         const std::vector<e> &getErrors() const;
         bool hasErrors() const;
         bool hasFatalErrors() const;
+        int errorCount() const;    // ERROR + FATAL diagnostics
+        int warningCount() const;
         void setFatal(bool fatal); // Maybe remove if FATAL severity is used consistently
         bool isFatal() const;      // Maybe remove if FATAL severity is used consistently
         void clearErrors();        // Useful for REPL or interactive modes
