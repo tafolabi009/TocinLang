@@ -1274,6 +1274,7 @@ void displayUsage()
     std::cout << "Usage: tocin [options] [filename]\n"
               << "       tocin check <file.to>   Typecheck only (no codegen); exit 0 if clean\n"
               << "       tocin new <name>        Scaffold a new project directory\n"
+              << "       tocin doc <file.to>     Generate Markdown API docs to stdout\n"
               << "Options:\n"
               << "  --help, -h             Display this help message\n"
               << "  --version, -V          Print the compiler version and exit\n"
@@ -1471,6 +1472,104 @@ int main(int argc, char *argv[])
     {
         checkOnly = true;
         argStart = 2;
+    }
+    else if (argc >= 3 && std::string(argv[1]) == "doc")
+    {
+        // `tocin doc file.to` — generate Markdown API docs from top-level
+        // signatures plus the contiguous `//` comment block above each one.
+        std::string docFile = argv[2];
+        std::ifstream in(docFile);
+        if (!in)
+        {
+            std::cerr << "error: cannot open '" << docFile << "'" << std::endl;
+            return 1;
+        }
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::vector<std::string> lines;
+        {
+            std::stringstream ss(src);
+            std::string l;
+            while (std::getline(ss, l))
+                lines.push_back(l);
+        }
+        lexer::Lexer lx(src, docFile, 4);
+        auto toks = lx.tokenize();
+        parser::Parser ps(toks);
+        auto program = ps.parse();
+        if (!program || errorHandler.hasFatalErrors())
+        {
+            std::cerr << "error: could not parse '" << docFile << "'" << std::endl;
+            return 1;
+        }
+        // The `//` block immediately above `line` (1-based), joined as prose.
+        auto docAbove = [&](int line) -> std::string {
+            std::string out;
+            for (int i = line - 2; i >= 0 && (size_t)i < lines.size(); --i)
+            {
+                std::string t = lines[i];
+                size_t p = t.find_first_not_of(" \t");
+                if (p == std::string::npos || t.compare(p, 2, "//") != 0)
+                    break;
+                std::string body = t.substr(p + 2);
+                if (!body.empty() && body[0] == ' ')
+                    body.erase(0, 1);
+                out = body + (out.empty() ? "" : "\n") + out;
+            }
+            return out;
+        };
+        auto signatureOf = [](ast::FunctionStmt *fn) {
+            std::string s = "def " + fn->name + "(";
+            for (size_t i = 0; i < fn->parameters.size(); ++i)
+            {
+                if (i) s += ", ";
+                s += fn->parameters[i].name;
+                if (fn->parameters[i].type)
+                    s += ": " + fn->parameters[i].type->toString();
+            }
+            s += ")";
+            if (fn->returnType && fn->returnType->toString() != "None")
+                s += " -> " + fn->returnType->toString();
+            return s;
+        };
+        std::cout << "# " << docFile << "\n\n";
+        std::vector<ast::StmtPtr> top;
+        if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(program)) top = blk->statements;
+        else top.push_back(program);
+        for (auto &s : top)
+        {
+            if (auto fn = std::dynamic_pointer_cast<ast::FunctionStmt>(s))
+            {
+                if (fn->name.rfind("__", 0) == 0)
+                    continue;   // internal helpers stay out of the docs
+                std::cout << "### `" << signatureOf(fn.get()) << "`\n\n";
+                std::string d = docAbove(fn->token.line);
+                if (!d.empty()) std::cout << d << "\n\n";
+            }
+            else if (auto cls = std::dynamic_pointer_cast<ast::ClassStmt>(s))
+            {
+                std::cout << "## class `" << cls->name << "`\n\n";
+                std::string d = docAbove(cls->token.line);
+                if (!d.empty()) std::cout << d << "\n\n";
+                for (auto &m : cls->methods)
+                    if (auto mf = std::dynamic_pointer_cast<ast::FunctionStmt>(m))
+                        std::cout << "- `" << signatureOf(mf.get()) << "`\n";
+                std::cout << "\n";
+            }
+            else if (auto en = std::dynamic_pointer_cast<ast::EnumStmt>(s))
+            {
+                std::cout << "## enum `" << en->name << "`\n\n";
+                for (auto &m : en->members)
+                    std::cout << "- `" << m.first << "`\n";
+                std::cout << "\n";
+            }
+            else if (auto var = std::dynamic_pointer_cast<ast::VariableStmt>(s))
+            {
+                if (var->isConstant)
+                    std::cout << "- const `" << var->name
+                              << (var->type ? ": " + var->type->toString() : "") << "`\n";
+            }
+        }
+        return 0;
     }
     else if (argc >= 3 && std::string(argv[1]) == "new")
     {
