@@ -111,6 +111,7 @@ namespace codegen
         void visitBinaryExpr(ast::BinaryExpr *expr) override;
         void visitGroupingExpr(ast::GroupingExpr *expr) override;
         void visitLiteralExpr(ast::LiteralExpr *expr) override;
+        void visitConditionalExpr(ast::ConditionalExpr *expr) override;
         void visitUnaryExpr(ast::UnaryExpr *expr) override;
         void visitVariableExpr(ast::VariableExpr *expr) override;
         void visitAssignExpr(ast::AssignExpr *expr) override;
@@ -194,6 +195,41 @@ namespace codegen
         struct OwnedInstance { llvm::AllocaInst *slot; std::string className; llvm::AllocaInst *reached; };
         std::vector<OwnedInstance> destructorStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
+        // restrict-style aliasing: locals initialized directly from `alloc(...)`
+        // each get a distinct alias scope. Accesses through them (loadInt/
+        // storeInt/...) are tagged so LLVM knows two different buffers never
+        // overlap - which is what lets loop interchange + contiguous
+        // vectorization fire (e.g. matmul). Sound because distinct alloc() calls
+        // return disjoint memory; a buffer var is dropped from the map the
+        // moment it is reassigned, and only alloc-initialized locals qualify (a
+        // copy `let b = a;` is not tracked, so it conservatively may-alias).
+        llvm::MDNode *restrictDomain_ = nullptr;                                    // lazily created alias-scope domain
+        std::map<std::string, llvm::MDNode *> bufferScopes_;                        // buffer var name -> its alias scope (per function)
+        // Module-level (global) variables. Declared up front as LLVM globals;
+        // their initializer expressions run in an implicit __tocin_global_init()
+        // that main() calls first (so globals with non-constant initializers -
+        // alloc(), computed values - work). Reads/writes route here when a name
+        // isn't a local.
+        std::map<std::string, llvm::GlobalVariable *> globalVars_;
+        std::vector<ast::VariableStmt *> globalInitStmts_;                          // in declaration order
+        void predeclareGlobals(ast::StmtPtr ast);                                   // create the GlobalVariables
+        void emitGlobalInit();                                                      // fill in __tocin_global_init body
+        llvm::Type *inferGlobalType(ast::VariableStmt *stmt);                       // type for a global's storage
+        // Tag a load/store with this buffer variable's alias scope and mark it
+        // noalias against every other tracked buffer. No-op if name isn't tracked.
+        void tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar);
+        // Emit `if (condFail) __tocin_panic(msg, "file:line:col");` inline: on
+        // the failing path the program aborts with a located message instead of
+        // hitting UB (SIGFPE, segfault). Execution continues on the ok path.
+        // Used for division by zero, nil force-unwrap, and similar runtime traps.
+        void emitTrapIf(llvm::Value *condFail, const std::string &msg);
+        // If `expr` is a bare buffer-variable reference, return its name, else "".
+        std::string bufferVarName(const ast::ExprPtr &expr) const;
+        // Source cursor for diagnostics: updated at visit entry points so
+        // reportError sites deep in codegen can attach a file:line:column
+        // instead of the useless "",0,0. Approximate (statement/expression
+        // granularity) but always at least the enclosing construct.
+        lexer::Token curTok_{};
         std::string lastExprClassName;                                             // Class name of the most recent expression value
         llvm::Type *lastExprArrayElem = nullptr;                                  // Element type of the most recent array expression
         std::map<std::string, std::shared_ptr<ast::FunctionType>> funcReturnFnType; // function name -> its function-typed return signature

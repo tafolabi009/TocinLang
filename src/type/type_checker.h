@@ -31,6 +31,9 @@ namespace type_checker
         void define(const std::string &name, ast::TypePtr type, bool isConstant);
         ast::TypePtr lookup(const std::string &name) const;
         bool assign(const std::string &name, ast::TypePtr type);
+        // Append every name visible from this scope (walking the parent chain)
+        // into `out` — used for "did you mean ...?" typo suggestions.
+        void collectNames(std::vector<std::string> &out) const;
         // True if `name` resolves (through the scope chain) to a `const` binding.
         bool isConstant(const std::string &name) const;
 
@@ -71,6 +74,7 @@ namespace type_checker
         void visitBinaryExpr(ast::BinaryExpr *expr) override;
         void visitGroupingExpr(ast::GroupingExpr *expr) override;
         void visitLiteralExpr(ast::LiteralExpr *expr) override;
+        void visitConditionalExpr(ast::ConditionalExpr *expr) override;
         void visitUnaryExpr(ast::UnaryExpr *expr) override;
         void visitVariableExpr(ast::VariableExpr *expr) override;
         void visitAssignExpr(ast::AssignExpr *expr) override;
@@ -188,6 +192,18 @@ namespace type_checker
         std::unordered_map<std::string, std::string> adtVariantEnum_;                  // variant name -> enum name
         std::unordered_map<std::string, std::unordered_set<std::string>> adtEnumVariants_; // enum name -> variant set
         std::unordered_map<std::string, std::vector<ast::TypePtr>> adtVariantFields_;  // variant name -> payload field types
+
+        // Names that are legal in identifier position but are not ordinary
+        // variables: declared module names (module M { } / import m.sub) and
+        // functions with a trailing variadic parameter (arity-checked loosely).
+        std::unordered_set<std::string> knownModules_;
+        std::unordered_set<std::string> variadicFns_;
+        std::unordered_map<std::string, size_t> fnMinArgs_;   // fn name -> required (non-default) arg count
+        // Register an enum's members/variants (shared by pass-1 hoisting and
+        // visitEnumStmt so forward references to variants resolve).
+        void registerEnum(ast::EnumStmt *stmt);
+        // Closest in-scope/builtin name within a small edit distance, or "".
+        std::string suggestName(const std::string &name) const;
 
         // Module related methods
         bool loadModule(const std::string &moduleName);

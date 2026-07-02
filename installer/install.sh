@@ -47,10 +47,14 @@ cp    "$SRC/VERSION" "$PREFIX/VERSION"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$PREFIX/LICENSE" || true
 
 # --- Relocatable launcher -------------------------------------------------
-# Resolves its own location, so the install can be moved freely.
+# Resolves its own location, so the install can be moved freely. Uses shell
+# builtins only (no dirname/readlink): it must work even on a PATH with no
+# coreutils - minimal containers, restricted shells, `env -i` invocations.
 cat > "$PREFIX/bin/tocin" <<EOF
 #!/bin/sh
-HERE="\$(cd "\$(dirname "\$0")/.." && pwd)"
+SELF="\$0"
+case "\$SELF" in */*) ;; *) SELF="./\$SELF" ;; esac
+HERE="\$(cd "\${SELF%/*}/.." && pwd)"
 export TOCIN_PATH="\${TOCIN_PATH:-\$HERE/stdlib}"
 export $LIBVAR="\$HERE/lib:\${$LIBVAR:-}"
 exec "\$HERE/libexec/tocin" "\$@"

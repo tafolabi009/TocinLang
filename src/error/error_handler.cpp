@@ -1,6 +1,55 @@
 #include "error_handler.h"
 #include <iostream>
 #include <sstream> // For errorCodeToString
+#include <fstream>
+#include <map>
+#include <vector>
+#include <cstdlib>
+#if defined(_WIN32)
+#include <io.h>
+#define TOCIN_ISATTY(fd) _isatty(fd)
+#else
+#include <unistd.h>
+#define TOCIN_ISATTY(fd) isatty(fd)
+#endif
+
+namespace
+{
+    // ANSI colors when stderr is a terminal and NO_COLOR is unset (the
+    // convention editors/CI respect). Cached once.
+    bool useColor()
+    {
+        static const bool enabled = TOCIN_ISATTY(2) != 0 && std::getenv("NO_COLOR") == nullptr;
+        return enabled;
+    }
+    const char *cBold() { return useColor() ? "\033[1m" : ""; }
+    const char *cRed() { return useColor() ? "\033[1;31m" : ""; }
+    const char *cYellow() { return useColor() ? "\033[1;33m" : ""; }
+    const char *cGreen() { return useColor() ? "\033[32m" : ""; }
+    const char *cBlue() { return useColor() ? "\033[1;34m" : ""; }
+    const char *cReset() { return useColor() ? "\033[0m" : ""; }
+
+    // Source-line cache so each file is read once no matter how many
+    // diagnostics point into it. Returns "" when the line isn't available.
+    const std::string &sourceLine(const std::string &file, int line)
+    {
+        static std::map<std::string, std::vector<std::string>> cache;
+        static const std::string empty;
+        auto it = cache.find(file);
+        if (it == cache.end())
+        {
+            std::vector<std::string> lines;
+            std::ifstream in(file);
+            std::string l;
+            while (std::getline(in, l))
+                lines.push_back(l);
+            it = cache.emplace(file, std::move(lines)).first;
+        }
+        if (line < 1 || (size_t)line > it->second.size())
+            return empty;
+        return it->second[line - 1];
+    }
+}
 
 namespace error
 {
@@ -312,13 +361,31 @@ namespace error
             fatalErrorFound = true;
         }
 
-        // Improved output format
-        std::cerr << effectiveFilename << ":" << line << ":" << column << ": "
-                  << (severity == ErrorSeverity::WARNING ? "warning" : "error") // Keep 'error' for ERROR and FATAL for simplicity here
-                  << " [" << errorCodeToString(code) << "]: "                   // Include error code
-                  << message << std::endl;
+        // rustc/clang-style diagnostic: colored severity, then the offending
+        // source line with a caret under the exact column.
+        const bool isWarning = severity == ErrorSeverity::WARNING;
+        std::cerr << cBold() << effectiveFilename << ":" << line << ":" << column << ": " << cReset()
+                  << (isWarning ? cYellow() : cRed())
+                  << (isWarning ? "warning" : "error") << cReset()
+                  << cBold() << " [" << errorCodeToString(code) << "]: " << message << cReset()
+                  << "\n";
 
-        // Optionally: Print code snippet where error occurred if source lines are available
+        if (line > 0)
+        {
+            const std::string &src = sourceLine(effectiveFilename, line);
+            if (!src.empty())
+            {
+                // Gutter width follows the line number (right-aligned to 5).
+                char gutter[16];
+                std::snprintf(gutter, sizeof(gutter), "%5d", line);
+                std::cerr << cBlue() << gutter << " | " << cReset() << src << "\n";
+                std::cerr << cBlue() << "      | " << cReset();
+                // Column is 1-based; tabs keep alignment by echoing tabs.
+                for (int i = 1; i < column && (size_t)(i - 1) < src.size(); ++i)
+                    std::cerr << (src[i - 1] == '\t' ? '\t' : ' ');
+                std::cerr << cGreen() << "^" << cReset() << "\n";
+            }
+        }
     }
 
     // Updated reportError for general errors
@@ -326,6 +393,26 @@ namespace error
     {
         // Report with unknown location, maybe line 0 or -1
         reportError(code, message, defaultFilename, 0, 0, severity);
+    }
+
+    int ErrorHandler::errorCount() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        int n = 0;
+        for (const auto &err : errors)
+            if (err.severity == ErrorSeverity::ERROR || err.severity == ErrorSeverity::FATAL)
+                ++n;
+        return n;
+    }
+
+    int ErrorHandler::warningCount() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        int n = 0;
+        for (const auto &err : errors)
+            if (err.severity == ErrorSeverity::WARNING)
+                ++n;
+        return n;
     }
 
     bool ErrorHandler::hasErrors() const

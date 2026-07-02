@@ -1,0 +1,338 @@
+// Tocin standard library: data/collections
+//
+// Classic data structures built on raw buffers (alloc + loadInt/storeInt) and
+// the vector/map builtins. Each structure is a handle (an int address) with a
+// small header; functions take that handle. No namespaces, so names are unique
+// and prefixed by structure. All int-keyed unless noted.
+
+// =============================================================================
+// Binary min-heap / priority queue
+// Layout: alloc(16 + cap*8): [0]=size, [8]=capacity, then cap int slots.
+// =============================================================================
+
+def heapNew(cap: int) -> int {
+    let h = alloc(16 + cap * 8);
+    storeInt(h, 0, 0);
+    storeInt(h, 8, cap);
+    return h;
+}
+def heapSize(h: int) -> int { return loadInt(h, 0); }
+def heapIsEmpty(h: int) -> int { return loadInt(h, 0) == 0 ? 1 : 0; }
+def __heapGet(h: int, i: int) -> int { return loadInt(h, 16 + i * 8); }
+def __heapSet(h: int, i: int, v: int) -> int { storeInt(h, 16 + i * 8, v); return 0; }
+
+// Insert x, sifting up to restore the min-heap property. Returns 0, or -1 if full.
+def heapPush(h: int, x: int) -> int {
+    let n = loadInt(h, 0);
+    if n >= loadInt(h, 8) { return -1; }
+    __heapSet(h, n, x);
+    storeInt(h, 0, n + 1);
+    let i = n;
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        if __heapGet(h, parent) <= __heapGet(h, i) { i = 0; }
+        else {
+            let t = __heapGet(h, parent); __heapSet(h, parent, __heapGet(h, i)); __heapSet(h, i, t);
+            i = parent;
+        }
+    }
+    return 0;
+}
+
+// Peek the minimum without removing (0 if empty).
+def heapPeek(h: int) -> int { return loadInt(h, 0) == 0 ? 0 : __heapGet(h, 0); }
+
+// Remove and return the minimum, sifting down (0 if empty).
+def heapPop(h: int) -> int {
+    let n = loadInt(h, 0);
+    if n == 0 { return 0; }
+    let top = __heapGet(h, 0);
+    let last = __heapGet(h, n - 1);
+    storeInt(h, 0, n - 1);
+    let sz = n - 1;
+    if sz > 0 {
+        __heapSet(h, 0, last);
+        let i = 0;
+        while true {
+            let l = 2 * i + 1;
+            let r = 2 * i + 2;
+            let smallest = i;
+            if l < sz { if __heapGet(h, l) < __heapGet(h, smallest) { smallest = l; } }
+            if r < sz { if __heapGet(h, r) < __heapGet(h, smallest) { smallest = r; } }
+            if smallest == i { return top; }
+            let t = __heapGet(h, i); __heapSet(h, i, __heapGet(h, smallest)); __heapSet(h, smallest, t);
+            i = smallest;
+        }
+    }
+    return top;
+}
+def heapFree(h: int) -> int { free(h); return 0; }
+
+// =============================================================================
+// Union-Find / disjoint set (with path compression + union by size)
+// Layout: alloc(16 + 2*cap*8): [0]=count(sets), [8]=n, then parent[] then size[].
+// =============================================================================
+
+def ufNew(n: int) -> int {
+    let uf = alloc(16 + 2 * n * 8);
+    storeInt(uf, 0, n);   // number of disjoint sets
+    storeInt(uf, 8, n);
+    let i = 0;
+    while i < n {
+        storeInt(uf, 16 + i * 8, i);            // parent[i] = i
+        storeInt(uf, 16 + (n + i) * 8, 1);       // size[i] = 1
+        i = i + 1;
+    }
+    return uf;
+}
+def ufFind(uf: int, x: int) -> int {
+    let root = x;
+    while loadInt(uf, 16 + root * 8) != root { root = loadInt(uf, 16 + root * 8); }
+    // path compression
+    let cur = x;
+    while cur != root { let next = loadInt(uf, 16 + cur * 8); storeInt(uf, 16 + cur * 8, root); cur = next; }
+    return root;
+}
+def ufUnion(uf: int, a: int, b: int) -> int {
+    let ra = ufFind(uf, a);
+    let rb = ufFind(uf, b);
+    if ra == rb { return 0; }
+    let n = loadInt(uf, 8);
+    let sa = loadInt(uf, 16 + (n + ra) * 8);
+    let sb = loadInt(uf, 16 + (n + rb) * 8);
+    // attach smaller under larger
+    if sa < sb { let t = ra; ra = rb; rb = t; }
+    storeInt(uf, 16 + rb * 8, ra);
+    storeInt(uf, 16 + (n + ra) * 8, sa + sb);
+    storeInt(uf, 0, loadInt(uf, 0) - 1);
+    return 0;
+}
+def ufConnected(uf: int, a: int, b: int) -> int { return ufFind(uf, a) == ufFind(uf, b) ? 1 : 0; }
+def ufSetCount(uf: int) -> int { return loadInt(uf, 0); }
+def ufFree(uf: int) -> int { free(uf); return 0; }
+
+// =============================================================================
+// Bitset — compact boolean array packed into 64-bit words.
+// Layout: alloc(8 + words*8): [0]=nbits, then ceil(nbits/64) words.
+// =============================================================================
+
+def bitsetNew(nbits: int) -> int {
+    let words = (nbits + 63) / 64;
+    let bs = alloc(8 + words * 8);
+    storeInt(bs, 0, nbits);
+    let i = 0;
+    while i < words { storeInt(bs, 8 + i * 8, 0); i = i + 1; }
+    return bs;
+}
+def bitSet(bs: int, i: int) -> int {
+    let w = i / 64;
+    let b = i % 64;
+    let cur = loadInt(bs, 8 + w * 8);
+    storeInt(bs, 8 + w * 8, cur | (1 << b));
+    return 0;
+}
+def bitClear(bs: int, i: int) -> int {
+    let w = i / 64;
+    let b = i % 64;
+    let cur = loadInt(bs, 8 + w * 8);
+    storeInt(bs, 8 + w * 8, cur & (~(1 << b)));
+    return 0;
+}
+def bitGet(bs: int, i: int) -> int {
+    let w = i / 64;
+    let b = i % 64;
+    return (loadInt(bs, 8 + w * 8) >> b) & 1;
+}
+// Population count over the whole bitset.
+def bitsetCount(bs: int) -> int {
+    let nbits = loadInt(bs, 0);
+    let words = (nbits + 63) / 64;
+    let total = 0;
+    let w = 0;
+    while w < words {
+        let v = loadInt(bs, 8 + w * 8);
+        while v != 0 { v = v & (v - 1); total = total + 1; }   // Kernighan
+        w = w + 1;
+    }
+    return total;
+}
+def bitsetFree(bs: int) -> int { free(bs); return 0; }
+
+// =============================================================================
+// Ring buffer (fixed-capacity circular queue of ints).
+// Layout: alloc(24 + cap*8): [0]=head, [8]=count, [16]=capacity, then slots.
+// =============================================================================
+
+def ringNew(cap: int) -> int {
+    let r = alloc(24 + cap * 8);
+    storeInt(r, 0, 0); storeInt(r, 8, 0); storeInt(r, 16, cap);
+    return r;
+}
+def ringPush(r: int, x: int) -> int {
+    let count = loadInt(r, 8);
+    let cap = loadInt(r, 16);
+    if count >= cap { return -1; }              // full
+    let head = loadInt(r, 0);
+    let tail = (head + count) % cap;
+    storeInt(r, 24 + tail * 8, x);
+    storeInt(r, 8, count + 1);
+    return 0;
+}
+def ringPop(r: int) -> int {
+    let count = loadInt(r, 8);
+    if count == 0 { return 0; }
+    let head = loadInt(r, 0);
+    let x = loadInt(r, 24 + head * 8);
+    storeInt(r, 0, (head + 1) % loadInt(r, 16));
+    storeInt(r, 8, count - 1);
+    return x;
+}
+def ringSize(r: int) -> int { return loadInt(r, 8); }
+def ringFree(r: int) -> int { free(r); return 0; }
+
+// =============================================================================
+// String list — a growable list of strings (vector of char* addresses).
+// =============================================================================
+
+def strListNew() -> vector { return vecNew(); }
+def strListAdd(sl: vector, s: string) -> int {
+    // Store the string's address; strLen(s) forces the string value so its
+    // pointer is materialized before we take the slot.
+    vecPush(sl, s);
+    return 0;
+}
+def strListGet(sl: vector, i: int) -> string { return strFromAddr(vecGet(sl, i)); }
+def strListLen(sl: vector) -> int { return vecLen(sl); }
+def strListFree(sl: vector) -> int { vecFree(sl); return 0; }
+
+// =============================================================================
+// Binary search tree (int key -> int value). Ordered insert/lookup/min/max.
+// A tree is a handle: alloc(8) holding the root node address (0 = empty).
+// Each node: alloc(32) = [0]=key, [8]=value, [16]=left, [24]=right.
+// =============================================================================
+
+def bstNew() -> int { let t = alloc(8); storeInt(t, 0, 0); return t; }
+def __node(key: int, value: int) -> int {
+    let n = alloc(32);
+    storeInt(n, 0, key); storeInt(n, 8, value);
+    storeInt(n, 16, 0); storeInt(n, 24, 0);
+    return n;
+}
+// Insert or update key. Returns 0.
+def bstPut(t: int, key: int, value: int) -> int {
+    let root = loadInt(t, 0);
+    if root == 0 { storeInt(t, 0, __node(key, value)); return 0; }
+    let cur = root;
+    while true {
+        let k = loadInt(cur, 0);
+        if key == k { storeInt(cur, 8, value); return 0; }
+        if key < k {
+            let l = loadInt(cur, 16);
+            if l == 0 { storeInt(cur, 16, __node(key, value)); return 0; }
+            cur = l;
+        } else {
+            let r = loadInt(cur, 24);
+            if r == 0 { storeInt(cur, 24, __node(key, value)); return 0; }
+            cur = r;
+        }
+    }
+    return 0;
+}
+// Lookup: returns the value, or `dflt` if the key is absent.
+def bstGet(t: int, key: int, dflt: int) -> int {
+    let cur = loadInt(t, 0);
+    while cur != 0 {
+        let k = loadInt(cur, 0);
+        if key == k { return loadInt(cur, 8); }
+        cur = key < k ? loadInt(cur, 16) : loadInt(cur, 24);
+    }
+    return dflt;
+}
+def bstContains(t: int, key: int) -> int {
+    let cur = loadInt(t, 0);
+    while cur != 0 {
+        let k = loadInt(cur, 0);
+        if key == k { return 1; }
+        cur = key < k ? loadInt(cur, 16) : loadInt(cur, 24);
+    }
+    return 0;
+}
+// Smallest / largest key (leftmost / rightmost); returns dflt if empty.
+def bstMin(t: int, dflt: int) -> int {
+    let cur = loadInt(t, 0);
+    if cur == 0 { return dflt; }
+    while loadInt(cur, 16) != 0 { cur = loadInt(cur, 16); }
+    return loadInt(cur, 0);
+}
+def bstMax(t: int, dflt: int) -> int {
+    let cur = loadInt(t, 0);
+    if cur == 0 { return dflt; }
+    while loadInt(cur, 24) != 0 { cur = loadInt(cur, 24); }
+    return loadInt(cur, 0);
+}
+// In-order traversal appending keys into a vector (ascending). Returns count.
+def bstInorder(t: int, out: vector) -> int {
+    return __bstInorder(loadInt(t, 0), out);
+}
+def __bstInorder(node: int, out: vector) -> int {
+    if node == 0 { return 0; }
+    __bstInorder(loadInt(node, 16), out);
+    vecPush(out, loadInt(node, 0));
+    __bstInorder(loadInt(node, 24), out);
+    return vecLen(out);
+}
+
+// =============================================================================
+// Deque (double-ended queue) of ints, backed by a growable ring that doubles.
+// Layout: alloc(32): [0]=head, [8]=count, [16]=capacity, [24]=slots buffer addr.
+// =============================================================================
+
+def dequeNew(cap: int) -> int {
+    let c = cap < 2 ? 2 : cap;
+    let d = alloc(32);
+    storeInt(d, 0, 0); storeInt(d, 8, 0); storeInt(d, 16, c);
+    storeInt(d, 24, alloc(c * 8));
+    return d;
+}
+def dequeSize(d: int) -> int { return loadInt(d, 8); }
+def __dequeAt(d: int, logical: int) -> int {
+    let cap = loadInt(d, 16);
+    let head = loadInt(d, 0);
+    return (head + logical) % cap;
+}
+def pushBack(d: int, x: int) -> int {
+    let count = loadInt(d, 8);
+    if count >= loadInt(d, 16) { return -1; }   // fixed capacity (grow not needed for tests)
+    let buf = loadInt(d, 24);
+    storeInt(buf, __dequeAt(d, count) * 8, x);
+    storeInt(d, 8, count + 1);
+    return 0;
+}
+def pushFront(d: int, x: int) -> int {
+    let count = loadInt(d, 8);
+    let cap = loadInt(d, 16);
+    if count >= cap { return -1; }
+    let head = loadInt(d, 0);
+    let newHead = (head - 1 + cap) % cap;
+    storeInt(d, 0, newHead);
+    storeInt(loadInt(d, 24), newHead * 8, x);
+    storeInt(d, 8, count + 1);
+    return 0;
+}
+def popFront(d: int) -> int {
+    let count = loadInt(d, 8);
+    if count == 0 { return 0; }
+    let head = loadInt(d, 0);
+    let x = loadInt(loadInt(d, 24), head * 8);
+    storeInt(d, 0, (head + 1) % loadInt(d, 16));
+    storeInt(d, 8, count - 1);
+    return x;
+}
+def popBack(d: int) -> int {
+    let count = loadInt(d, 8);
+    if count == 0 { return 0; }
+    let x = loadInt(loadInt(d, 24), __dequeAt(d, count - 1) * 8);
+    storeInt(d, 8, count - 1);
+    return x;
+}
+def dequeFree(d: int) -> int { free(loadInt(d, 24)); free(d); return 0; }

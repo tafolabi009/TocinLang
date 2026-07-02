@@ -1,0 +1,48 @@
+// Kernel/systems primitives: volatile memory access, fences, inline asm with
+// operand constraints. Everything here is userspace-safe (no cli/hlt/port IO)
+// so the test can execute in CI; the same builtins are what kernel code uses
+// for MMIO device registers and privileged instructions.
+def main() -> int {
+    let buf = alloc(64);
+
+    // Volatile round-trips at every width. The stores/loads survive -O3
+    // because volatile accesses are never elided or merged.
+    volatileStore8(buf, 0, 171);           // 0xAB
+    volatileStore16(buf, 8, 48879);        // 0xBEEF
+    volatileStore32(buf, 16, 3735928559);  // 0xDEADBEEF
+    volatileStore64(buf, 24, 81985529216486895);  // 0x0123456789ABCDEF
+    fence();
+    let v8 = volatileLoad8(buf, 0);
+    let v16 = volatileLoad16(buf, 8);
+    let v32 = volatileLoad32(buf, 16);
+    let v64 = volatileLoad64(buf, 24);
+
+    if (v8 != 171) { print("FAIL v8"); return 1; }
+    if (v16 != 48879) { print("FAIL v16"); return 1; }
+    if (v32 != 3735928559) { print("FAIL v32"); return 1; }
+    if (v64 != 81985529216486895) { print("FAIL v64"); return 1; }
+
+    // Truncation semantics: storing a wide value through a narrow slot keeps
+    // the low bits only (65535 -> 0xFF at width 8).
+    volatileStore8(buf, 32, 65535);
+    if (volatileLoad8(buf, 32) != 255) { print("FAIL trunc"); return 1; }
+
+    // Template-only asm (the pre-existing form).
+    asm("nop");
+
+    // Constrained asm with one output and no inputs: materialize a constant.
+    let fortytwo = asm("mov $$42, $0", "=r");
+    if (fortytwo != 42) { print("FAIL asm out"); return 1; }
+
+    // Constrained asm with an output AND an input: add 100 in assembly.
+    let sum = asm("lea 100($1), $0", "=r,r", 23);
+    if (sum != 123) { print("FAIL asm in/out"); return 1; }
+
+    // rdtsc: reads the CPU timestamp counter (userspace-legal privileged-ish
+    // instruction using explicit register constraints and a clobber).
+    let tsc = asm("rdtsc", "={ax},~{dx}");
+    if (tsc == 0) { print("WARN tsc zero"); }
+
+    print("kernel primitives: all checks passed");
+    return 0;
+}

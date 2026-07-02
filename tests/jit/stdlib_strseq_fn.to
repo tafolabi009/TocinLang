@@ -1,0 +1,53 @@
+import std.testing;
+import std.strseq;
+import std.functional;
+
+def dbl(x: int) -> int { return x * 2; }
+def isEven(x: int) -> int { return x % 2 == 0 ? 1 : 0; }
+def add(a: int, b: int) -> int { return a + b; }
+def mul(a: int, b: int) -> int { return a * b; }
+
+def main() -> int {
+    testBegin();
+    // --- strseq
+    let parts = splitChar("a,b,c,d", 44);   // ',' = 44
+    checkEq("split count", vecLen(parts), 4);
+    checkStrEq("split[0]", strFromAddr(vecGet(parts, 0)), "a");
+    checkStrEq("split[3]", strFromAddr(vecGet(parts, 3)), "d");
+    checkStrEq("join", joinStr(parts, "-"), "a-b-c-d");
+    let words = splitWhitespace("  hello   world  foo ");
+    checkEq("words count", vecLen(words), 3);
+    checkStrEq("word[1]", strFromAddr(vecGet(words, 1)), "world");
+    checkStrEq("replaceChar", replaceChar("a.b.c", 46, 47), "a/b/c");   // . -> /
+    checkStrEq("replaceAll", replaceAll("foobarfoo", "foo", "X"), "XbarX");
+    checkStrEq("replaceAll mid", replaceAll("aXbXc", "X", "--"), "a--b--c");
+    checkEq("indexOfIgnoreCase", indexOfIgnoreCase("Hello World", "world"), 6);
+    checkEq("hasPrefix", hasPrefix("hello", "he"), 1);
+
+    // --- functional
+    let xs = [1, 2, 3, 4, 5];
+    let doubled = mapInts(xs, dbl);
+    checkEq("map[0]", doubled[0], 2);
+    checkEq("map[4]", doubled[4], 10);
+    let evens = filterInts(xs, isEven);
+    checkEq("filter count", len(evens), 2);
+    checkEq("filter[0]", evens[0], 2);
+    checkEq("fold sum", foldInts(xs, 0, add), 15);
+    checkEq("fold product", foldInts(xs, 1, mul), 120);
+    let zipped = zipWith([1,2,3], [10,20,30], add);
+    checkEq("zip[1]", zipped[1], 22);
+    checkEq("any even", anyInt(xs, isEven), 1);
+    checkEq("all even", allInt(xs, isEven), 0);
+    checkEq("countWhere", countWhere(xs, isEven), 2);
+    let r = rangeList(3, 8);
+    checkEq("range len", len(r), 5);
+    checkEq("range[0]", r[0], 3);
+    checkEq("range[4]", r[4], 7);
+    let rev = reversed(xs);
+    checkEq("reversed[0]", rev[0], 5);
+    let cat = concatInts([1,2], [3,4,5]);
+    checkEq("concat len", len(cat), 5);
+    checkEq("concat[3]", cat[3], 4);
+
+    return testSummary();
+}

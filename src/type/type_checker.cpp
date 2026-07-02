@@ -1,6 +1,7 @@
 #include "type_checker.h"
 #include <stdexcept>
 #include <vector>
+#include "builtin_names.h"
 #include "result_option.h"
 
 namespace type_checker
@@ -42,6 +43,14 @@ namespace type_checker
             return parent_->assign(name, type);
         }
         return false;
+    }
+
+    void Environment::collectNames(std::vector<std::string> &out) const
+    {
+        for (const auto &kv : variables_)
+            out.push_back(kv.first);
+        if (parent_)
+            parent_->collectNames(out);
     }
 
     bool Environment::isConstant(const std::string &name) const
@@ -232,16 +241,22 @@ namespace type_checker
         currentType_ = std::make_shared<ast::BasicType>(ast::TypeKind::UNKNOWN);
     }
 
-    void TypeChecker::visitEnumStmt(ast::EnumStmt *stmt)
+    void TypeChecker::registerEnum(ast::EnumStmt *stmt)
     {
+        // Register the enum's name so it resolves as an identifier/type, then
+        // its members. Idempotent: called from pass-1 hoisting (so forward
+        // references to variants resolve) and again from visitEnumStmt.
+        auto enumType = std::make_shared<ast::SimpleType>(
+            lexer::Token(lexer::TokenType::IDENTIFIER, stmt->name, "", 0, 0));
+        if (globalEnv_ && !globalEnv_->lookup(stmt->name))
+            globalEnv_->define(stmt->name, enumType, true);
+
         if (stmt->isAlgebraic())
         {
             // Algebraic enum: record variants for match-exhaustiveness checking.
             // Bare nullary variants (e.g. Empty) are usable as values; variants
             // with payloads are constructed via a call, so register a permissive
             // constructor symbol for them too.
-            auto enumType = std::make_shared<ast::SimpleType>(
-                lexer::Token(lexer::TokenType::IDENTIFIER, stmt->name, "", 0, 0));
             std::unordered_set<std::string> &variants = adtEnumVariants_[stmt->name];
             for (const auto &m : stmt->members)
             {
@@ -253,7 +268,6 @@ namespace type_checker
                 if (environment_) environment_->define(m.first, enumType, true);
                 if (globalEnv_) globalEnv_->define(m.first, enumType, true);
             }
-            currentType_ = nullptr;
             return;
         }
 
@@ -264,6 +278,11 @@ namespace type_checker
             if (environment_) environment_->define(m.first, intType, true);
             if (globalEnv_) globalEnv_->define(m.first, intType, true);
         }
+    }
+
+    void TypeChecker::visitEnumStmt(ast::EnumStmt *stmt)
+    {
+        registerEnum(stmt);
         currentType_ = nullptr;
     }
 
@@ -553,21 +572,19 @@ namespace type_checker
 
     void TypeChecker::registerBuiltins()
     {
-        // Register a handful of commonly available builtins as functions so that
-        // calling them does not get flagged as "calling a non-function". Their
-        // return types are left UNKNOWN to stay permissive.
-        auto unknown = makeBasic(ast::TypeKind::UNKNOWN);
+        // Register every compiler builtin (the full registry shared with codegen)
+        // as a function whose return type is UNKNOWN. This is what lets strict
+        // identifier checking coexist with the builtin surface: names in the
+        // registry resolve, everything else is an error.
         lexer::Token tok(lexer::TokenType::IDENTIFIER, "", "", 0, 0);
         auto builtinFn = [&]() {
             return std::make_shared<ast::FunctionType>(
                 tok, std::vector<ast::TypePtr>{}, makeBasic(ast::TypeKind::UNKNOWN), false);
         };
-        const char *names[] = {"print", "println", "printf", "len", "str", "int",
-                               "float", "bool", "input", "range", "abs", "min", "max"};
-        for (const char *n : names)
+        for (const auto &entry : builtinArities())
         {
-            if (!globalEnv_->lookup(n))
-                globalEnv_->define(n, builtinFn(), false);
+            if (!globalEnv_->lookup(entry.first))
+                globalEnv_->define(entry.first, builtinFn(), false);
         }
     }
 
@@ -579,6 +596,14 @@ namespace type_checker
         if (auto fn = dynamic_cast<ast::FunctionStmt *>(stmt))
         {
             globalEnv_->define(fn->name, functionTypeOf(fn), true);
+            if (!fn->parameters.empty() && fn->parameters.back().isVariadic)
+                variadicFns_.insert(fn->name);
+            // Minimum required args = params with no default (defaults are
+            // trailing). Callers may omit the defaulted ones.
+            size_t minArgs = 0;
+            for (const auto &p : fn->parameters)
+                if (!p.defaultValue) minArgs++;
+            fnMinArgs_[fn->name] = minArgs;
         }
         else if (auto cls = dynamic_cast<ast::ClassStmt *>(stmt))
         {
@@ -586,6 +611,41 @@ namespace type_checker
             // constructor-style calls don't error.
             globalEnv_->define(cls->name,
                                std::make_shared<ast::ClassType>(cls->token, cls->name), true);
+        }
+        else if (auto en = dynamic_cast<ast::EnumStmt *>(stmt))
+        {
+            // Enum members/variants must resolve even when used before the enum
+            // declaration in program order.
+            registerEnum(en);
+        }
+        else if (auto mod = dynamic_cast<ast::ModuleStmt *>(stmt))
+        {
+            // `module m { ... }`: the module name is legal in identifier position
+            // (qualified access `m.f(...)`), and its members are global.
+            knownModules_.insert(mod->name);
+            // Dotted module names (module net.http) make each prefix legal too.
+            std::string prefix;
+            for (char c : mod->name)
+            {
+                if (c == '.') { knownModules_.insert(prefix); }
+                prefix += c;
+            }
+            for (auto &s : mod->body)
+                hoistDeclaration(s.get());
+        }
+        else if (auto imp = dynamic_cast<ast::ImportStmt *>(stmt))
+        {
+            // Imports are merged before checking, but an unresolved import can
+            // survive to this point; keep its name legal so the (already
+            // reported) import error is the only diagnostic the user sees.
+            std::string prefix;
+            for (char c : imp->moduleName)
+            {
+                if (c == '.') { knownModules_.insert(prefix); }
+                prefix += c;
+            }
+            if (!prefix.empty())
+                knownModules_.insert(prefix);
         }
     }
 
@@ -728,7 +788,18 @@ namespace type_checker
                     std::string(expr->token.filename), expr->token.line,
                     expr->token.column, error::ErrorSeverity::FATAL);
             }
-            environment_->assign(expr->name, valueType);
+            if (!environment_->assign(expr->name, valueType))
+            {
+                // Assignment does not auto-declare in Tocin (codegen requires an
+                // existing slot); report it here, with a location, instead of
+                // letting codegen fail later with a location-less error.
+                errorHandler_.reportError(
+                    error::ErrorCode::T002_UNDEFINED_VARIABLE,
+                    "Assignment to undeclared variable '" + expr->name +
+                        "'. Declare it first: `let " + expr->name + " = ...;`",
+                    std::string(expr->token.filename), expr->token.line,
+                    expr->token.column, error::ErrorSeverity::ERROR);
+            }
         }
         else if (expr->target)
         {
@@ -767,11 +838,73 @@ namespace type_checker
                     lexer::Token(lexer::TokenType::IDENTIFIER, av->second, "", 0, 0));
                 return;
             }
+
+            // Compiler builtin: arity comes from the registry (the env entry is
+            // a zero-parameter stub, so it must not reach the user-function
+            // arity check below). An empty allowed-set means any arity.
+            auto bit = builtinArities().find(var->name);
+            if (bit != builtinArities().end())
+            {
+                const std::set<int> &allowed = bit->second;
+                if (!allowed.empty() &&
+                    !allowed.count(static_cast<int>(expr->arguments.size())))
+                {
+                    std::string counts;
+                    for (int c : allowed)
+                        counts += (counts.empty() ? "" : " or ") + std::to_string(c);
+                    errorHandler_.reportError(
+                        error::ErrorCode::T007_INVALID_FUNCTION_CALL,
+                        "Builtin '" + var->name + "' expects " + counts +
+                            " argument(s), got " + std::to_string(expr->arguments.size()),
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                }
+                currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+                return;
+            }
         }
 
         // Resolve the callee to a function type and adopt its return type.
         if (auto fnType = std::dynamic_pointer_cast<ast::FunctionType>(calleeType))
         {
+            // Arity check: exact for normal functions; a trailing-variadic
+            // function accepts >= (declared - 1) arguments. Parameter TYPES are
+            // still checked permissively (generics leave them UNKNOWN).
+            size_t nParams = fnType->parameterTypes.size();
+            size_t nArgs = expr->arguments.size();
+            bool variadic = false;
+            std::string calleeName;
+            if (auto var = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
+            {
+                calleeName = var->name;
+                variadic = variadicFns_.count(var->name) > 0;
+            }
+            // Defaulted trailing params make some args optional: accept any
+            // count in [minArgs, nParams] (or >= minArgs for variadic).
+            size_t minArgs = nParams;
+            if (!calleeName.empty())
+            {
+                auto mit = fnMinArgs_.find(calleeName);
+                if (mit != fnMinArgs_.end()) minArgs = mit->second;
+            }
+            bool arityOk = variadic ? (nArgs + 1 >= minArgs)
+                                    : (nArgs >= minArgs && nArgs <= nParams);
+            if (!arityOk)
+            {
+                std::string expected = variadic
+                                           ? "at least " + std::to_string(minArgs)
+                                           : (minArgs == nParams
+                                                  ? std::to_string(nParams)
+                                                  : std::to_string(minArgs) + " to " + std::to_string(nParams));
+                errorHandler_.reportError(
+                    error::ErrorCode::T007_INVALID_FUNCTION_CALL,
+                    "Function " +
+                        (calleeName.empty() ? "" : "'" + calleeName + "' ") +
+                        "expects " + expected + " argument(s), got " +
+                        std::to_string(nArgs),
+                    std::string(expr->token.filename), expr->token.line,
+                    expr->token.column, error::ErrorSeverity::ERROR);
+            }
             currentType_ = fnType->returnType ? fnType->returnType
                                               : makeBasic(ast::TypeKind::UNKNOWN);
             return;
@@ -1169,6 +1302,19 @@ namespace type_checker
             classTypeParams_.insert(tp.getName());
 
         pushScope();
+        // Method bodies may reference the receiver (`self`/`this`), sibling
+        // fields, and sibling methods - including ones declared further down.
+        // Bind the receiver and pre-hoist every method name so those references
+        // resolve under strict identifier checking.
+        auto selfType = std::make_shared<ast::ClassType>(stmt->token, stmt->name);
+        if (environment_)
+        {
+            environment_->define("self", selfType, true);
+            environment_->define("this", selfType, true);
+            for (auto &method : stmt->methods)
+                if (auto *fs = dynamic_cast<ast::FunctionStmt *>(method.get()))
+                    environment_->define(fs->name, functionTypeOf(fs), true);
+        }
         for (auto &field : stmt->fields)
         {
             if (field)
@@ -1309,16 +1455,133 @@ namespace type_checker
             currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
     }
 
+    void TypeChecker::visitConditionalExpr(ast::ConditionalExpr *expr)
+    {
+        // cond ? a : b. Check all three; the result type is the common type of
+        // the two arms (widening int+float -> float), else one known arm, else
+        // unknown. The condition is checked but not constrained (any nonzero is
+        // truthy, matching if/while).
+        if (expr->condition)
+            expr->condition->accept(*this);
+        ast::TypePtr thenT, elseT;
+        if (expr->thenExpr) { expr->thenExpr->accept(*this); thenT = currentType_; }
+        if (expr->elseExpr) { expr->elseExpr->accept(*this); elseT = currentType_; }
+        if (thenT && elseT && !isUnknown(thenT) && !isUnknown(elseT))
+        {
+            if (sameType(thenT, elseT))
+                currentType_ = canonicalize(thenT);
+            else if (isNumeric(thenT) && isNumeric(elseT))
+                currentType_ = makeBasic(ast::TypeKind::FLOAT);
+            else
+                currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+        }
+        else
+        {
+            currentType_ = (thenT && !isUnknown(thenT)) ? canonicalize(thenT)
+                          : (elseT && !isUnknown(elseT)) ? canonicalize(elseT)
+                          : makeBasic(ast::TypeKind::UNKNOWN);
+        }
+    }
+
     void TypeChecker::visitVariableExpr(ast::VariableExpr *expr)
     {
         // Look up the variable/function in the current scope chain.
         ast::TypePtr type;
         if (environment_)
             type = environment_->lookup(expr->name);
+        if (type)
+        {
+            currentType_ = type;
+            return;
+        }
 
-        // Unknown identifiers are treated permissively (could be a builtin or a
-        // symbol introduced elsewhere). We do not error here to avoid regressions.
-        currentType_ = type ? type : makeBasic(ast::TypeKind::UNKNOWN);
+        // Names that are legal in identifier position without being env-tracked
+        // variables: compiler builtins, ADT variant constructors, module
+        // qualifiers (m.f(...)), receiver keywords, and the wildcard. The "__"
+        // prefix is reserved for compiler-synthesized helpers - the parser
+        // desugars tuples/slices/generators into __tuple/__tupleGet/__slice/
+        // __gen_acc calls, which are resolved by codegen, not user scope.
+        if (isBuiltinName(expr->name) || adtVariantEnum_.count(expr->name) ||
+            knownModules_.count(expr->name) ||
+            expr->name.rfind("__", 0) == 0 ||
+            expr->name == "self" || expr->name == "this" || expr->name == "_")
+        {
+            currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+            return;
+        }
+
+        // Anything else is an undeclared identifier: a typo'd variable, a
+        // missing import, or a misspelled builtin. Reporting it here turns what
+        // used to be a location-less codegen failure (or a silent miscompile)
+        // into a precise compile-time error. `--permissive` downgrades this to
+        // a non-blocking diagnostic (the driver gates on hasErrors()).
+        std::string suggestion = suggestName(expr->name);
+        errorHandler_.reportError(
+            error::ErrorCode::T002_UNDEFINED_VARIABLE,
+            "Use of undeclared identifier '" + expr->name + "'" +
+                (suggestion.empty() ? "" : ". Did you mean '" + suggestion + "'?"),
+            std::string(expr->token.filename), expr->token.line, expr->token.column,
+            error::ErrorSeverity::ERROR);
+        currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+    }
+
+    // Bounded Levenshtein distance (early-exit above `maxD`). Small inputs only.
+    static int editDistance(const std::string &a, const std::string &b, int maxD)
+    {
+        int la = (int)a.size(), lb = (int)b.size();
+        if (la - lb > maxD || lb - la > maxD)
+            return maxD + 1;
+        std::vector<int> prev(lb + 1), cur(lb + 1);
+        for (int j = 0; j <= lb; ++j) prev[j] = j;
+        for (int i = 1; i <= la; ++i)
+        {
+            cur[0] = i;
+            int rowMin = cur[0];
+            for (int j = 1; j <= lb; ++j)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+                rowMin = std::min(rowMin, cur[j]);
+            }
+            if (rowMin > maxD)
+                return maxD + 1;   // no way back under the bound
+            std::swap(prev, cur);
+        }
+        return prev[lb];
+    }
+
+    std::string TypeChecker::suggestName(const std::string &name) const
+    {
+        // Candidates: everything in scope, plus builtins, module aliases, and
+        // enum variants. Threshold: 1 edit for short names, 2 for length >= 5 —
+        // tight enough to avoid absurd suggestions.
+        std::vector<std::string> candidates;
+        if (environment_)
+            environment_->collectNames(candidates);
+        for (const auto &kv : builtinArities())
+            candidates.push_back(kv.first);
+        for (const auto &m : knownModules_)
+            candidates.push_back(m);
+        for (const auto &kv : adtVariantEnum_)
+            candidates.push_back(kv.first);
+
+        const int maxD = name.size() >= 5 ? 2 : 1;
+        std::string best;
+        int bestD = maxD + 1;
+        for (const auto &c : candidates)
+        {
+            if (c == name || c.rfind("__", 0) == 0)
+                continue;
+            int d = editDistance(name, c, maxD);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = c;
+                if (d == 1 && name.size() >= 5)
+                    break;   // good enough; stop scanning
+            }
+        }
+        return bestD <= maxD ? best : "";
     }
 
     void TypeChecker::visitExpressionStmt(ast::ExpressionStmt *stmt)
@@ -1521,42 +1784,50 @@ namespace type_checker
     }
 
     void TypeChecker::visitTraitStmt(ast::TraitStmt *stmt) {
-        // Type check trait statement
-        // Register the trait in the trait manager if available
-        if (featureManager_) {
-            // In practice, would register the trait with the trait manager
-            // featureManager_->traitManager.registerTrait(stmt->name, stmt);
+        // Check default-method bodies in a scope where the receiver and the
+        // trait's other methods resolve (the receiver's concrete type is only
+        // known at impl time, so it stays UNKNOWN).
+        pushScope();
+        if (environment_)
+        {
+            auto selfType = makeBasic(ast::TypeKind::UNKNOWN);
+            environment_->define("self", selfType, true);
+            environment_->define("this", selfType, true);
+            for (const auto &method : stmt->methods)
+                if (method)
+                    environment_->define(method->name, functionTypeOf(method.get()), true);
         }
-        
-        // Type check all method signatures in the trait
         for (const auto& method : stmt->methods) {
             if (method) {
                 method->accept(*this);
             }
         }
-        
+        popScope();
+
         // Trait statements don't have a type
         currentType_ = nullptr;
     }
 
     void TypeChecker::visitImplStmt(ast::ImplStmt *stmt) {
-        // Type check implementation statement
-        // Verify that the implementation satisfies the trait requirements
-        if (featureManager_) {
-            // In practice, would verify the implementation against the trait
-            // auto trait = featureManager_->traitManager.getTrait(stmt->traitName);
-            // if (trait) {
-            //     featureManager_->traitManager.verifyImplementation(trait.get(), stmt);
-            // }
+        // Check method implementations with the receiver and sibling methods in
+        // scope, mirroring visitClassStmt.
+        pushScope();
+        if (environment_)
+        {
+            auto selfType = makeBasic(ast::TypeKind::UNKNOWN);
+            environment_->define("self", selfType, true);
+            environment_->define("this", selfType, true);
+            for (const auto &method : stmt->methods)
+                if (method)
+                    environment_->define(method->name, functionTypeOf(method.get()), true);
         }
-        
-        // Type check all method implementations
         for (const auto& method : stmt->methods) {
             if (method) {
                 method->accept(*this);
             }
         }
-        
+        popScope();
+
         // Implementation statements don't have a type
         currentType_ = nullptr;
     }

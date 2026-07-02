@@ -1,0 +1,39 @@
+import std.testing;
+import web.websocket;
+
+def main() -> int {
+    testBegin();
+    // Encode a masked text frame "Hi" and decode it back.
+    let payload = alloc(8);
+    storeByte(payload, 0, 72);  // 'H'
+    storeByte(payload, 1, 105); // 'i'
+    let frame = alloc(64);
+    let total = writeFrame(frame, WS_TEXT, payload, 2, 1, 305419896); // mask 0x12345678
+    checkEq("opcode text", frameOpcode(frame), WS_TEXT);
+    checkEq("fin set", frameIsFin(frame), 1);
+    checkEq("masked", frameIsMasked(frame), 1);
+    checkEq("payload len", framePayloadLen(frame), 2);
+    // masked payload differs from plaintext
+    check("masked bytes differ", loadByte(frame, framePayloadOffset(frame)) != 72);
+    unmaskPayload(frame);
+    let off = framePayloadOffset(frame);
+    checkEq("decoded H", loadByte(frame, off), 72);
+    checkEq("decoded i", loadByte(frame, off + 1), 105);
+
+    // Unmasked binary frame with a 200-byte payload (16-bit length form).
+    let big = alloc(256);
+    let i = 0; while i < 200 { storeByte(big, i, i % 256); i = i + 1; }
+    let f2 = alloc(512);
+    writeFrame(f2, WS_BIN, big, 200, 0, 0);
+    checkEq("bin opcode", frameOpcode(f2), WS_BIN);
+    checkEq("16-bit len", framePayloadLen(f2), 200);
+    checkEq("payload off (unmasked,2byte len)", framePayloadOffset(f2), 4);
+    checkEq("byte 199 copied", loadByte(f2, framePayloadOffset(f2) + 199), 199 % 256);
+
+    // header length calc
+    checkEq("hdr small unmasked", frameHeaderLen(10, 0), 2);
+    checkEq("hdr small masked", frameHeaderLen(10, 1), 6);
+    checkEq("hdr 16bit masked", frameHeaderLen(1000, 1), 8);
+
+    return testSummary();
+}

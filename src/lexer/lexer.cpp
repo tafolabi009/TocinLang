@@ -35,9 +35,11 @@ namespace lexer
         {"inline", TokenType::INLINE}, {"extern", TokenType::EXTERN}, {"export", TokenType::EXPORT},
         {"module", TokenType::MODULE}, {"package", TokenType::PACKAGE}, {"namespace", TokenType::NAMESPACE},
         {"using", TokenType::USING}, {"with", TokenType::WITH}, {"defer", TokenType::DEFER},
-        {"panic", TokenType::PANIC}, {"recover", TokenType::RECOVER}, {"assert", TokenType::ASSERT},
-        {"debug", TokenType::DEBUG}, {"trace", TokenType::TRACE}, {"log", TokenType::LOG},
-        {"warn", TokenType::WARN}, {"error", TokenType::ERROR}, {"fatal", TokenType::FATAL}
+        {"panic", TokenType::PANIC}, {"recover", TokenType::RECOVER}, {"assert", TokenType::ASSERT}
+        // NOTE: debug/trace/log/warn/error/fatal were reserved for a logging DSL
+        // that was never implemented, which made them unusable as identifiers -
+        // and shadowed the `log`/`log2`/`log10` math builtins entirely. They are
+        // ordinary identifiers now (no parser/codegen ever consumed the tokens).
     };
 
     Lexer::Lexer(const std::string &source, const std::string &filename, int indentSize)

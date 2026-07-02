@@ -1,0 +1,43 @@
+import std.testing;
+import game.graphics;
+import ml.computer_vision;
+import net.advanced;
+
+def main() -> int {
+    testBegin();
+    // graphics: draw on a 16x16 RGBA framebuffer
+    let fb = createFramebuffer(16, 16);
+    clear(fb, 16, 16, 0, 0, 0, 255);
+    setPixel(fb, 16, 16, 5, 5, 255, 128, 64, 255);
+    checkEq("pixel R", getChannel(fb, 16, 5, 5, 0), 255);
+    checkEq("pixel G", getChannel(fb, 16, 5, 5, 1), 128);
+    checkEq("cleared px", getChannel(fb, 16, 0, 0, 0), 0);
+    fillRect(fb, 16, 16, 2, 2, 4, 4, 10, 20, 30, 255);
+    checkEq("rect fill", getChannel(fb, 16, 3, 3, 2), 30);
+    drawLine(fb, 16, 16, 0, 0, 15, 15, 200, 200, 200, 255);
+    checkEq("line diag", getChannel(fb, 16, 7, 7, 0), 200);
+
+    // computer vision: 4x4 grayscale image
+    let img = alloc(16);
+    let out = alloc(16);
+    let i = 0;
+    while i < 16 { storeByte(img, i, i * 16); i = i + 1; }   // ramp 0..240
+    threshold(img, out, 4, 4, 100);
+    checkEq("thresh low", loadByte(out, 2), 0);      // 32 < 100
+    checkEq("thresh high", loadByte(out, 10), 255);  // 160 >= 100
+    invert(img, out, 4, 4);
+    checkEq("invert", loadByte(out, 0), 255);         // 255 - 0
+    let bigimg = alloc(16);
+    let k = 0; while k < 16 { storeByte(bigimg, k, 5); k = k + 1; }
+    checkEq("mean thresh", meanThresholdValue(bigimg, 4, 4), 5);
+
+    // net: URL parsing
+    checkStrEq("host", urlHost("http://example.com:8080/api/v1"), "example.com");
+    checkEq("port", urlPort("http://example.com:8080/api/v1"), 8080);
+    checkStrEq("path", urlPath("http://example.com:8080/api/v1"), "/api/v1");
+    checkEq("default port", urlPort("http://example.com/x"), 80);
+    checkEq("resp status", responseStatus("HTTP/1.1 404 Not Found\r\n\r\n"), 404);
+    checkStrEq("resp body", responseBody("HTTP/1.1 200 OK\r\n\r\nhello"), "hello");
+
+    return testSummary();
+}

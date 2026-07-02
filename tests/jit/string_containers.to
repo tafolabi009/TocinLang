@@ -1,0 +1,17 @@
+import std.testing;
+def slot(v: vector, i: int) -> string { return strFromAddr(vecGet(v, i)); }
+def main() -> int {
+    testBegin();
+    // vector<string>
+    let v = vecNew();
+    vecPush(v, "alpha"); vecPush(v, "beta"); vecPush(v, "gamma");
+    checkStrEq("vec str 0", slot(v, 0), "alpha");
+    checkStrEq("vec str 2", slot(v, 2), "gamma");
+    checkEq("vec len", vecLen(v), 3);
+    // bufToStr: build "AB" from bytes
+    let b = alloc(4);
+    storeByte(b, 0, 65); storeByte(b, 1, 66);
+    checkStrEq("bufToStr", bufToStr(b, 2), "AB");
+    checkEq("bufToStr len", strLen(bufToStr(b, 2)), 2);
+    return testSummary();
+}

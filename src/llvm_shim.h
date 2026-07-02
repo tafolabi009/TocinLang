@@ -8,7 +8,14 @@
 #if __has_include(<llvm/Config/llvm-config.h>)
 #include <llvm/Config/llvm-config.h>
 #endif
-#if __has_include(<llvm/Support/Host.h>)
+// Host.h moved from <llvm/Support/> to <llvm/TargetParser/> in LLVM 16. Check the
+// new location first so the REAL getDefaultTargetTriple/getHostCPUName/
+// getHostCPUFeatures are used (otherwise the fallbacks below hardcode a generic
+// CPU and a fixed triple, which silently disables native-CPU codegen).
+#if __has_include(<llvm/TargetParser/Host.h>)
+#include <llvm/TargetParser/Host.h>
+#define LLVM_HOST_HEADER_AVAILABLE 1
+#elif __has_include(<llvm/Support/Host.h>)
 #include <llvm/Support/Host.h>
 #define LLVM_HOST_HEADER_AVAILABLE 1
 #else

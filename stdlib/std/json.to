@@ -1,0 +1,235 @@
+// Tocin standard library: std.json
+//
+// A recursive-descent JSON parser + value model and a serializer. Parsing
+// yields a tree of "value" handles (int addresses); typed accessors read them.
+// Value node = alloc(16): [0]=tag, [8]=aux.
+//   tag 0 null · 1 bool(aux=0/1) · 2 number(aux=raw text string) ·
+//   3 string(aux=decoded string) · 4 array(aux=vector of child handles) ·
+//   5 object(aux=vector of alternating key-address, child-handle).
+// The parser threads a mutable cursor through a 1-int position buffer.
+
+const JSON_NULL: int = 0;
+const JSON_BOOL: int = 1;
+const JSON_NUMBER: int = 2;
+const JSON_STRING: int = 3;
+const JSON_ARRAY: int = 4;
+const JSON_OBJECT: int = 5;
+
+def __jnode(tag: int, aux: int) -> int {
+    let n = alloc(16);
+    storeInt(n, 0, tag);
+    storeInt(n, 8, aux);
+    return n;
+}
+
+// ---- parsing -----------------------------------------------------------------
+
+// Parse a JSON document, returning the root value handle (0 on empty input).
+def jsonParse(s: string) -> int {
+    let pc = alloc(8);
+    storeInt(pc, 0, 0);            // cursor position
+    return __jvalue(s, pc);
+}
+
+def __jskipWs(s: string, pc: int) -> int {
+    let n = strLen(s);
+    let p = loadInt(pc, 0);
+    while p < n {
+        let c = charAt(s, p);
+        if (c == 32) || (c == 9) || (c == 10) || (c == 13) { p = p + 1; } else { break; }
+    }
+    storeInt(pc, 0, p);
+    return 0;
+}
+
+def __jvalue(s: string, pc: int) -> int {
+    __jskipWs(s, pc);
+    let p = loadInt(pc, 0);
+    if p >= strLen(s) { return __jnode(JSON_NULL, 0); }
+    let c = charAt(s, p);
+    if c == 123 { return __jobject(s, pc); }   // '{'
+    if c == 91 { return __jarray(s, pc); }      // '['
+    if c == 34 { return __jnode(JSON_STRING, addrOf(__jstring(s, pc))); }  // '"'
+    if c == 116 { storeInt(pc, 0, p + 4); return __jnode(JSON_BOOL, 1); }  // true
+    if c == 102 { storeInt(pc, 0, p + 5); return __jnode(JSON_BOOL, 0); }  // false
+    if c == 110 { storeInt(pc, 0, p + 4); return __jnode(JSON_NULL, 0); }  // null
+    return __jnumber(s, pc);
+}
+
+// Read a JSON string (from the opening quote); returns the decoded text.
+def __jstring(s: string, pc: int) -> string {
+    let n = strLen(s);
+    let p = loadInt(pc, 0) + 1;    // skip opening quote
+    let buf = alloc(n + 1);
+    let outLen = 0;
+    while p < n {
+        let c = charAt(s, p);
+        if c == 34 { p = p + 1; storeInt(pc, 0, p); return bufToStr(buf, outLen); }
+        if c == 92 {                // backslash escape
+            p = p + 1;
+            let e = charAt(s, p);
+            let dec = e;
+            if e == 110 { dec = 10; }       // \n
+            if e == 116 { dec = 9; }        // \t
+            if e == 114 { dec = 13; }       // \r
+            storeByte(buf, outLen, dec);
+            outLen = outLen + 1;
+        } else {
+            storeByte(buf, outLen, c);
+            outLen = outLen + 1;
+        }
+        p = p + 1;
+    }
+    storeInt(pc, 0, p);
+    return bufToStr(buf, outLen);
+}
+
+def __jnumber(s: string, pc: int) -> int {
+    let n = strLen(s);
+    let start = loadInt(pc, 0);
+    let p = start;
+    while p < n {
+        let c = charAt(s, p);
+        let ok = (c == 45) || (c == 43) || (c == 46) || (c == 101) || (c == 69) || (isDigit(c) == 1) ? 1 : 0;
+        if ok == 1 { p = p + 1; } else { break; }
+    }
+    let raw = substring(s, start, p - start);
+    storeInt(pc, 0, p);
+    return __jnode(JSON_NUMBER, addrOf(raw));
+}
+
+def __jarray(s: string, pc: int) -> int {
+    let vec = vecNew();
+    storeInt(pc, 0, loadInt(pc, 0) + 1);   // skip '['
+    __jskipWs(s, pc);
+    if charAt(s, loadInt(pc, 0)) == 93 {   // empty ']'
+        storeInt(pc, 0, loadInt(pc, 0) + 1);
+        return __jnode(JSON_ARRAY, vec);
+    }
+    while true {
+        let child = __jvalue(s, pc);
+        vecPush(vec, child);
+        __jskipWs(s, pc);
+        let c = charAt(s, loadInt(pc, 0));
+        storeInt(pc, 0, loadInt(pc, 0) + 1);   // consume ',' or ']'
+        if c == 93 { return __jnode(JSON_ARRAY, vec); }   // ']'
+        __jskipWs(s, pc);
+    }
+    return __jnode(JSON_ARRAY, vec);
+}
+
+def __jobject(s: string, pc: int) -> int {
+    let vec = vecNew();     // alternating key-addr, value-handle
+    storeInt(pc, 0, loadInt(pc, 0) + 1);   // skip '{'
+    __jskipWs(s, pc);
+    if charAt(s, loadInt(pc, 0)) == 125 {  // empty '}'
+        storeInt(pc, 0, loadInt(pc, 0) + 1);
+        return __jnode(JSON_OBJECT, vec);
+    }
+    while true {
+        __jskipWs(s, pc);
+        let key = __jstring(s, pc);        // key (a JSON string)
+        __jskipWs(s, pc);
+        storeInt(pc, 0, loadInt(pc, 0) + 1);   // skip ':'
+        let val = __jvalue(s, pc);
+        vecPush(vec, addrOf(key));
+        vecPush(vec, val);
+        __jskipWs(s, pc);
+        let c = charAt(s, loadInt(pc, 0));
+        storeInt(pc, 0, loadInt(pc, 0) + 1);   // consume ',' or '}'
+        if c == 125 { return __jnode(JSON_OBJECT, vec); }   // '}'
+    }
+    return __jnode(JSON_OBJECT, vec);
+}
+
+// addrOf: get a string's address as an int so it can live in a slot.
+def addrOf(s: string) -> int { let v = vecNew(); vecPush(v, s); let a = vecGet(v, 0); return a; }
+
+// ---- typed accessors ---------------------------------------------------------
+
+def jsonType(v: int) -> int { return loadInt(v, 0); }
+def jsonIsNull(v: int) -> int { return loadInt(v, 0) == JSON_NULL ? 1 : 0; }
+def jsonAsBool(v: int) -> int { return loadInt(v, 8); }
+def jsonAsInt(v: int) -> int { return strToInt(strFromAddr(loadInt(v, 8))); }
+def jsonAsFloat(v: int) -> float { return strToFloat(strFromAddr(loadInt(v, 8))); }
+def jsonAsString(v: int) -> string { return strFromAddr(loadInt(v, 8)); }
+
+def jsonArrayLen(v: int) -> int { return vecLen(loadInt(v, 8)); }
+def jsonArrayGet(v: int, i: int) -> int { return vecGet(loadInt(v, 8), i); }
+
+// Object field lookup by key: returns the child value handle, or 0 if absent.
+def jsonObjectGet(v: int, key: string) -> int {
+    let vec = loadInt(v, 8);
+    let n = vecLen(vec);
+    let i = 0;
+    while i < n {
+        let k = strFromAddr(vecGet(vec, i));
+        if strEq(k, key) == 1 { return vecGet(vec, i + 1); }
+        i = i + 2;
+    }
+    return 0;
+}
+def jsonObjectHas(v: int, key: string) -> int { return jsonObjectGet(v, key) != 0 ? 1 : 0; }
+
+// Convenience: get an object field as int/string with a default.
+def jsonGetInt(v: int, key: string, dflt: int) -> int {
+    let c = jsonObjectGet(v, key);
+    return c == 0 ? dflt : jsonAsInt(c);
+}
+def jsonGetString(v: int, key: string, dflt: string) -> string {
+    let c = jsonObjectGet(v, key);
+    return c == 0 ? dflt : jsonAsString(c);
+}
+
+// ---- serialization -----------------------------------------------------------
+
+// Escape a raw string for embedding in JSON (quotes/backslash/newline/tab).
+def jsonEscape(s: string) -> string {
+    let n = strLen(s);
+    let buf = alloc(2 * n + 1);
+    let o = 0;
+    let i = 0;
+    while i < n {
+        let c = charAt(s, i);
+        if c == 34 { storeByte(buf, o, 92); o = o + 1; storeByte(buf, o, 34); o = o + 1; }
+        else { if c == 92 { storeByte(buf, o, 92); o = o + 1; storeByte(buf, o, 92); o = o + 1; }
+        else { if c == 10 { storeByte(buf, o, 92); o = o + 1; storeByte(buf, o, 110); o = o + 1; }
+        else { if c == 9 { storeByte(buf, o, 92); o = o + 1; storeByte(buf, o, 116); o = o + 1; }
+        else { storeByte(buf, o, c); o = o + 1; } } } }
+        i = i + 1;
+    }
+    return bufToStr(buf, o);
+}
+
+// Serialize a value tree back to compact JSON text.
+def jsonStringify(v: int) -> string {
+    let tag = loadInt(v, 0);
+    if tag == JSON_NULL { return "null"; }
+    if tag == JSON_BOOL { return loadInt(v, 8) == 1 ? "true" : "false"; }
+    if tag == JSON_NUMBER { return strFromAddr(loadInt(v, 8)); }
+    if tag == JSON_STRING { return "\"" + jsonEscape(strFromAddr(loadInt(v, 8))) + "\""; }
+    if tag == JSON_ARRAY {
+        let vec = loadInt(v, 8);
+        let n = vecLen(vec);
+        let acc = "[";
+        let i = 0;
+        while i < n {
+            if i > 0 { acc = acc + ","; }
+            acc = acc + jsonStringify(vecGet(vec, i));
+            i = i + 1;
+        }
+        return acc + "]";
+    }
+    // object
+    let vec = loadInt(v, 8);
+    let n = vecLen(vec);
+    let acc = "{";
+    let i = 0;
+    while i < n {
+        if i > 0 { acc = acc + ","; }
+        acc = acc + "\"" + jsonEscape(strFromAddr(vecGet(vec, i))) + "\":";
+        acc = acc + jsonStringify(vecGet(vec, i + 1));
+        i = i + 2;
+    }
+    return acc + "}";
+}

@@ -1,0 +1,59 @@
+import std.testing;
+import std.math;
+import math.basic;
+import math.stats;
+import data.algorithms;
+import data.structures;
+
+def main() -> int {
+    testBegin();
+
+    // std.math + math.basic
+    checkEq("gcd", gcd(48, 36), 12);
+    checkEq("factorial 5", factorial(5), 120);
+    checkEq("isPrime 97", isPrime(97), 1);
+    checkEq("isqrt", isqrt(100), 10);
+    checkEq("ipow", ipow(2, 10), 1024);
+    checkEq("iclamp", iclamp(15, 0, 10), 10);
+    check("hypot 3,4=5", approxEq(hypot(3.0, 4.0), 5.0));
+    check("lerp", approxEq(lerp(0.0, 10.0, 0.5), 5.0));
+
+    // math.stats
+    let data = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+    check("mean=5", approxEq(mean(data), 5.0));
+    check("stddev=2", approxEq(stddev(data), 2.0));
+    check("median=4.5", approxEq(median(data), 4.5));
+    check("spread=7", approxEq(spread(data), 7.0));
+
+    // data.algorithms
+    let xs = [5, 2, 8, 1, 9, 3, 7];
+    sort(xs);
+    checkEq("sorted[0]", xs[0], 1);
+    checkEq("sorted[6]", xs[6], 9);
+    checkEq("isSorted", isSorted(xs), 1);
+    checkEq("binarySearch 8", binarySearch(xs, 8), 5);
+    checkEq("binarySearch missing", binarySearch(xs, 4), -1);
+    checkEq("intSum", intSum(xs), 35);
+    checkEq("countEq", countEq(xs, 9), 1);
+
+    // data.structures — stack / queue / set / counter
+    let s = stackNew();
+    stackPush(s, 1); stackPush(s, 2); stackPush(s, 3);
+    checkEq("stack size", stackSize(s), 3);
+    checkEq("stack pop", stackPop(s), 3);
+    checkEq("stack peek", stackPeek(s), 2);
+    let q = queueNew();
+    enqueue(q, 10); enqueue(q, 20); enqueue(q, 30);
+    checkEq("dequeue 1", dequeue(q), 10);
+    checkEq("dequeue 2", dequeue(q), 20);
+    checkEq("queue size", queueSize(q), 1);
+    let st = setNew();
+    setAdd(st, 5); setAdd(st, 5); setAdd(st, 7);
+    checkEq("set has 5", setContains(st, 5), 1);
+    checkEq("set has 9", setContains(st, 9), 0);
+    let ct = counterNew();
+    countAdd(ct, 3); countAdd(ct, 3); countAdd(ct, 3);
+    checkEq("count of 3", countOf(ct, 3), 3);
+
+    return testSummary();
+}

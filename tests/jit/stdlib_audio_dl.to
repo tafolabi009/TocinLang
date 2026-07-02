@@ -1,0 +1,38 @@
+import std.testing;
+import math.basic;
+import audio.audio;
+import ml.deep_learning;
+
+def main() -> int {
+    testBegin();
+    // audio
+    let buf = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    genSine(buf, 1.0, 8.0, 1.0);          // 1Hz at 8 samples/sec = one cycle
+    check("sine[0]~0", approxEqTol(buf[0], 0.0, 0.001));
+    check("sine[2]~1", approxEqTol(buf[2], 1.0, 0.001));   // quarter cycle peak
+    gain(buf, 0.5);
+    check("gain halves peak", approxEqTol(buf[2], 0.5, 0.001));
+    check("peak=0.5", approxEqTol(peak(buf), 0.5, 0.001));
+    normalize(buf, 1.0);
+    check("normalized peak=1", approxEqTol(peak(buf), 1.0, 0.001));
+    check("midi A4=440", approxEqTol(midiToFreq(69), 440.0, 0.01));
+
+    // deep learning utils
+    let scores = [0.1, 0.8, 0.3];
+    checkEq("argmax", argmax(scores), 1);
+    let oh = [0.0, 0.0, 0.0, 0.0];
+    oneHot(2, oh);
+    check("onehot", approxEqTol(oh[2], 1.0, 0.0001));
+    // 2 rows, 3 classes; row0 argmax=2, row1 argmax=0; labels [2,0] -> 100%
+    let preds = [0.1, 0.2, 0.9,  0.7, 0.1, 0.2];
+    let labels = [2, 0];
+    check("accuracy=1.0", approxEqTol(accuracy(preds, labels, 2, 3), 1.0, 0.0001));
+    check("heScale>0", heScale(100) > 0.0);
+    let w = [0.0, 0.0, 0.0, 0.0, 0.0];
+    initWeights(w, 0.5, 12345);
+    check("init in range", w[0] <= 0.5);
+    check("init in range2", w[0] >= -0.5);
+    check("lr decay", approxEqTol(lrExpDecay(0.1, 0.5, 1), 0.05, 0.0001));
+
+    return testSummary();
+}

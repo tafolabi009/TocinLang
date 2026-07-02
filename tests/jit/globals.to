@@ -1,0 +1,18 @@
+// Module-level global variables: scalars, arrays, and alloc buffers, mutated
+// across functions and initialized before main runs.
+let counter = 0;
+let table = [10, 20, 30];
+let buf = alloc(24);
+
+def inc() -> int { counter = counter + 1; return counter; }
+def sumTable() -> int { let s = 0; for i in 0..len(table) { s = s + table[i]; } return s; }
+
+def main() -> int {
+    inc(); inc(); inc();
+    if counter != 3 { print("FAIL counter\n"); return 1; }
+    if sumTable() != 60 { print("FAIL table\n"); return 1; }
+    storeInt(buf, 0, 7); storeInt(buf, 8, 11);
+    if loadInt(buf, 0) + loadInt(buf, 8) != 18 { print("FAIL buf\n"); return 1; }
+    print("globals: OK\n");
+    return 0;
+}

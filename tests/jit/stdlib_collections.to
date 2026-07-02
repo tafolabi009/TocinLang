@@ -1,0 +1,73 @@
+import std.testing;
+import data.collections;
+def slot(sl: vector, i: int) -> string { return strListGet(sl, i); }
+def main() -> int {
+    testBegin();
+    // min-heap: push 5,3,8,1 -> pops ascending
+    let h = heapNew(16);
+    heapPush(h, 5); heapPush(h, 3); heapPush(h, 8); heapPush(h, 1);
+    checkEq("heap peek min", heapPeek(h), 1);
+    checkEq("heap pop 1", heapPop(h), 1);
+    checkEq("heap pop 3", heapPop(h), 3);
+    checkEq("heap pop 5", heapPop(h), 5);
+    checkEq("heap size", heapSize(h), 1);
+
+    // union-find
+    let uf = ufNew(10);
+    ufUnion(uf, 0, 1); ufUnion(uf, 1, 2); ufUnion(uf, 7, 8);
+    checkEq("uf 0~2", ufConnected(uf, 0, 2), 1);
+    checkEq("uf 0~7", ufConnected(uf, 0, 7), 0);
+    checkEq("uf sets", ufSetCount(uf), 7);   // 10 - 3 unions
+
+    // bitset
+    let bs = bitsetNew(128);
+    bitSet(bs, 5); bitSet(bs, 70); bitSet(bs, 127);
+    checkEq("bit 5", bitGet(bs, 5), 1);
+    checkEq("bit 6", bitGet(bs, 6), 0);
+    checkEq("bit 70", bitGet(bs, 70), 1);
+    checkEq("bitset count", bitsetCount(bs), 3);
+    bitClear(bs, 70);
+    checkEq("after clear", bitGet(bs, 70), 0);
+
+    // ring buffer
+    let r = ringNew(4);
+    ringPush(r, 10); ringPush(r, 20); ringPush(r, 30);
+    checkEq("ring pop 10", ringPop(r), 10);
+    ringPush(r, 40); ringPush(r, 50);        // wraps
+    checkEq("ring size", ringSize(r), 4);
+    checkEq("ring pop 20", ringPop(r), 20);
+    checkEq("ring pop 30", ringPop(r), 30);
+
+    // string list
+    let sl = strListNew();
+    strListAdd(sl, "one"); strListAdd(sl, "two"); strListAdd(sl, "three");
+    checkEq("strlist len", strListLen(sl), 3);
+    checkStrEq("strlist 0", slot(sl, 0), "one");
+    checkStrEq("strlist 2", slot(sl, 2), "three");
+
+    
+    // BST
+    let t = bstNew();
+    bstPut(t, 5, 50); bstPut(t, 3, 30); bstPut(t, 8, 80); bstPut(t, 1, 10); bstPut(t, 4, 40);
+    checkEq("bst get 8", bstGet(t, 8, -1), 80);
+    checkEq("bst get missing", bstGet(t, 99, -1), -1);
+    checkEq("bst contains 4", bstContains(t, 4), 1);
+    checkEq("bst min", bstMin(t, -1), 1);
+    checkEq("bst max", bstMax(t, -1), 8);
+    bstPut(t, 8, 88);  // update
+    checkEq("bst update", bstGet(t, 8, -1), 88);
+    let order = vecNew();
+    bstInorder(t, order);
+    checkEq("inorder[0]", vecGet(order, 0), 1);
+    checkEq("inorder[1]", vecGet(order, 1), 3);
+    checkEq("inorder[4]", vecGet(order, 4), 8);
+
+    // deque
+    let d = dequeNew(8);
+    pushBack(d, 2); pushBack(d, 3); pushFront(d, 1);   // [1,2,3]
+    checkEq("deque size", dequeSize(d), 3);
+    checkEq("popFront", popFront(d), 1);
+    checkEq("popBack", popBack(d), 3);
+    checkEq("remaining", popFront(d), 2);
+        return testSummary();
+}

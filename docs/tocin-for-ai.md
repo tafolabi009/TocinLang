@@ -357,6 +357,29 @@ Two calling styles:
 | `envGet(name)` | `(string) -> string` | environment variable value, or "" |
 | `sysExit(code)` | `(int) -> int` | terminate the process with `code` |
 
+**Raw memory & systems** (addresses are plain `int`s; the load/store builtins lower to inline loads/stores — no runtime calls, so they optimize like C pointer code)
+| Builtin | Signature | Behavior |
+|---|---|---|
+| `alloc(n)` | `(int) -> int` | GC-managed heap buffer of `n` bytes; returns its address |
+| `free(p)` | `(int) -> int` | release (no-op under GC); returns 0 |
+| `memcpy(dst, src, n)` / `memset(dst, byte, n)` | `(int, int, int) -> int` | C semantics; return `dst` |
+| `ptrAdd(p, off)` | `(int, int) -> int` | address + byte offset |
+| `loadByte(p, off)` / `storeByte(p, off, v)` | 2/3 ints | 8-bit load (zero-extended) / store (truncating) |
+| `loadInt(p, off)` / `storeInt(p, off, v)` | 2/3 ints | 64-bit load / store |
+| `newArray(n)` | `(int) -> list<int>` | dynamically-sized, zero-filled int array (real `len()`/indexing/for-in). Annotate the binding: `let a: list<int> = newArray(n)` |
+| `zeros(n)` / `newFloatArray(n)` | `(int) -> list<float>` | dynamically-sized, zero-filled float array. `let a: list<float> = zeros(n)` — the `zeros()` every numeric language has |
+| `strFromAddr(addr)` | `(int) -> string` | reinterpret an int address as a string — read a string stored in a vector/map slot (`strFromAddr(vecGet(v, i))`). Enables `vector<string>` and string-valued maps |
+| `bufToStr(addr, n)` | `(int, int) -> string` | materialize `n` raw bytes as one string — the fast string builder (assemble bytes in a buffer, convert once, not O(n²) `+`) |
+
+**Kernel / MMIO primitives** (for drivers and OS work; all widths in bits, loads zero-extend, stores truncate)
+| Builtin | Signature | Behavior |
+|---|---|---|
+| `volatileLoad8/16/32/64(p, off)` | `(int, int) -> int` | `volatile` load — never elided, merged, or reordered vs other volatile ops. Use for device registers. |
+| `volatileStore8/16/32/64(p, off, v)` | `(int, int, int) -> int` | `volatile` store; returns 0 |
+| `fence()` | `() -> int` | full sequentially-consistent hardware memory barrier |
+| `asm("tmpl")` | template literal | raw side-effecting assembly, no operands (`asm("cli")`, `asm("hlt")`) |
+| `asm(tmpl, constraints, args...)` | literals + ints | constrained assembly (LLVM/GCC syntax, AT&T dialect): at most one leading `"=..."` output, one constraint per input, `~{...}` clobbers. Returns the output operand (or 0). Examples: `let t = asm("rdtsc", "={ax},~{dx}")`, `let s = asm("lea 100($1), $0", "=r,r", x)`, `asm("outb %b1, %w0", "{dx},{ax}", port, val)` |
+
 **Option / Result / channels**
 | Builtin | Signature | Returns |
 |---|---|---|
@@ -372,6 +395,39 @@ These are `.to` files under `stdlib/std/`, resolved by `import std.<name>;`. Imp
 - **`import std.math;`** — `gcd(a,b)`, `lcm(a,b)`, `factorial(n)`, `clamp(x,lo,hi)`, `isPrime(n)`. (Note: `abs/min/max/sqrt/pow` are compiler builtins, not in this module.)
 - **`import std.list;`** — `listSum(xs)`, `listMax(xs)`, `listMin(xs)`, `listContains(xs,target)`, `listReverse(xs)` (mutates in place).
 - **`import std.linq;`** — LINQ-style over `list<int>`: reductions `reduceSum`, `reduceProduct`, `count`, `countGreater(xs,t)`, `indexOf(xs,t)`, `allGreater(xs,t)`, `anyGreater(xs,t)`, `aggregate(xs,seed,op)` (op: 0=add,1=mul,2=max,3=min); and "into a destination list" transforms `mapScaleInto(dst,src,k)`, `mapAddInto(dst,src,k)`, `filterGreaterInto(dst,src,t)` (returns count written).
+- **`import std.strings;`** — string processing built on the char builtins: `strTrim(s)` / `strTrimLeft` / `strTrimRight`, `strRepeat(s,n)`, `strPadLeft(s,width,padChar)` / `strPadRight`, `strReverse(s)`, `strCountChar(s,ch)`, `strLastIndexOf(s,ch)`, `strIsInt(s)`, `strParseIntOr(s,fallback)` (checked parse), `strEqualsIgnoreCase(a,b)`. All return strings or `int`; char args are ASCII codes.
+- **`import std.testing;`** — a Tocin-native test harness: `testBegin()`, `check(name, cond)`, `checkEq(name, got, want)`, `checkStrEq(name, got, want)`, then `return testSummary();` (prints `N passed, M failed` and returns 0 if all passed, 1 otherwise — use it as `main`'s exit code).
+
+Beyond `std.*`, these domain modules also compile and run (import by path, e.g. `import math.stats;`). Names are globally unique (Tocin has no namespaces yet, so no two modules define the same function). Each has a test in `tests/cases/stdlib_*.to`; run them all with `tests/run_stdlib_tests.sh`.
+- **`import math.basic;`** — float helpers (`signf`, `clampf`, `lerp`, `hypot`, `cbrt`, `degToRad`/`radToDeg`, `approxEq`/`approxEqTol`) + int helpers (`iabs`, `ipow`, `isqrt`, `iclamp`).
+- **`import math.stats;`** — `sum`/`mean`/`minv`/`maxv`/`spread`, `variance`/`stddev` (population) and `sampleVariance`/`sampleStddev`, `median`, `dot`, `covariance` over `list<float>`.
+- **`import math.geometry;`** — 2D/3D `dot`/`length`/`dist`, `cross{X,Y,Z}`, `atan2f`, `angle2`, shape area/volume, `triangleArea2`.
+- **`import math.linear;`** — dense linear algebra over flat row-major `list<float>`: `matMul`, `matTranspose`, `matVecMul`, `matTrace`, `vecDot`/`vecNorm`/`vecNormalize`.
+- **`import math.differential;`** — numerical calculus over `(float)->float`: `derivative`, `integrateSimpson`/`integrateTrapezoid`, `newtonRoot`/`bisectRoot`, `eulerIntegrate`.
+- **`import math.stats_advanced;`** — `correlation`, `linearRegression`, `zscoreNormalize`, `minMaxScale`, `normalPdf`/`normalCdf`, `erf`.
+- **`import data.algorithms;`** — in-place `sort` (quicksort) / `insertionSort`, `binarySearch`/`linearSearch`, `isSorted`, `reverse`, `argMin`/`argMax`, `intSum`/`intProduct`/`countEq` over `list<int>`.
+- **`import data.structures;`** — `Stack` (`stackNew`/`stackPush`/`stackPop`/…), FIFO `Queue` (`queueNew`/`enqueue`/`dequeue`), int `Set` and `Counter` over the map builtins; handles use the `vector`/`map` types.
+- **`import embedded.gpio;`** — MMIO GPIO driver over the volatile primitives: `pinMode`, `digitalRead`/`digitalWrite`, `toggle`, `readPort`/`writePort`, `barrier`. Works under `--freestanding`.
+- **`import audio;`** — DSP over `list<float>`: `genSine`/`genSquare`/`genSaw`, `gain`, `mix`, `clip`, `applyEnvelope`, `rms`/`peak`, `normalize`, `lowpass`, `midiToFreq`.
+- **`import game.graphics;`** — software RGBA rasterizer over a raw framebuffer: `createFramebuffer`, `setPixel`/`getChannel`, `clear`, `fillRect`/`drawRect`, `drawLine` (Bresenham), `fillCircle`.
+- **`import ml.neural_network;`** — feed-forward NN over flat `list<float>`: `sigmoid`/`relu`/`tanhf` (+ derivatives), `softmax`, `denseForward`, `mseLoss`/`crossEntropy`, and a backprop `trainStep` (learns XOR in the tests).
+- **`import ml.deep_learning;`** — training utilities: `argmax`, `oneHot`, `accuracy`, `meanAbsError`, `rSquared`, `heScale`/`xavierScale`, `initWeights`, `lrExpDecay`/`lrStepDecay`.
+- **`import ml.computer_vision;`** — 8-bit grayscale image ops over raw buffers: `threshold`, `invert`, `brighten`, `boxBlur`, `sobel`, `histogram`, `resize`.
+- **`import web.http;`** — HTTP/1.1 helpers: `httpMethod`/`httpPath`/`httpRoute`, `buildResponse`/`ok`/`okJson`/`notFound`/`statusText`, and a `serve`/`serveOnce`/`serveLoop` server over the tcp builtins.
+- **`import net.advanced;`** — HTTP client: `urlHost`/`urlPort`/`urlPath`, `httpGet`/`httpPost`, `responseStatus`/`responseBody`.
+- **`import web.websocket;`** — RFC 6455 frame codec over byte buffers: `writeFrame`, `frameOpcode`/`framePayloadLen`/`framePayloadOffset`, `unmaskPayload`.
+- **`import std.strseq;`** — split/join/replace: `splitChar`/`splitWhitespace` (→ vector), `joinStr`, `replaceChar`/`replaceAll`, `indexOfIgnoreCase`, `hasPrefix`/`hasSuffix`.
+- **`import std.functional;`** — `mapInts`, `filterInts`, `foldInts`, `zipWith`, `anyInt`/`allInt`/`countWhere`/`findFirst`, `takeWhile`/`dropWhile`, `rangeList`, `reversed`, `concatInts` (callbacks are `(int)->int` / `(int,int)->int`).
+- **`import std.json;`** — recursive JSON: `jsonParse` (→ value tree), `jsonType`, `jsonAsInt`/`Float`/`String`/`Bool`, `jsonArrayLen`/`Get`, `jsonObjectGet`/`Has`, `jsonGetInt`/`jsonGetString` (with defaults), `jsonStringify`, `jsonEscape`.
+- **`import data.collections;`** — classic structures: binary min-heap (`heapPush`/`heapPop`), union-find (`ufUnion`/`ufFind`/`ufConnected`), bitset (`bitSet`/`bitGet`/`bitsetCount`), ring buffer, BST (`bstPut`/`bstGet`/`bstInorder`), deque (`pushFront`/`popBack`/…), string list.
+- **`import ml.ten;`** — Temporal Eigenstate Networks: `tenEigenInit`, `tenScan` (the diagonal complex recurrence), `tenMix` (head coupling), `tenLayerForward` (full layer: project→evolve→reconstruct→gate→MLP), `tenSigmoid`/`tenSilu`.
+- **`import database.database;`** — in-memory engine: string KV (`kvPut`/`kvGet`), typed-row table (`tableNew`/`tableInsert`/`tableGet`), `selectWhere`/`selectGreater`, `columnSum`/`Max`/`Min`, `countWhere`.
+- **`import scripting.automation;`** — `renderTemplate` ({{key}}), `buildCommand`, `shellQuote`, `repeatStr`, `configKey`/`configValue`.
+- **`import game.shader;`** — software shading: `clamp01`/`mix`/`smoothstep`/`step`, vec3 `dot3`/`length3`/`normalize3`/`reflect3`, `lambert`/`blinnPhong`/`attenuation`, `packColor`/`unpackChannel`, `luminance`, `gammaCorrect`.
+- **`import game.engine;`** — headless ECS: `worldNew`/`spawnEntity`, `getX`/`getY`/`setVelocity`/`kill`, `step`/`applyForce`, `aabbOverlap`/`entitiesCollide`, `fixedSteps`.
+- **`import gui.core;` / `import gui.widgets;`** — immediate-mode GUI math: `rectContains`/`rectsOverlap`, `layoutRow`, `buttonState`/`buttonClicked`, `sliderValue`, `textWidth`/`alignX`, `progressFill`, `gridCell`/`flexItemSize`, `wrapLines`.
+
+**Full stdlib: 34 modules, all compiling; 15 `tests/cases/stdlib_*.to` suites (284 assertions) run via `tests/run_stdlib_tests.sh`.**
 
 ```tocin
 import std.linq;
@@ -745,7 +801,9 @@ This loop uses boolean flags for illustration, but `break`/`continue` (including
 ## 7. Idioms and conventions
 
 - **Every program needs `def main()`.** Annotate it `-> int` and `return` an int; that int becomes the process exit code. `return 0;` for success.
-- **Run with** `./build/tocin file.to --run`; compile to a binary with `-o name` (extension picks format: `.ll` IR, `.s` asm, `.o` object, otherwise an executable). `--dump-ir` prints LLVM IR. Default optimization is `-O2`.
+- **Run with** `./build/tocin file.to --run`; compile to a binary with `-o name` (extension picks format: `.ll` IR, `.s` asm, `.o` object, otherwise an executable). `--dump-ir` prints LLVM IR. Default optimization is `-O2`; use `-O3 --native` for maximum speed on the build machine (`--native` enables host-CPU features — POPCNT/AVX — and is not portable to older CPUs).
+- **Type checking is strict by default:** undeclared identifiers, wrong argument counts, clear operator/return-type violations, and assignment to undeclared variables are compile ERRORS that block codegen (with `file:line:col` locations). `--permissive` prints them but compiles anyway (not recommended; kept for migration).
+- **Whole-program optimization is automatic** when producing an executable or running with `--run`: everything except `main` is internalized, so unused functions are eliminated and cross-function inlining/specialization is unrestricted. Pure computations on compile-time-known inputs may be **folded at compile time** (like C/Rust at -O3) — benchmark with runtime-derived inputs.
 - **Naming:** functions/variables/fields `lowerCamelCase`; types/classes/enums/traits `UpperCamelCase`; enum members `UpperCamelCase`. (Conventional, not enforced.)
 - **Booleans as ints:** stdlib and idiomatic code represent truth as `int` `0`/`1` (e.g. `mapHasStr` returns `1`/`0`, `isPrime` returns `1`/`0`). Compare explicitly: `if mapHasStr(m, k) == 1 { ... }`.
 - **`{}` formatting** is the normal way to print: `println("name={} age={}", name, age)`.
@@ -782,14 +840,17 @@ This loop uses boolean flags for illustration, but `break`/`continue` (including
 21. **`async`/`await` is thin.** It parses and wraps functions but is not a substitute for real concurrency — use goroutines + channels.
 22. **Non-blocking `select` (with `default`) is racy** if you expect a just-spawned goroutine to have produced a value. For determinism, use a blocking `select` (omit `default`) or pre-seed the channel.
 23. **Verifying exit codes:** the exit code is `main`'s return value. If you check `$?` in a shell, **don't pipe `tocin --run` through `head`/`tail`** — you'll read the pager's exit code, not the program's.
+24. **Module-level globals work.** A top-level `let`/`const` is a real global: mutable, shared across functions, and initialized before `main` (even non-constant initializers like `let buf = alloc(1024);` or computed values). Reads/writes from any function see the same storage. (Imported top-level declarations become globals too — §5.2.)
+25. **Runtime panics, not UB.** Integer division/modulo by zero, out-of-bounds `arr[i]`, and force-unwrap `!!` of `None` abort with `panic: <reason> at file:line:col` (exit 134) instead of a silent crash. The div/mod check is free when the divisor is a literal. (Suppressed under `--freestanding`.)
 
 ---
 
 ## 9. Capabilities and limitations summary
 
 **Tocin can today:**
-- Compile to native code via LLVM (default `-O2`, ~9% of C on compute), or JIT-run directly (`--run`).
-- **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), char predicates, and `asm("...")` are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
+- Compile to native code via LLVM (default `-O2`; use `-O3 --native` for maximum speed — in a 12-kernel/8-language benchmark Tocin lands in the C/C++/Rust cluster, ahead of Go/Java/Node), or JIT-run directly (`--run`).
+- **Module-level global variables** (mutable, initialized before `main`), and **runtime panics** with located messages for division-by-zero, out-of-bounds indexing, and nil force-unwrap (instead of undefined behavior).
+- **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), **volatile MMIO access (`volatileLoad8/16/32/64`, `volatileStore8/16/32/64`), memory barriers (`fence()`)**, char predicates, and **inline assembly — both `asm("cli")` and the constrained form `asm(tmpl, constraints, args...)` for port I/O, MSRs, and control registers** — are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
 - **Opt-in borrow checker** (`--borrow-check`, OFF by default): adds Rust-like move / use-after-move enforcement on owned (class/struct) values. Binding to another variable, passing by value, or returning a value MOVES it; using a moved value is a `B001` error; reassignment revives; copy types (int/float/bool/string) are never moved. WITHOUT the flag, class instances alias freely (GC-managed) — so only enable it for code you want move-checked. Move-only for now (no `&`/`&mut` borrows or lifetimes yet).
 - Functions (incl. mutual recursion, forward references, inferred return types, **nested `def`** — non-capturing), first-class function values and function-typed parameters, and **capturing closures** (single-expression lambdas that capture enclosing locals by value and can escape their scope).
 - Classes/structs with fields, methods, `self`, implicit positional constructors, direct field mutation, **operator overloading** (define `__add__`/`__sub__`/`__mul__`/`__div__`/`__mod__` and `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__` as methods — binary operators on instances dispatch to them), and **RAII destructors** (`__del__(self)` runs automatically when a constructor-initialized local leaves scope, LIFO, on every return path).

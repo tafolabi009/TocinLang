@@ -1,0 +1,76 @@
+import std.testing;
+import math.basic;
+import database.database;
+import scripting.automation;
+import game.shader;
+import gui.core;
+import gui.widgets;
+
+def main() -> int {
+    testBegin();
+    // --- database: KV
+    let kv = kvNew();
+    kvPut(kv, "host", "localhost");
+    kvPut(kv, "port", "8080");
+    checkStrEq("kv get", kvGet(kv, "host", "?"), "localhost");
+    checkEq("kv has", kvHas(kv, "port"), 1);
+    checkEq("kv missing", kvHas(kv, "nope"), 0);
+    // --- database: table (id, age, active)
+    let t = tableNew(3, 100);
+    tableInsert(t, [1, 25, 1]);
+    tableInsert(t, [2, 30, 0]);
+    tableInsert(t, [3, 25, 1]);
+    checkEq("row count", tableRowCount(t), 3);
+    checkEq("cell", tableGet(t, 1, 1), 30);
+    let matches = vecNew();
+    checkEq("select age=25", selectWhere(t, 1, 25, matches), 2);
+    checkEq("count active", countWhere(t, 2, 1), 2);
+    checkEq("sum age", columnSum(t, 1), 80);
+    checkEq("max age", columnMax(t, 1), 30);
+    tableSet(t, 0, 1, 26);
+    checkEq("after update", tableGet(t, 0, 1), 26);
+
+    // --- scripting: templating + commands
+    let keys = vecNew(); vecPush(keys, "name"); vecPush(keys, "lang");
+    let vals = vecNew(); vecPush(vals, "World"); vecPush(vals, "Tocin");
+    checkStrEq("template", renderTemplate("Hello {{name}} from {{lang}}!", keys, vals), "Hello World from Tocin!");
+    let args = vecNew(); vecPush(args, "-o"); vecPush(args, "my file.txt");
+    checkStrEq("command", buildCommand("cp", args), "cp -o \"my file.txt\"");
+    checkStrEq("config value", configValue("key=hello=world"), "hello=world");
+    checkStrEq("repeat", repeatStr("ab", 3), "ababab");
+
+    // --- shader math
+    check("smoothstep mid", approxEqTol(smoothstep(0.0, 1.0, 0.5), 0.5, 0.0001));
+    check("clamp01", approxEqTol(clamp01(1.5), 1.0, 0.0001));
+    check("mix", approxEqTol(mix(0.0, 10.0, 0.25), 2.5, 0.0001));
+    check("lambert perp", approxEqTol(lambert(0.0,0.0,1.0, 0.0,0.0,1.0), 1.0, 0.0001));
+    check("lambert back", approxEqTol(lambert(0.0,0.0,1.0, 0.0,0.0,-1.0), 0.0, 0.0001));
+    check("luminance", approxEqTol(luminance(1.0, 1.0, 1.0), 1.0, 0.0001));
+    let col = packColor(1.0, 0.0, 0.0, 1.0);
+    checkEq("packColor R", unpackChannel(col, 0), 255);
+    checkEq("packColor G", unpackChannel(col, 1), 0);
+
+    // --- gui
+    checkEq("rect contains", rectContains(10, 10, 100, 50, 50, 30), 1);
+    checkEq("rect outside", rectContains(10, 10, 100, 50, 200, 30), 0);
+    checkEq("rects overlap", rectsOverlap(0,0,10,10, 5,5,10,10), 1);
+    let st = buttonState(0, 0, 100, 40, 50, 20, 1);   // mouse inside + down
+    checkEq("button clicked", buttonClicked(st), 1);
+    checkEq("hovered", isHovered(st), 1);
+    checkEq("slider mid", sliderValue(0, 100, 50, 0, 200), 100);
+    checkEq("slider knob", sliderKnobX(0, 100, 100, 0, 200), 50);
+    let lay = layoutNew(10, 0, 5);
+    checkEq("layout row 0", layoutRow(lay, 20), 0);
+    checkEq("layout row 1", layoutRow(lay, 20), 25);   // 20 + 5 spacing
+
+    // --- gui/widgets
+    checkEq("text width", textWidth(5), 40);
+    checkEq("alignX center", alignX(100, 40, 1), 30);
+    checkEq("progress fill", progressFill(200, 0.5), 100);
+    checkEq("grid cell x", gridCell(0,0, 100,100, 2,2, 10, 1,0, 0), 55);
+    checkEq("flex size", flexItemSize(100, 3, 10), 26);
+    checkEq("wrap lines", wrapLines(25, 10), 3);
+    checkEq("scroll thumb", scrollThumbLen(100, 50, 200), 25);
+
+    return testSummary();
+}

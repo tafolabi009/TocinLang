@@ -1,0 +1,130 @@
+// Tocin standard library: std.strseq
+//
+// String <-> sequence operations that every mainstream stdlib has but Tocin's
+// core string builtins didn't: split, join, replace, contains-helpers, and
+// case-insensitive search. Split returns a `vector` of string addresses (read
+// with strFromAddr / the strList* helpers in data.collections); join takes one.
+
+// Split `s` on a single delimiter character `delim` (ASCII code), returning a
+// vector of the pieces (empty pieces are kept, matching most split()s).
+def splitChar(s: string, delim: int) -> vector {
+    let out = vecNew();
+    let n = strLen(s);
+    let start = 0;
+    let i = 0;
+    while i < n {
+        if charAt(s, i) == delim {
+            vecPush(out, substring(s, start, i - start));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    vecPush(out, substring(s, start, n - start));   // final piece
+    return out;
+}
+
+// Split on ASCII whitespace runs (space/tab/newline), dropping empty tokens -
+// the "words of a line" operation.
+def splitWhitespace(s: string) -> vector {
+    let out = vecNew();
+    let n = strLen(s);
+    let start = -1;
+    let i = 0;
+    while i < n {
+        let c = charAt(s, i);
+        let isWs = (c == 32) || (c == 9) || (c == 10) || (c == 13) ? 1 : 0;
+        if isWs == 1 {
+            if start >= 0 { vecPush(out, substring(s, start, i - start)); start = -1; }
+        } else {
+            if start < 0 { start = i; }
+        }
+        i = i + 1;
+    }
+    if start >= 0 { vecPush(out, substring(s, start, n - start)); }
+    return out;
+}
+
+// Join a vector of string addresses with `sep` between them.
+def joinStr(parts: vector, sep: string) -> string {
+    let n = vecLen(parts);
+    if n == 0 { return ""; }
+    let acc = strFromAddr(vecGet(parts, 0));
+    let i = 1;
+    while i < n {
+        acc = acc + sep;
+        acc = acc + strFromAddr(vecGet(parts, i));
+        i = i + 1;
+    }
+    return acc;
+}
+
+// Replace every occurrence of single char `from` with `to` (returns a new
+// string). For full-substring replace, use replaceAll below.
+def replaceChar(s: string, fromC: int, toC: int) -> string {
+    let n = strLen(s);
+    let buf = alloc(n + 1);
+    let i = 0;
+    while i < n {
+        let c = charAt(s, i);
+        storeByte(buf, i, c == fromC ? toC : c);
+        i = i + 1;
+    }
+    return bufToStr(buf, n);
+}
+
+// Replace every non-overlapping occurrence of substring `from` with `to`.
+// Builds the result once in a buffer (O(n*m) scan, O(n) output).
+def replaceAll(s: string, fromS: string, toS: string) -> string {
+    let n = strLen(s);
+    let fn = strLen(fromS);
+    if fn == 0 { return s; }
+    let out = vecNew();     // collect kept pieces + replacements, join at end
+    let start = 0;
+    let i = 0;
+    while i <= n - fn {
+        if __matchAt(s, i, fromS, fn) == 1 {
+            vecPush(out, substring(s, start, i - start));
+            vecPush(out, toS);
+            i = i + fn;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    vecPush(out, substring(s, start, n - start));
+    let r = joinStr(out, "");
+    vecFree(out);
+    return r;
+}
+// Does `s` match `needle`(length fn) starting at index i?
+def __matchAt(s: string, i: int, needle: string, fn: int) -> int {
+    let j = 0;
+    while j < fn {
+        if charAt(s, i + j) != charAt(needle, j) { return 0; }
+        j = j + 1;
+    }
+    return 1;
+}
+
+// Case-insensitive substring search: index of `needle` in `s`, or -1 (ASCII).
+def indexOfIgnoreCase(s: string, needle: string) -> int {
+    let n = strLen(s);
+    let m = strLen(needle);
+    if m == 0 { return 0; }
+    let i = 0;
+    while i <= n - m {
+        let j = 0;
+        let ok = 1;
+        while j < m {
+            if toLowerChar(charAt(s, i + j)) != toLowerChar(charAt(needle, j)) { ok = 0; j = m; }
+            j = j + 1;
+        }
+        if ok == 1 { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// 1 if `s` starts with / ends with the given substring (built on the builtins).
+def hasPrefix(s: string, prefix: string) -> int { return startsWith(s, prefix); }
+def hasSuffix(s: string, suffix: string) -> int { return endsWith(s, suffix); }

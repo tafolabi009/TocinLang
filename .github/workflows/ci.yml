@@ -82,6 +82,11 @@ jobs:
       - name: Run .to end-to-end tests
         run: bash scripts/run_to_tests.sh
 
+      - name: Run JIT runtime + stdlib tests
+        # These exercise the runtime (vectors/maps/strings/alloc) and the
+        # standard library via `tocin --run`; they cannot run under lli.
+        run: bash tests/run_stdlib_tests.sh
+
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,6 +143,9 @@ jobs:
 
       - name: Run .to end-to-end tests
         run: bash scripts/run_to_tests.sh
+
+      - name: Run JIT runtime + stdlib tests
+        run: bash tests/run_stdlib_tests.sh
 
   # ---------------------------------------------------------------------------
   # Windows build is best-effort.

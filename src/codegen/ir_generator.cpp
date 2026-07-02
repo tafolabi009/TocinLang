@@ -11,6 +11,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
@@ -72,7 +73,7 @@ llvm::AllocaInst *IRGenerator::createEntryBlockAlloca(llvm::Function *function,
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Cannot create allocation outside of function",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return nullptr;
     }
 
@@ -114,6 +115,10 @@ void IRGenerator::declareStdLibFunctions()
         false);
     llvm::Function *mallocFunc = llvm::Function::Create(
         mallocType, llvm::Function::ExternalLinkage, "__tocin_alloc", *module);
+    // A fresh allocation aliases nothing else; telling alias analysis so lets
+    // the optimizer keep values in registers across stores through other
+    // pointers (malloc/GC_malloc get the same attribute from clang headers).
+    mallocFunc->addRetAttr(llvm::Attribute::NoAlias);
     stdLibFunctions["malloc"] = mallocFunc;
 
     llvm::FunctionType *freeType = llvm::FunctionType::get(
@@ -565,13 +570,76 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
     default:
         errorHandler.reportError(error::ErrorCode::C031_TYPECHECK_ERROR,
                                  "Unsupported literal type: " + expr->value,
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
     }
 }
 
+void IRGenerator::emitTrapIf(llvm::Value *condFail, const std::string &msg)
+{
+    if (!condFail || !builder.GetInsertBlock())
+        return;
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    if (!fn)
+        return;
+    llvm::Function *panicFn = module->getFunction("__tocin_panic");
+    if (!panicFn)
+    {
+        llvm::Type *pty = llvm::PointerType::get(context, 0);
+        panicFn = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pty, pty}, false),
+            llvm::Function::ExternalLinkage, "__tocin_panic", *module);
+    }
+    llvm::BasicBlock *trapBB = llvm::BasicBlock::Create(context, "trap", fn);
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "trap.cont", fn);
+    builder.CreateCondBr(condFail, trapBB, contBB);
+    builder.SetInsertPoint(trapBB);
+    std::string loc;
+    if (!std::string(curTok_.filename).empty())
+        loc = std::string(curTok_.filename) + ":" + std::to_string(curTok_.line) +
+              ":" + std::to_string(curTok_.column);
+    llvm::Value *msgStr = builder.CreateGlobalStringPtr(msg, "panic.msg");
+    llvm::Value *locStr = builder.CreateGlobalStringPtr(loc, "panic.loc");
+    builder.CreateCall(panicFn, {msgStr, locStr});
+    builder.CreateUnreachable();
+    builder.SetInsertPoint(contBB);
+}
+
+std::string IRGenerator::bufferVarName(const ast::ExprPtr &expr) const
+{
+    if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+        if (bufferScopes_.count(v->name))
+            return v->name;
+    return "";
+}
+
+void IRGenerator::tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar)
+{
+    auto it = bufferScopes_.find(bufVar);
+    if (it == bufferScopes_.end() || !inst)
+        return;
+    // This access is in bufVar's scope...
+    inst->setMetadata(llvm::LLVMContext::MD_alias_scope,
+                      llvm::MDNode::get(context, {it->second}));
+    // ...and does not alias any OTHER tracked buffer (distinct allocations).
+    std::vector<llvm::Metadata *> others;
+    for (auto &kv : bufferScopes_)
+        if (kv.first != bufVar)
+            others.push_back(kv.second);
+    if (!others.empty())
+        inst->setMetadata(llvm::LLVMContext::MD_noalias,
+                          llvm::MDNode::get(context, others));
+}
+
 void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
+    curTok_ = stmt->token;
+    // Module-level `let`/`const` (no enclosing function): declared as an LLVM
+    // global by predeclareGlobals and initialized in __tocin_global_init, so
+    // there is nothing to do on the main visit. (Reaching here with a null
+    // function would otherwise try to stack-allocate outside a function.)
+    if (currentFunction == nullptr && globalVars_.count(stmt->name))
+        return;
     llvm::Type *varType = stmt->type ? getLLVMType(stmt->type) : nullptr;
 
     // `let xs: list<SomeTrait> = [...]` -> each concrete element is boxed into a
@@ -607,7 +675,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
         pendingElemTrait = savedPending;
         errorHandler.reportError(error::ErrorCode::T032_CANNOT_INFER_TYPE,
                                  "Cannot infer type for variable '" + stmt->name + "' without initializer",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return;
     }
     pendingElemTrait = savedPending;
@@ -618,7 +686,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     {
         errorHandler.reportError(error::ErrorCode::T031_UNDEFINED_TYPE,
                                  "Unknown type for variable '" + stmt->name + "'",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return;
     }
 
@@ -627,6 +695,29 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 
     // Store the variable in the symbol table
     namedValues[stmt->name] = alloca;
+
+    // restrict tracking: a local initialized directly by `alloc(...)` owns a
+    // fresh, disjoint buffer. Give it a unique alias scope so accesses through
+    // it can be marked noalias against other buffers (enables loop interchange /
+    // vectorization). Any later reassignment drops it (see handleVariableAssignment).
+    bufferScopes_.erase(stmt->name);
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+    {
+        if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            if (callee->name == "alloc")
+            {
+                if (!restrictDomain_)
+                {
+                    llvm::MDBuilder mdb(context);
+                    restrictDomain_ = mdb.createAnonymousAliasScopeDomain("tocin.restrict");
+                }
+                llvm::MDBuilder mdb(context);
+                bufferScopes_[stmt->name] =
+                    mdb.createAnonymousAliasScope(restrictDomain_, stmt->name);
+            }
+        }
+    }
 
     // Track the variable's class (for field/method resolution). Done after the
     // initializer is evaluated so generic-constructor calls have already been
@@ -674,7 +765,14 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
     }
 
     // Track array element type so indexing into this variable loads/stores the
-    // right element type.
+    // right element type. An explicit `list<T>` annotation is authoritative
+    // (covers `let a: list<float> = zeros(n)` and any other initializer).
+    if (auto gt = std::dynamic_pointer_cast<ast::GenericType>(stmt->type))
+    {
+        if ((gt->name == "list" || gt->name == "array" || gt->name == "List" ||
+             gt->name == "Array") && !gt->typeArguments.empty())
+            varArrayElem[stmt->name] = getLLVMType(gt->typeArguments[0]);
+    }
     if (auto lst = std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
     {
         varArrayElem[stmt->name] =
@@ -753,7 +851,7 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                          "Initializer type does not match variable type",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                                         std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                 return;
             }
         }
@@ -828,6 +926,7 @@ void IRGenerator::visitDestructureStmt(ast::DestructureStmt *stmt)
 
 void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 {
+    curTok_ = stmt->token;
     // Async functions are generated as ordinary synchronous functions: the body
     // runs eagerly on the calling path and `await f()` evaluates to f()'s result
     // (see visitAwaitExpr). This gives correct async/await *semantics* today; the
@@ -863,7 +962,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         {
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                      "Invalid parameter type in function '" + funcName + "'",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             return;
         }
         paramTypes.push_back(paramType);
@@ -925,8 +1024,16 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     llvm::Function *previousFunction = currentFunction;
     currentFunction = function;
 
+    // main() runs the module's global initializers before anything else, so
+    // globals with computed initializers (alloc(), expressions) are live for
+    // the whole program.
+    if (funcName == "main" && !globalInitStmts_.empty())
+        if (llvm::Function *initFn = module->getFunction("__tocin_global_init"))
+            builder.CreateCall(initFn, {});
+
     // Fresh symbol tables for this function body.
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varClasses.clear();
     varArrayElem.clear();
     varFuncSig.clear();
@@ -1000,7 +1107,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Invalid LLVM IR generated for function '" + funcName + "': " + errorStr,
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
     }
 
     // Restore the enclosing function/codegen scope.
@@ -1018,6 +1125,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 
 void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
 {
+    curTok_ = stmt->token;
     // Get return type of the current function
     llvm::Type *returnType = currentFunction->getReturnType();
 
@@ -1066,7 +1174,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                          "Return value type does not match function return type",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                                         std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                 return;
             }
         }
@@ -1095,7 +1203,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
         {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Missing return value in non-void function",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             return;
         }
         runPendingFinally();
@@ -1108,6 +1216,7 @@ void IRGenerator::visitReturnStmt(ast::ReturnStmt *stmt)
 
 void IRGenerator::visitCallExpr(ast::CallExpr *expr)
 {
+    curTok_ = expr->token;
     // Tuple builtins (lowered by the parser). __tuple(a, b, ...) builds a heap
     // slot buffer; __tupleGet(t, i) loads slot i (i is a constant literal).
     if (auto bname = std::dynamic_pointer_cast<ast::VariableExpr>(expr->callee))
@@ -1549,8 +1658,19 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto s = pptr(0); if (!s) return;
                 lastValue = builder.CreateCall(rt("__tocin_str_len", i64b, {ptrb}), {s}, "strlen"); return; }
             if (funcName == "charAt" && na == 2) {
+                // Inline byte load instead of a runtime call. The old runtime
+                // helper re-ran strlen on every call, making a charAt loop over
+                // an n-char string O(n^2) - a real drag on lexers/parsers (and
+                // the digitsum benchmark). Contract: valid index in [0, len);
+                // a negative index yields -1 (preserved), matching loadByte's
+                // trust-the-index model for the fast path.
                 auto s = pptr(0); auto i = slot(1); if (!s || !i) return;
-                lastValue = builder.CreateCall(rt("__tocin_str_char_at", i64b, {ptrb, i64b}), {s, i}, "charat"); return; }
+                llvm::Type *i8t = llvm::Type::getInt8Ty(context);
+                llvm::Value *neg = builder.CreateICmpSLT(i, llvm::ConstantInt::get(i64b, 0), "ca.neg");
+                llvm::Value *g = builder.CreateGEP(i8t, s, i, "ca.p");
+                llvm::Value *byte = builder.CreateZExt(builder.CreateLoad(i8t, g, "ca.b"), i64b, "ca.b64");
+                lastValue = builder.CreateSelect(neg, llvm::ConstantInt::get(i64b, -1), byte, "charat");
+                return; }
             if (funcName == "substring" && na == 3) {
                 auto s = pptr(0); auto a = slot(1); auto b = slot(2); if (!s || !a || !b) return;
                 lastValue = builder.CreateCall(rt("__tocin_str_substring", ptrb, {ptrb, i64b, i64b}), {s, a, b}, "substr"); return; }
@@ -1694,45 +1814,214 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "ptradd");
                 lastValue = builder.CreatePtrToInt(g, i64b, "ptraddr"); return; }
+            if ((funcName == "newArray" || funcName == "zeros" || funcName == "newFloatArray") && na == 1) {
+                // Dynamically-sized, zero-initialized array with the standard
+                // [i64 length][n 8-byte slots] layout, so len()/indexing/for-in
+                // all work. `newArray` -> int elements, `zeros`/`newFloatArray`
+                // -> float. This is the missing `zeros(n)` every numeric
+                // language has; element type comes from the variable's list<T>
+                // annotation, this just allocates + zeroes.
+                auto n = slot(0); if (!n) return;
+                llvm::Value *bytes = builder.CreateAdd(
+                    llvm::ConstantInt::get(i64b, 8),
+                    builder.CreateMul(n, llvm::ConstantInt::get(i64b, 8)), "arr.bytes");
+                llvm::Value *buf = builder.CreateCall(rt("__tocin_alloc", ptrb, {i64b}), {bytes}, "newarr");
+                builder.CreateStore(n, buf);                       // length header
+                // zero the element region [8 .. 8+n*8)
+                llvm::Value *elemsPtr = builder.CreateGEP(
+                    llvm::Type::getInt8Ty(context), buf, llvm::ConstantInt::get(i64b, 8), "arr.elems");
+                builder.CreateCall(rt("memset", ptrb, {ptrb, i32b, i64b}),
+                    {elemsPtr, llvm::ConstantInt::get(i32b, 0), builder.CreateMul(n, llvm::ConstantInt::get(i64b, 8))});
+                lastValue = buf;
+                lastExprArrayElem = (funcName == "newArray") ? i64b
+                                    : llvm::Type::getDoubleTy(context);
+                return; }
+            if (funcName == "strFromAddr" && na == 1) { // reinterpret an int address as a string
+                // Closes the loop for string-valued containers: a string stored
+                // in a vector/map slot comes back as its i64 address; this turns
+                // that address back into a usable string value (no copy).
+                auto a = slot(0); if (!a) return;
+                lastValue = builder.CreateIntToPtr(a, ptrb, "s.fromaddr"); return; }
+            if (funcName == "bufToStr" && na == 2) {    // copy n bytes -> NUL-terminated string
+                // The missing piece for O(n) string building: assemble bytes in
+                // a raw buffer (data/strbuf) then materialize one string, instead
+                // of O(n^2) repeated `+` concatenation.
+                auto p = pptr(0); auto n = slot(1); if (!p || !n) return;
+                lastValue = builder.CreateCall(rt("__tocin_buf_to_str", ptrb, {ptrb, i64b}), {p, n}, "b2s"); return; }
             if (funcName == "loadByte" && na == 2) {    // *(u8*)(p+off) zero-extended
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "lb.p");
-                lastValue = builder.CreateZExt(builder.CreateLoad(i8b, g, "lb"), i64b, "lb64"); return; }
+                auto *ld = builder.CreateLoad(i8b, g, "lb"); tagBufferAccess(ld, bv);
+                lastValue = builder.CreateZExt(ld, i64b, "lb64"); return; }
             if (funcName == "storeByte" && na == 3) {   // *(u8*)(p+off) = v
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "sb.p");
-                builder.CreateStore(builder.CreateTrunc(v, i8b, "sb.v"), g);
+                auto *st = builder.CreateStore(builder.CreateTrunc(v, i8b, "sb.v"), g); tagBufferAccess(st, bv);
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
             if (funcName == "loadInt" && na == 2) {     // *(i64*)(p+off)
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "li.p");
-                lastValue = builder.CreateLoad(i64b, g, "li"); return; }
+                auto *ld = builder.CreateLoad(i64b, g, "li"); tagBufferAccess(ld, bv);
+                lastValue = ld; return; }
             if (funcName == "storeInt" && na == 3) {    // *(i64*)(p+off) = v
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "si.p");
-                builder.CreateStore(v, g);
+                auto *st = builder.CreateStore(v, g); tagBufferAccess(st, bv);
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
 
+            // ---- volatile memory access (MMIO / device registers) ----
+            // volatileLoadN(addr, off) / volatileStoreN(addr, off, v): like
+            // loadInt/storeInt but with LLVM `volatile` semantics - the access
+            // is never elided, merged, or reordered relative to other volatile
+            // accesses. Required for memory-mapped hardware, where a "dead"
+            // store is a bug and a repeated load can legitimately return a
+            // different value. N is the access width in bits; loads are
+            // zero-extended to int, stores truncate. Values load/store in the
+            // CPU's native endianness (little-endian on x86-64).
+            {
+                llvm::Type *i16b = llvm::Type::getInt16Ty(context);
+                struct VolWidth { const char *suffix; llvm::Type *ty; };
+                const VolWidth widths[] = {
+                    {"8", i8b}, {"16", i16b}, {"32", i32b}, {"64", i64b}};
+                for (const auto &w : widths)
+                {
+                    if (funcName == std::string("volatileLoad") + w.suffix && na == 2) {
+                        auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
+                        llvm::Value *g = builder.CreateGEP(i8b, p, off, "vl.p");
+                        llvm::LoadInst *ld = builder.CreateLoad(w.ty, g, /*isVolatile=*/true, "vl");
+                        lastValue = (w.ty == i64b) ? static_cast<llvm::Value *>(ld)
+                                                   : builder.CreateZExt(ld, i64b, "vl64");
+                        return;
+                    }
+                    if (funcName == std::string("volatileStore") + w.suffix && na == 3) {
+                        auto p = pptr(0); auto off = slot(1); auto v = slot(2);
+                        if (!p || !off || !v) return;
+                        llvm::Value *g = builder.CreateGEP(i8b, p, off, "vs.p");
+                        llvm::Value *val = (w.ty == i64b) ? v : builder.CreateTrunc(v, w.ty, "vs.v");
+                        builder.CreateStore(val, g, /*isVolatile=*/true);
+                        lastValue = llvm::ConstantInt::get(i64b, 0);
+                        return;
+                    }
+                }
+            }
+            // fence(): full sequentially-consistent memory barrier. Orders all
+            // memory operations across it (hardware fence, not just a compiler
+            // barrier) - use between MMIO writes and DMA kicks, or for lock-free
+            // handoffs between cores.
+            if (funcName == "fence" && na == 0) {
+                builder.CreateFence(llvm::AtomicOrdering::SequentiallyConsistent);
+                lastValue = llvm::ConstantInt::get(i64b, 0); return;
+            }
+
             // ---- inline assembly (OS/kernel) ----
-            // asm("instructions") emits raw side-effecting inline assembly with
-            // no operands/clobbers (e.g. "cli", "hlt", "nop", "sti"). The
-            // argument must be a string literal (the template is needed at
-            // compile time, not as a runtime pointer).
-            if (funcName == "asm" && na == 1) {
+            // Two forms, both requiring string LITERALS for template/constraints
+            // (they are needed at compile time, not as runtime pointers):
+            //   asm("cli")
+            //     Raw side-effecting assembly with no operands (cli/hlt/sti/nop).
+            //   asm(template, constraints, args...)
+            //     LLVM-style constrained assembly. The constraint string uses
+            //     LLVM/GCC syntax: at most one leading "=..." output, then one
+            //     constraint per input arg ("r", "{dx}", ...), then clobbers
+            //     ("~{memory}", "~{eax}"). All operands are int (i64).
+            //     Examples (AT&T syntax; $0, $1... refer to operands in order):
+            //       outb:  asm("outb %b1, %w0", "{dx},{ax},~{dirflag}", port, val)
+            //       inb:   let v = asm("inb %w1, %b0", "={ax},{dx}", port)
+            //       rdtsc: let t = asm("rdtsc; shl $$32, %rdx; or %rdx, %rax",
+            //                          "={ax},~{dx}")
+            //       cr3:   let p = asm("mov %cr3, $0", "=r")
+            if (funcName == "asm" && na >= 1) {
                 auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[0]);
                 if (!lit || lit->literalType != ast::LiteralExpr::LiteralType::STRING) {
                     errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                         "asm(...) requires a string-literal instruction template",
-                        "", 0, 0, error::ErrorSeverity::ERROR);
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
                     lastValue = nullptr; return;
                 }
-                auto *fnty = llvm::FunctionType::get(voidb, false);
+                if (na == 1) {
+                    auto *fnty = llvm::FunctionType::get(voidb, false);
+                    llvm::InlineAsm *ia = llvm::InlineAsm::get(
+                        fnty, lit->value, /*constraints=*/"",
+                        /*hasSideEffects=*/true, /*isAlignStack=*/false,
+                        llvm::InlineAsm::AD_ATT);
+                    builder.CreateCall(fnty, ia, {});
+                    lastValue = llvm::ConstantInt::get(i64b, 0); return;
+                }
+
+                auto clit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[1]);
+                if (!clit || clit->literalType != ast::LiteralExpr::LiteralType::STRING) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asm(template, constraints, ...) requires a string-literal "
+                        "constraint list as the second argument",
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
+                const std::string &constraints = clit->value;
+
+                // Count outputs ("=..."), inputs (everything that is not an
+                // output or a "~{...}" clobber) from the comma-separated list.
+                size_t outputs = 0, inputs = 0;
+                {
+                    size_t start = 0;
+                    while (start <= constraints.size() && !constraints.empty())
+                    {
+                        size_t comma = constraints.find(',', start);
+                        std::string c = constraints.substr(
+                            start, comma == std::string::npos ? std::string::npos
+                                                              : comma - start);
+                        if (!c.empty() && c[0] == '=') ++outputs;
+                        else if (!c.empty() && c[0] != '~') ++inputs;
+                        if (comma == std::string::npos) break;
+                        start = comma + 1;
+                    }
+                }
+                if (outputs > 1) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asm(...) supports at most one '=' output constraint",
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
+                if (na - 2 != inputs) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asm constraint string declares " + std::to_string(inputs) +
+                            " input operand(s) but " + std::to_string(na - 2) +
+                            " argument(s) were passed",
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
+
+                std::vector<llvm::Value *> asmArgs;
+                for (size_t i = 2; i < na; ++i) {
+                    auto v = slot(i);
+                    if (!v) return;
+                    asmArgs.push_back(v);
+                }
+                auto *fnty = llvm::FunctionType::get(
+                    outputs ? i64b : voidb,
+                    std::vector<llvm::Type *>(inputs, i64b), false);
+                if (llvm::Error err = llvm::InlineAsm::verify(fnty, constraints)) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asm constraint string is invalid: " +
+                            llvm::toString(std::move(err)),
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
                 llvm::InlineAsm *ia = llvm::InlineAsm::get(
-                    fnty, lit->value, /*constraints=*/"",
+                    fnty, lit->value, constraints,
                     /*hasSideEffects=*/true, /*isAlignStack=*/false,
                     llvm::InlineAsm::AD_ATT);
-                builder.CreateCall(fnty, ia, {});
-                lastValue = llvm::ConstantInt::get(i64b, 0); return;
+                llvm::CallInst *call = builder.CreateCall(fnty, ia, asmArgs);
+                lastValue = outputs ? static_cast<llvm::Value *>(call)
+                                    : llvm::ConstantInt::get(i64b, 0);
+                return;
             }
 
             // ---- character predicates & helpers (char code in/out, i64) ----
@@ -1802,10 +2091,19 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                     rt("__tocin_str_to_float", llvm::Type::getDoubleTy(context), {ptrb}), {s}, "stof"); return; }
         }
 
-        // Math standard library: unary libm functions (double -> double).
+        // Math standard library: unary functions (double -> double).
         static const std::set<std::string> unaryMath = {
             "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
             "exp", "log", "log2", "log10", "floor", "ceil", "round", "fabs"};
+        // The subset with a direct hardware lowering goes through LLVM
+        // intrinsics instead of libm calls: the backend emits a single
+        // instruction (sqrtsd/roundsd/andpd) and - critically - the loop
+        // vectorizer can widen intrinsics (llvm.sqrt.v4f64 -> vsqrtpd) where a
+        // libm call would block vectorization of the whole loop.
+        static const std::map<std::string, llvm::Intrinsic::ID> mathIntrinsics = {
+            {"sqrt", llvm::Intrinsic::sqrt}, {"fabs", llvm::Intrinsic::fabs},
+            {"floor", llvm::Intrinsic::floor}, {"ceil", llvm::Intrinsic::ceil},
+            {"round", llvm::Intrinsic::round}};
         llvm::Type *dbl = llvm::Type::getDoubleTy(context);
         if (unaryMath.count(funcName) && expr->arguments.size() == 1)
         {
@@ -1814,6 +2112,12 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Value *x = lastValue;
             if (x->getType()->isIntegerTy())
                 x = builder.CreateSIToFP(x, dbl, "tofp");
+            auto ii = mathIntrinsics.find(funcName);
+            if (ii != mathIntrinsics.end())
+            {
+                lastValue = builder.CreateUnaryIntrinsic(ii->second, x, nullptr, funcName);
+                return;
+            }
             llvm::Function *f = module->getFunction(funcName);
             if (!f)
                 f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl}, false),
@@ -1828,11 +2132,8 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             if (!a || !b) return;
             if (a->getType()->isIntegerTy()) a = builder.CreateSIToFP(a, dbl, "tofp");
             if (b->getType()->isIntegerTy()) b = builder.CreateSIToFP(b, dbl, "tofp");
-            llvm::Function *f = module->getFunction("pow");
-            if (!f)
-                f = llvm::Function::Create(llvm::FunctionType::get(dbl, {dbl, dbl}, false),
-                                           llvm::Function::ExternalLinkage, "pow", *module);
-            lastValue = builder.CreateCall(f, {a, b}, "pow");
+            // llvm.pow constant-folds and lowers to the libm call otherwise.
+            lastValue = builder.CreateBinaryIntrinsic(llvm::Intrinsic::pow, a, b, nullptr, "pow");
             return;
         }
         if (funcName == "abs" && expr->arguments.size() == 1)
@@ -1881,7 +2182,7 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                     "print/println are unavailable in --freestanding (no libc printf); "
                     "write to your own console via asm/storeByte",
-                    "", 0, 0, error::ErrorSeverity::ERROR);
+                    std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                 lastValue = nullptr; return;
             }
             llvm::Function *printfFunc = stdLibFunctions["printf"];
@@ -2101,7 +2402,7 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
     {
         errorHandler.reportError(error::ErrorCode::T006_INVALID_OPERATOR_FOR_TYPE,
                                  "Called value is not a function",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -2223,12 +2524,27 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
             args.push_back(coerceArg(av, pt));
         }
+        // Fill omitted trailing parameters with their default-value expressions.
+        if (decl)
+        {
+            for (size_t i = expr->arguments.size(); i < decl->parameters.size(); ++i)
+            {
+                if (!decl->parameters[i].defaultValue)
+                    break;
+                decl->parameters[i].defaultValue->accept(*this);
+                if (!lastValue)
+                    return;
+                llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+                args.push_back(coerceArg(lastValue, pt));
+            }
+        }
     }
     lastValue = builder.CreateCall(funcType, callee, args);
 }
 
 void IRGenerator::visitIfStmt(ast::IfStmt *stmt)
 {
+    curTok_ = stmt->token;
     llvm::Function *function = builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *mergeBlock = llvm::BasicBlock::Create(context, "ifcont");
 
@@ -2260,7 +2576,7 @@ void IRGenerator::visitIfStmt(ast::IfStmt *stmt)
         {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Condition must be convertible to a boolean",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             return;
         }
 
@@ -2304,6 +2620,7 @@ void IRGenerator::visitIfStmt(ast::IfStmt *stmt)
 
 void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
 {
+    curTok_ = stmt->token;
     // Create basic blocks
     llvm::Function *function = builder.GetInsertBlock()->getParent();
 
@@ -2353,7 +2670,7 @@ void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
         {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Condition must be convertible to a boolean",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             return;
         }
     }
@@ -2389,6 +2706,7 @@ void IRGenerator::visitWhileStmt(ast::WhileStmt *stmt)
 
 void IRGenerator::visitForStmt(ast::ForStmt *stmt)
 {
+    curTok_ = stmt->token;
     // Use direct field access instead of accessor methods
     std::string variable = stmt->variable;          // Changed from getVariable()
     ast::TypePtr variableType = stmt->variableType; // Changed from getVariableType()
@@ -2620,10 +2938,11 @@ std::string IRGenerator::inferTypeNameFromValue(llvm::Value *value)
 
 void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
 {
+    curTok_ = expr->token;
     if (!expr->right) {
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Unary expression missing operand",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -2659,7 +2978,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot apply unary minus to non-numeric type",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -2688,18 +3007,9 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             operand,
             llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(operand->getType())),
             "uw.isnull");
-        llvm::BasicBlock *nullBB = llvm::BasicBlock::Create(context, "unwrap.null", fn);
-        llvm::BasicBlock *okBB = llvm::BasicBlock::Create(context, "unwrap.ok", fn);
-        builder.CreateCondBr(isNull, nullBB, okBB);
-        builder.SetInsertPoint(nullBB);
-        llvm::Function *abortFn = module->getFunction("abort");
-        if (!abortFn)
-            abortFn = llvm::Function::Create(
-                llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
-                llvm::Function::ExternalLinkage, "abort", *module);
-        builder.CreateCall(abortFn, {});
-        builder.CreateUnreachable();
-        builder.SetInsertPoint(okBB);
+        // Trap with a located message ("panic: force-unwrap ... at f:line:col")
+        // rather than a bare abort(), so `x!!` on a nil value is diagnosable.
+        emitTrapIf(isNull, "force-unwrap '!!' of a nil value");
         lastValue = operand;
         break;
     }
@@ -2710,7 +3020,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot apply bitwise NOT to non-integer type",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -2724,7 +3034,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             if (!varPtr) {
                 errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
                                          "Variable '" + varExpr->name + "' not found",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                                         std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                 lastValue = nullptr;
                 return;
             }
@@ -2743,7 +3053,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
                 } else {
                     errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                              "Cannot increment non-numeric type",
-                                             "", 0, 0, error::ErrorSeverity::ERROR);
+                                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                     lastValue = nullptr;
                     return;
                 }
@@ -2757,7 +3067,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
                 } else {
                     errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                              "Cannot decrement non-numeric type",
-                                             "", 0, 0, error::ErrorSeverity::ERROR);
+                                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                     lastValue = nullptr;
                     return;
                 }
@@ -2772,7 +3082,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                      "Increment/decrement requires lvalue (variable)",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -2780,7 +3090,7 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
     default:
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Unhandled or unsupported unary operator",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         break;
     }
@@ -3025,6 +3335,7 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     currentFunction = function;
     // Inside the lambda only params + captures are in scope.
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     varByRef.clear();
@@ -3083,7 +3394,7 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
         {
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                      "Cannot generate default return value for lambda",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             function->eraseFromParent();
             lastValue = nullptr;
             return;
@@ -3094,7 +3405,7 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Lambda verification failed",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         function->eraseFromParent();
         lastValue = nullptr;
         return;
@@ -3268,7 +3579,7 @@ void IRGenerator::visitDictionaryExpr(ast::DictionaryExpr *expr)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Could not find malloc function",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return;
     }
 
@@ -3324,7 +3635,7 @@ void IRGenerator::visitDictionaryExpr(ast::DictionaryExpr *expr)
         {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Dictionary keys and values must have consistent types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             return;
         }
 
@@ -3394,6 +3705,7 @@ void IRGenerator::createEmptyDictionary(ast::TypePtr dictType)
 
 void IRGenerator::visitClassStmt(ast::ClassStmt *stmt)
 {
+    curTok_ = stmt->token;
     // Check if this is a generic class
     if (stmt->isGeneric())
     {
@@ -4009,6 +4321,7 @@ llvm::Type *IRGenerator::getArrayElemType(const ast::ExprPtr &expr)
 
 void IRGenerator::visitIndexExpr(ast::IndexExpr *expr)
 {
+    curTok_ = expr->token;
     // Evaluate the array base pointer and the index.
     expr->object->accept(*this);
     llvm::Value *base = lastValue;
@@ -4108,6 +4421,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     builder.SetInsertPoint(entry);
     currentFunction = function;
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     varClasses.clear();
@@ -4304,7 +4618,7 @@ void IRGenerator::visitBreakStmt(ast::BreakStmt *stmt)
                                  stmt->targetLabel.empty()
                                      ? "'break' used outside of a loop"
                                      : "'break' refers to unknown loop label '" + stmt->targetLabel + "'",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return;
     }
     if (!builder.GetInsertBlock()->getTerminator())
@@ -4321,7 +4635,7 @@ void IRGenerator::visitContinueStmt(ast::ContinueStmt *stmt)
                                  stmt->targetLabel.empty()
                                      ? "'continue' used outside of a loop"
                                      : "'continue' refers to unknown loop label '" + stmt->targetLabel + "'",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return;
     }
     if (!builder.GetInsertBlock()->getTerminator())
@@ -4500,6 +4814,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     currentFunction = function;
     currentClassName = className;
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     deferStack.clear();
@@ -4559,7 +4874,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
             {
                 errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                          "Cannot generate default return value for method",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                                         std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             }
         }
     }
@@ -4569,7 +4884,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Method verification failed",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         function->eraseFromParent();
         return;
     }
@@ -4588,6 +4903,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
 
 void IRGenerator::visitGetExpr(ast::GetExpr *expr)
 {
+    curTok_ = expr->token;
     // Qualified enum access: EnumName.Member -> integer constant.
     if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr->object))
     {
@@ -4722,12 +5038,13 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
     // If we get here, the field or method was not found
     errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
                              "Undefined property or method: " + expr->name,
-                             "", 0, 0, error::ErrorSeverity::ERROR);
+                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
     lastValue = nullptr;
 }
 
 void IRGenerator::visitSetExpr(ast::SetExpr *expr)
 {
+    curTok_ = expr->token;
     // Resolve the class of the object being assigned into.
     std::string className = getExprClassName(expr->object);
     auto it = classTypes.find(className);
@@ -4735,7 +5052,7 @@ void IRGenerator::visitSetExpr(ast::SetExpr *expr)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Cannot determine class of object in field assignment",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -4750,7 +5067,7 @@ void IRGenerator::visitSetExpr(ast::SetExpr *expr)
     {
         errorHandler.reportError(error::ErrorCode::T002_UNDEFINED_VARIABLE,
                                  "Unknown field '" + expr->name + "' on class " + className,
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -4804,7 +5121,7 @@ void IRGenerator::visitStringInterpolationExpr(ast::StringInterpolationExpr *exp
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Malformed string interpolation expression",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -4866,7 +5183,7 @@ llvm::Value *IRGenerator::convertToString(llvm::Value *value)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Cannot convert value to string - missing conversion function",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return builder.CreateGlobalString("[ERROR]", "error_str");
     }
 
@@ -4882,7 +5199,7 @@ llvm::Value *IRGenerator::concatenateStrings(const std::vector<llvm::Value *> &s
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "String concatenation function not found",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return builder.CreateGlobalString("[ERROR]", "error_str");
     }
 
@@ -4938,7 +5255,7 @@ llvm::Value *IRGenerator::implicitConversion(llvm::Value *value, llvm::Type *tar
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Cannot implicitly convert between types",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         return nullptr;
     }
 
@@ -5010,7 +5327,7 @@ llvm::Value *IRGenerator::implicitConversion(llvm::Value *value, llvm::Type *tar
     // If we get here, we don't know how to convert
     errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                              "Unsupported implicit conversion",
-                             "", 0, 0, error::ErrorSeverity::ERROR);
+                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
     return nullptr;
 }
 
@@ -5086,6 +5403,12 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
     {
         std::string name = varExpr->name; // Use direct member access instead of getName()
 
+        // Reassigning a tracked buffer variable may make it alias another
+        // buffer, so its restrict guarantee no longer holds: drop it. Accesses
+        // already emitted (with the original scope) stay correct; later accesses
+        // get no scope and conservatively may-alias.
+        bufferScopes_.erase(name);
+
         // Look up the variable. Variables are tracked in the flat namedValues
         // table (populated by variable declarations and function parameters),
         // so use lookupVariable which consults it before any Scope chain.
@@ -5093,9 +5416,36 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
 
         if (!alloca)
         {
+            // Not a local: it may be a module-level global. Store through the
+            // GlobalVariable, coercing rhs to its storage type.
+            auto gv = globalVars_.find(name);
+            if (gv != globalVars_.end())
+            {
+                llvm::Type *gty = gv->second->getValueType();
+                if (rhs->getType() != gty)
+                {
+                    if (rhs->getType()->isIntegerTy() && gty->isIntegerTy())
+                        rhs = builder.CreateIntCast(rhs, gty, true, "g.icast");
+                    else if (rhs->getType()->isPointerTy() && gty->isIntegerTy())
+                        rhs = builder.CreatePtrToInt(rhs, gty, "g.p2i");
+                    else if (rhs->getType()->isIntegerTy() && gty->isPointerTy())
+                        rhs = builder.CreateIntToPtr(rhs, gty, "g.i2p");
+                    else if (rhs->getType()->isFloatingPointTy() && gty->isFloatingPointTy())
+                        rhs = builder.CreateFPCast(rhs, gty, "g.fcast");
+                    else if (canConvertImplicitly(rhs->getType(), gty))
+                        rhs = implicitConversion(rhs, gty);
+                }
+                if (rhs->getType() == gty)
+                {
+                    builder.CreateStore(rhs, gv->second);
+                    return true;
+                }
+            }
             errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                      "Undefined variable: " + name,
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(expr->token.filename),
+                                     expr->token.line, expr->token.column,
+                                     error::ErrorSeverity::ERROR);
             lastValue = nullptr;
             return false;
         }
@@ -5144,7 +5494,7 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
             {
                 errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                          "Initializer type does not match variable type",
-                                         "", 0, 0, error::ErrorSeverity::ERROR);
+                                         std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
                 return false;
             }
         }
@@ -5330,13 +5680,120 @@ void IRGenerator::predeclareTopLevel(ast::StmtPtr ast)
     }
 }
 
+llvm::Type *IRGenerator::inferGlobalType(ast::VariableStmt *stmt)
+{
+    if (stmt->type)
+        if (llvm::Type *t = getLLVMType(stmt->type))
+            return t;
+    // No annotation: infer from the initializer's shape. Strings/arrays and any
+    // reference-shaped value are pointers; floats are double; everything else
+    // (ints, and address-returning builtins like alloc) is i64.
+    if (auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(stmt->initializer))
+    {
+        if (lit->literalType == ast::LiteralExpr::LiteralType::FLOAT)
+            return llvm::Type::getDoubleTy(context);
+        if (lit->literalType == ast::LiteralExpr::LiteralType::STRING)
+            return llvm::PointerType::get(context, 0);
+    }
+    if (std::dynamic_pointer_cast<ast::ArrayLiteralExpr>(stmt->initializer) ||
+        std::dynamic_pointer_cast<ast::ListExpr>(stmt->initializer))
+        return llvm::PointerType::get(context, 0);
+    return llvm::Type::getInt64Ty(context);
+}
+
+void IRGenerator::predeclareGlobals(ast::StmtPtr ast)
+{
+    // Collect top-level variable declarations and materialize each as a zero/
+    // null-initialized LLVM global. Their real initializers run later in
+    // __tocin_global_init (emitGlobalInit), which main() invokes first.
+    std::vector<ast::StmtPtr> *body = nullptr;
+    if (auto blk = std::dynamic_pointer_cast<ast::BlockStmt>(ast))
+        body = &blk->statements;
+    else if (auto mod = std::dynamic_pointer_cast<ast::ModuleStmt>(ast))
+        body = &mod->body;
+    if (!body)
+        return;
+
+    for (auto &s : *body)
+    {
+        auto var = std::dynamic_pointer_cast<ast::VariableStmt>(s);
+        if (!var || !var->initializer)
+            continue;
+        llvm::Type *ty = inferGlobalType(var.get());
+        auto *gv = new llvm::GlobalVariable(
+            *module, ty, /*isConstant=*/false,
+            llvm::GlobalValue::InternalLinkage,
+            llvm::Constant::getNullValue(ty), var->name);
+        globalVars_[var->name] = gv;
+        globalInitStmts_.push_back(var.get());
+    }
+    if (globalInitStmts_.empty())
+        return;
+    // Declare the init function now so main() can emit a call to it before its
+    // body is filled in by emitGlobalInit().
+    llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+        llvm::Function::ExternalLinkage, "__tocin_global_init", *module);
+}
+
+void IRGenerator::emitGlobalInit()
+{
+    if (globalInitStmts_.empty())
+        return;
+    llvm::Function *initFn = module->getFunction("__tocin_global_init");
+    if (!initFn)
+        return;
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(context, "entry", initFn);
+    llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+    llvm::Function *savedFn = currentFunction;
+    auto savedNamed = namedValues;
+    currentFunction = initFn;
+    namedValues.clear();
+    builder.SetInsertPoint(bb);
+
+    for (auto *stmt : globalInitStmts_)
+    {
+        auto git = globalVars_.find(stmt->name);
+        if (git == globalVars_.end())
+            continue;
+        lastValue = nullptr;
+        stmt->initializer->accept(*this);
+        llvm::Value *v = lastValue;
+        if (!v)
+            continue;
+        llvm::Type *gty = git->second->getValueType();
+        // Coerce the initializer value to the global's storage type.
+        if (v->getType() != gty)
+        {
+            if (v->getType()->isPointerTy() && gty->isIntegerTy())
+                v = builder.CreatePtrToInt(v, gty, "g.p2i");
+            else if (v->getType()->isIntegerTy() && gty->isPointerTy())
+                v = builder.CreateIntToPtr(v, gty, "g.i2p");
+            else if (v->getType()->isIntegerTy() && gty->isIntegerTy())
+                v = builder.CreateIntCast(v, gty, true, "g.icast");
+            else if (v->getType()->isFloatingPointTy() && gty->isFloatingPointTy())
+                v = builder.CreateFPCast(v, gty, "g.fcast");
+            else if (canConvertImplicitly(v->getType(), gty))
+                v = implicitConversion(v, gty);
+        }
+        if (v->getType() == gty)
+            builder.CreateStore(v, git->second);
+    }
+    builder.CreateRetVoid();
+
+    currentFunction = savedFn;
+    namedValues = savedNamed;
+    if (savedBlock)
+        builder.SetInsertPoint(savedBlock);
+}
+
 std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
 {
     if (!ast)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Null AST passed to IRGenerator",
-                                 "", 0, 0, error::ErrorSeverity::FATAL);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::FATAL);
         return nullptr;
     }
 
@@ -5346,9 +5803,16 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
     // Pass 1: forward-declare all top-level functions, classes and methods so
     // declaration order doesn't matter (mutual recursion, use-before-def).
     predeclareTopLevel(ast);
+    // Pass 1b: declare module-level globals (before bodies, so any function -
+    // including main - resolves references to them).
+    predeclareGlobals(ast);
 
     // Pass 2: visit the AST to generate IR
     ast->accept(*this);
+
+    // Pass 3: emit the global-initializer function body (after all functions
+    // exist, so initializers may call them). main() already calls it.
+    emitGlobalInit();
 
     // Exit the global scope
     exitScope();
@@ -5360,7 +5824,7 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
     {
         errorHandler.reportError(error::ErrorCode::C002_CODEGEN_ERROR,
                                  "Module verification failed: " + verificationErrors,
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
     }
 
     return std::move(module);
@@ -5403,6 +5867,7 @@ llvm::AllocaInst *IRGenerator::lookupVariable(const std::string &name)
  */
 void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
 {
+    curTok_ = expr->token;
     // First evaluate the right-hand side
     expr->value->accept(*this);
     llvm::Value *rhs = lastValue;
@@ -5492,7 +5957,7 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Indexed assignments (e.g., arr[i] = value) are not yet supported. "
                                  "Use array methods like 'set(index, value)' instead.",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -5503,7 +5968,7 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
         // This would handle cases like (x + y) = z, which should be an error
         errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                  "Cannot assign to expression result",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -5511,7 +5976,7 @@ void IRGenerator::visitAssignExpr(ast::AssignExpr *expr)
     // Other forms of assignment not implemented yet
     errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                              "Unsupported assignment target type",
-                             "", 0, 0, error::ErrorSeverity::ERROR);
+                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
     lastValue = nullptr;
 }
 
@@ -5565,7 +6030,7 @@ void IRGenerator::visitMoveExpr(void *expr)
         // Optionally emit a warning to the user
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Move semantics are currently simplified - value is copied, not moved",
-                                 "", 0, 0, error::ErrorSeverity::WARNING);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::WARNING);
     } else {
         lastValue = nullptr;
     }
@@ -5711,7 +6176,7 @@ llvm::Function *IRGenerator::transformAsyncFunction(ast::FunctionStmt *stmt)
     // Log diagnostic that async functions are not fully implemented
     errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                              "Async function transformation is simplified - returned as synchronous function",
-                             "", 0, 0, error::ErrorSeverity::WARNING);
+                             std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::WARNING);
     
     // For now, create a simple synchronous function
     // Full implementation would:
@@ -5741,10 +6206,11 @@ llvm::Function *IRGenerator::transformAsyncFunction(ast::FunctionStmt *stmt)
 // Visitor method implementations - basic stubs
 void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 {
+    curTok_ = expr->token;
     if (!expr->left || !expr->right) {
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Binary expression missing operands",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }
@@ -5917,7 +6383,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot add incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -5931,7 +6397,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot subtract incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -5945,13 +6411,19 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot multiply incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
 
     case lexer::TokenType::SLASH:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            // Integer division by zero is UB (SIGFPE). Trap with a message
+            // instead. Skipped in --freestanding (no runtime panic available).
+            if (!freestanding) {
+                llvm::Value *zero = llvm::ConstantInt::get(right->getType(), 0);
+                emitTrapIf(builder.CreateICmpEQ(right, zero, "divz"), "integer division by zero");
+            }
             lastValue = builder.CreateSDiv(left, right, "div");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
@@ -5959,18 +6431,22 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot divide incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
 
     case lexer::TokenType::PERCENT:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            if (!freestanding) {
+                llvm::Value *zero = llvm::ConstantInt::get(right->getType(), 0);
+                emitTrapIf(builder.CreateICmpEQ(right, zero, "modz"), "integer modulo by zero");
+            }
             lastValue = builder.CreateSRem(left, right, "mod");
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Modulo only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -5995,7 +6471,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6020,7 +6496,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6034,7 +6510,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6048,7 +6524,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6062,7 +6538,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6076,7 +6552,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Cannot compare incompatible types",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6113,7 +6589,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Bitwise AND only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6124,7 +6600,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Bitwise OR only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6135,7 +6611,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Bitwise XOR only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6146,7 +6622,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Left shift only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6157,7 +6633,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
                                      "Right shift only supported for integers",
-                                     "", 0, 0, error::ErrorSeverity::ERROR);
+                                     std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
             lastValue = nullptr;
         }
         break;
@@ -6165,7 +6641,7 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
     default:
         errorHandler.reportError(error::ErrorCode::C001_UNIMPLEMENTED_FEATURE,
                                  "Unsupported binary operator",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         break;
     }
@@ -6176,8 +6652,84 @@ void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
     if (expr->expression) expr->expression->accept(*this);
 }
 
+void IRGenerator::visitConditionalExpr(ast::ConditionalExpr *expr)
+{
+    curTok_ = expr->token;
+    // Short-circuit ternary: evaluate the condition, branch, evaluate only the
+    // taken arm, then merge with a phi. Mirrors how a C `?:` lowers.
+    if (!expr->condition || !expr->thenExpr || !expr->elseExpr)
+    {
+        lastValue = nullptr;
+        return;
+    }
+    expr->condition->accept(*this);
+    llvm::Value *condV = lastValue;
+    if (!condV) return;
+    if (condV->getType()->isPointerTy())
+        condV = builder.CreateICmpNE(
+            condV, llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(condV->getType())), "tern.nn");
+    else if (!condV->getType()->isIntegerTy(1))
+        condV = builder.CreateICmpNE(condV, llvm::ConstantInt::get(condV->getType(), 0), "tern.c");
+
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(context, "tern.then", fn);
+    llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(context, "tern.else", fn);
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "tern.end", fn);
+    builder.CreateCondBr(condV, thenBB, elseBB);
+
+    // Evaluate each arm in its block, leaving both un-terminated so type
+    // coercion can append casts before we add the branch to the merge block.
+    builder.SetInsertPoint(thenBB);
+    expr->thenExpr->accept(*this);
+    llvm::Value *thenV = lastValue;
+    llvm::BasicBlock *thenEnd = builder.GetInsertBlock();
+
+    builder.SetInsertPoint(elseBB);
+    expr->elseExpr->accept(*this);
+    llvm::Value *elseV = lastValue;
+    llvm::BasicBlock *elseEnd = builder.GetInsertBlock();
+
+    if (!thenV || !elseV) { lastValue = nullptr; return; }
+
+    // Unify arm types so the phi is well-typed: widen int<->float and reconcile
+    // int widths; otherwise keep the then-arm's type.
+    llvm::Type *resTy = thenV->getType();
+    if (thenV->getType() != elseV->getType())
+    {
+        bool tf = thenV->getType()->isFloatingPointTy(), ti = thenV->getType()->isIntegerTy();
+        bool ef = elseV->getType()->isFloatingPointTy(), ei = elseV->getType()->isIntegerTy();
+        if ((tf || ti) && (ef || ei))
+            resTy = (tf || ef) ? llvm::Type::getDoubleTy(context)
+                    : (thenV->getType()->getIntegerBitWidth() >= elseV->getType()->getIntegerBitWidth()
+                           ? thenV->getType() : elseV->getType());
+    }
+    auto coerce = [&](llvm::Value *v) -> llvm::Value * {
+        if (v->getType() == resTy) return v;
+        if (resTy->isFloatingPointTy() && v->getType()->isIntegerTy())
+            return builder.CreateSIToFP(v, resTy, "tern.i2f");
+        if (resTy->isIntegerTy() && v->getType()->isIntegerTy())
+            return builder.CreateIntCast(v, resTy, true, "tern.icast");
+        return v;
+    };
+
+    builder.SetInsertPoint(thenEnd);
+    thenV = coerce(thenV);
+    builder.CreateBr(mergeBB);
+
+    builder.SetInsertPoint(elseEnd);
+    elseV = coerce(elseV);
+    builder.CreateBr(mergeBB);
+
+    builder.SetInsertPoint(mergeBB);
+    llvm::PHINode *phi = builder.CreatePHI(resTy, 2, "tern");
+    phi->addIncoming(thenV, thenEnd);
+    phi->addIncoming(elseV, elseEnd);
+    lastValue = phi;
+}
+
 void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
 {
+    curTok_ = expr->token;
     // A bare algebraic-enum variant with no payload (e.g. `Empty`) constructs a
     // tagged value. Variants with fields are constructed via a call expression.
     auto av = adtVariants.find(expr->name);
@@ -6214,6 +6766,14 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
         lastValue = builder.CreateLoad(alloca->getAllocatedType(), alloca, expr->name);
         return;
     }
+    // Module-level global: load through the GlobalVariable (a local of the same
+    // name would have shadowed it via the alloca lookup above).
+    auto gv = globalVars_.find(expr->name);
+    if (gv != globalVars_.end())
+    {
+        lastValue = builder.CreateLoad(gv->second->getValueType(), gv->second, expr->name);
+        return;
+    }
     // A bare top-level function name used as a value is a first-class function
     // pointer (all top-level functions are pre-declared by predeclareTopLevel).
     if (llvm::Function *fn = module->getFunction(expr->name))
@@ -6226,6 +6786,7 @@ void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)
 
 void IRGenerator::visitExpressionStmt(ast::ExpressionStmt *stmt)
 {
+    curTok_ = stmt->token;
     if (stmt->expression) stmt->expression->accept(*this);
 }
 
@@ -6256,6 +6817,7 @@ void IRGenerator::visitImportStmt(ast::ImportStmt *stmt)
 
 void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
 {
+    curTok_ = stmt->token;
     if (!stmt->value)
         return;
     stmt->value->accept(*this);
@@ -6457,6 +7019,7 @@ void IRGenerator::visitMatchStmt(ast::MatchStmt *stmt)
 
 void IRGenerator::visitNewExpr(ast::NewExpr *expr)
 {
+    curTok_ = expr->token;
     // Basic new expression - allocate memory
     ast::TypePtr type = expr->getType();
     if (type)
@@ -6728,7 +7291,7 @@ void codegen::IRGenerator::visitImplStmt(ast::ImplStmt* stmt) {
     if (it == classTypes.end()) {
         errorHandler.reportError(error::ErrorCode::T031_UNDEFINED_TYPE,
                                  "impl target '" + typeName + "' is not a known type",
-                                 "", 0, 0, error::ErrorSeverity::ERROR);
+                                 std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::ERROR);
         lastValue = nullptr;
         return;
     }

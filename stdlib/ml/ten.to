@@ -1,0 +1,269 @@
+// Tocin standard library: ml/ten
+//
+// Temporal Eigenstate Networks (TEN) - a sequence model that replaces attention
+// with a spectral recurrence. Ported from the reference architecture
+// (genovotechnologies/temporal-eigenstate-networks). Each layer:
+//
+//   1. Project   x_t (layer-normed) -> K complex eigenstate drives beta_k(t)
+//   2. Evolve    c_k(t) = lambda_k * c_k(t-1) + beta_k(t)      (diagonal recurrence)
+//                with lambda_k = mag_k * e^{i*freq_k}, mag_k = sigmoid(logDecay_k)
+//   3. Mix       block-diagonal per-head coupling of the eigenstates
+//   4. Reconstruct  gated output projection back to the hidden width
+//   then residual + a SiLU MLP, both with residual connections.
+//
+// The recurrence is the same causal convolution transformers approximate with
+// O(T^2) attention, but here it is exact and O(T*K) sequential (or O(T log T)
+// via FFT, not implemented). All tensors are flat, row-major list<float>,
+// batch size 1 (one sequence of length T, hidden dim D, K eigenstates).
+// Weights are caller-owned so training/inference can manage them explicitly.
+
+// ---- activations -------------------------------------------------------------
+
+def tenSigmoid(x: float) -> float { return 1.0 / (1.0 + exp(-x)); }
+def tenSilu(x: float) -> float { return x / (1.0 + exp(-x)); }   // x * sigmoid(x)
+
+// ---- helpers -----------------------------------------------------------------
+
+// out[oOff + i] = sum_j w[i*cols + j] * x[xOff + j]   for i in [0, rows)
+// (one matrix-vector product; w is row-major rows x cols).
+def tenMatVec(w: list<float>, x: list<float>, out: list<float>,
+              rows: int, cols: int, xOff: int, oOff: int) -> int {
+    let i = 0;
+    while i < rows {
+        let acc = 0.0;
+        let j = 0;
+        while j < cols { acc = acc + w[i * cols + j] * x[xOff + j]; j = j + 1; }
+        out[oOff + i] = acc;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Per-timestep layer normalization (zero mean, unit variance) of x(T x D) into
+// out(T x D). Epsilon guards against a zero-variance row.
+def tenLayerNorm(x: list<float>, out: list<float>, T: int, D: int) -> int {
+    let t = 0;
+    while t < T {
+        let base = t * D;
+        let mean = 0.0;
+        let j = 0;
+        while j < D { mean = mean + x[base + j]; j = j + 1; }
+        mean = mean / intToFloat(D);
+        let varr = 0.0;
+        j = 0;
+        while j < D { let d = x[base + j] - mean; varr = varr + d * d; j = j + 1; }
+        varr = varr / intToFloat(D);
+        let inv = 1.0 / sqrt(varr + 0.00001);
+        j = 0;
+        while j < D { out[base + j] = (x[base + j] - mean) * inv; j = j + 1; }
+        t = t + 1;
+    }
+    return 0;
+}
+
+// ---- eigenstate parameterization + scan --------------------------------------
+
+// Default init: frequencies equally spaced over [0, 2pi), decay magnitudes near
+// exp of a value in [-3, -0.1] passed through sigmoid. Deterministic (seedable
+// jitter would be added for training). Writes mag(K) and freq(K).
+def tenEigenInit(mag: list<float>, freq: list<float>, K: int) -> int {
+    let TAU = 6.283185307179586;
+    let k = 0;
+    while k < K {
+        freq[k] = TAU * intToFloat(k) * (1.0 - 1.0 / intToFloat(K)) / intToFloat(K);
+        // logDecay spread across [-3, -0.1]; sigmoid -> a stable magnitude < 1.
+        let logDecay = -3.0 + 2.9 * intToFloat(k) / intToFloat(K);
+        mag[k] = tenSigmoid(logDecay);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The diagonal complex recurrence, sequential reference implementation:
+//   lr = mag*cos(freq), li = mag*sin(freq)
+//   cr(t) = lr*cr(t-1) - li*ci(t-1) + br(t)
+//   ci(t) = lr*ci(t-1) + li*cr(t-1) + bi(t)
+// br/bi are T x K (the projected real/imag drives); cr/ci are written T x K.
+def tenScan(br: list<float>, bi: list<float>, mag: list<float>, freq: list<float>,
+            cr: list<float>, ci: list<float>, T: int, K: int) -> int {
+    let k = 0;
+    while k < K {
+        let lr = mag[k] * cos(freq[k]);
+        let li = mag[k] * sin(freq[k]);
+        let pr = 0.0;   // c_k(t-1) real
+        let pi = 0.0;   // c_k(t-1) imag
+        let t = 0;
+        while t < T {
+            let idx = t * K + k;
+            let nr = lr * pr - li * pi + br[idx];
+            let ni = lr * pi + li * pr + bi[idx];
+            cr[idx] = nr;
+            ci[idx] = ni;
+            pr = nr;
+            pi = ni;
+            t = t + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Per-head block-diagonal mixing: the K eigenstates are split into `heads`
+// groups of Kh = K/heads; each group's real (and imag) vector is multiplied by
+// that head's Kh x Kh coupling matrix. coupling is `heads` stacked Kh x Kh
+// blocks (row-major). Mixes cr and ci in place via scratch.
+def tenMix(cr: list<float>, ci: list<float>, coupling: list<float>,
+           scratch: list<float>, T: int, K: int, heads: int) -> int {
+    let Kh = K / heads;
+    let t = 0;
+    while t < T {
+        let h = 0;
+        while h < heads {
+            let blockOff = h * Kh * Kh;
+            let vecOff = t * K + h * Kh;
+            // real part
+            let i = 0;
+            while i < Kh {
+                let acc = 0.0;
+                let j = 0;
+                while j < Kh { acc = acc + coupling[blockOff + i * Kh + j] * cr[vecOff + j]; j = j + 1; }
+                scratch[i] = acc;
+                i = i + 1;
+            }
+            i = 0; while i < Kh { cr[vecOff + i] = scratch[i]; i = i + 1; }
+            // imag part
+            i = 0;
+            while i < Kh {
+                let acc = 0.0;
+                let j = 0;
+                while j < Kh { acc = acc + coupling[blockOff + i * Kh + j] * ci[vecOff + j]; j = j + 1; }
+                scratch[i] = acc;
+                i = i + 1;
+            }
+            i = 0; while i < Kh { ci[vecOff + i] = scratch[i]; i = i + 1; }
+            h = h + 1;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+// ---- full layer forward ------------------------------------------------------
+//
+// Weights (all flat row-major, caller-owned):
+//   inProj : (2K) x D     drives = inProj * xn  (first K = real, next K = imag)
+//   outProj: D x (2K)     recon  = outProj * [cr ; ci]
+//   gateW  : D x D        gate   = sigmoid(gateW * xn - 2)   (bias -2)
+//   mlpW1  : H x D        mlp    = mlpW2 * silu(mlpW1 * xn2)
+//   mlpW2  : D x H
+// Scratch buffers (caller-allocated, sizes in the test): xn(T*D), drives(T*2K),
+//   cr(T*K), ci(T*K), eig(T*2K), recon(T*D), gate(T*D), xn2(T*D), mlpHid(T*H).
+// Reads x(T*D), writes the updated sequence into `out`(T*D).
+def tenLayerForward(x: list<float>, out: list<float>,
+                    inProj: list<float>, outProj: list<float>, gateW: list<float>,
+                    mlpW1: list<float>, mlpW2: list<float>,
+                    mag: list<float>, freq: list<float>,
+                    xn: list<float>, drives: list<float>, cr: list<float>, ci: list<float>,
+                    eig: list<float>, recon: list<float>, gate: list<float>,
+                    xn2: list<float>, mlpHid: list<float>,
+                    T: int, D: int, K: int, H: int) -> int {
+    // 1. pre-norm
+    tenLayerNorm(x, xn, T, D);
+
+    // 2. project each timestep to 2K drives, split into br(T*K)/bi(T*K).
+    // We reuse `drives`(T*2K) then copy halves into contiguous br/bi (cr/ci
+    // buffers double as br/bi input then get overwritten by the scan output).
+    let t = 0;
+    while t < T {
+        tenMatVec(inProj, xn, drives, 2 * K, D, t * D, t * 2 * K);
+        // br -> cr-slot input via a temp: we place real half into eig[..K] and
+        // imag half into eig[K..2K] as the scan's br/bi (eig reused as input).
+        let k = 0;
+        while k < K {
+            eig[t * K + k] = drives[t * 2 * K + k];              // br
+            eig[T * K + t * K + k] = drives[t * 2 * K + K + k];  // bi (second region)
+            k = k + 1;
+        }
+        t = t + 1;
+    }
+    // Scan using eig's two regions as br/bi, writing cr/ci.
+    tenScanRegions(eig, cr, ci, mag, freq, T, K);
+
+    // 3. reconstruct: recon[t] = outProj * [cr[t] ; ci[t]]  (2K -> D)
+    t = 0;
+    while t < T {
+        // pack [cr ; ci] for this timestep into the first 2K of `drives`.
+        let k = 0;
+        while k < K {
+            drives[k] = cr[t * K + k];
+            drives[K + k] = ci[t * K + k];
+            k = k + 1;
+        }
+        tenMatVec(outProj, drives, recon, D, 2 * K, 0, t * D);
+        t = t + 1;
+    }
+
+    // 4. spectral gate: g = sigmoid(gateW * xn - 2); h = g * recon; residual.
+    t = 0;
+    while t < T {
+        tenMatVec(gateW, xn, gate, D, D, t * D, t * D);
+        let j = 0;
+        while j < D {
+            let g = tenSigmoid(gate[t * D + j] - 2.0);
+            out[t * D + j] = x[t * D + j] + g * recon[t * D + j];   // residual
+            j = j + 1;
+        }
+        t = t + 1;
+    }
+
+    // 5. MLP block with its own pre-norm + residual: out += mlpW2 * silu(mlpW1 * norm(out))
+    tenLayerNorm(out, xn2, T, D);
+    t = 0;
+    while t < T {
+        tenMatVec(mlpW1, xn2, mlpHid, H, D, t * D, t * H);
+        let i = 0;
+        while i < H { mlpHid[t * H + i] = tenSilu(mlpHid[t * H + i]); i = i + 1; }
+        // reuse recon as the mlp output scratch (D per timestep)
+        tenMatVec(mlpW2, mlpHid, recon, D, H, t * H, t * D);
+        let j = 0;
+        while j < D { out[t * D + j] = out[t * D + j] + recon[t * D + j]; j = j + 1; }
+        t = t + 1;
+    }
+    return 0;
+}
+
+// Scan variant reading br/bi from two regions of one buffer `src`:
+//   br(t,k) = src[t*K + k],  bi(t,k) = src[T*K + t*K + k].
+def tenScanRegions(src: list<float>, cr: list<float>, ci: list<float>,
+                   mag: list<float>, freq: list<float>, T: int, K: int) -> int {
+    let k = 0;
+    while k < K {
+        let lr = mag[k] * cos(freq[k]);
+        let li = mag[k] * sin(freq[k]);
+        let pr = 0.0;
+        let pi = 0.0;
+        let t = 0;
+        while t < T {
+            let idx = t * K + k;
+            let nr = lr * pr - li * pi + src[idx];
+            let ni = lr * pi + li * pr + src[T * K + idx];
+            cr[idx] = nr;
+            ci[idx] = ni;
+            pr = nr;
+            pi = ni;
+            t = t + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Closed form for verification: for a unit impulse br(0)=1, bi=0 and a single
+// eigenvalue (mag, freq), c_k(t) = mag^t * (cos(t*freq) + i sin(t*freq)). This
+// is what tenScan must reproduce; the test checks agreement.
+def tenClosedFormReal(mag: float, freq: float, t: int) -> float {
+    return pow(mag, intToFloat(t)) * cos(intToFloat(t) * freq);
+}
+def tenClosedFormImag(mag: float, freq: float, t: int) -> float {
+    return pow(mag, intToFloat(t)) * sin(intToFloat(t) * freq);
+}

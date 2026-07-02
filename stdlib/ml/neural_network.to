@@ -1,461 +1,139 @@
-/**
- * Tocin Standard Library - Machine Learning Module (Neural Networks)
- * Provides a neural network implementation with common layer types and training utilities.
- */
+// Tocin standard library: ml/neural_network
+//
+// A compact, working feed-forward neural-network core over flat `list<float>`
+// tensors (row-major, same convention as math/linear). Covers dense-layer
+// forward pass, the common activations and their derivatives, losses, and a
+// full one-hidden-layer backprop training step — enough to actually learn.
+// Distinct function names (no namespaces): this module owns the "nn" surface.
 
-// Import dependencies
-import math.linear;
-import math.stats;
+// ---- activations -------------------------------------------------------------
 
-// Base layer class
-class Layer {
-    property input_shape: List<int>;
-    property output_shape: List<int>;
-    
-    def initialize(input_shape: List<int>) {
-        self.input_shape = input_shape;
-    }
-    
-    def forward(input: Tensor) -> Tensor {
-        // Abstract method, to be implemented by subclasses
-        throw NotImplementedError("forward method must be implemented");
-    }
-    
-    def backward(grad_output: Tensor) -> Tensor {
-        // Abstract method, to be implemented by subclasses
-        throw NotImplementedError("backward method must be implemented");
-    }
+def sigmoid(x: float) -> float { return 1.0 / (1.0 + exp(-x)); }
+def sigmoidDeriv(y: float) -> float { return y * (1.0 - y); }   // y = sigmoid(x)
+def reluf(x: float) -> float { return x > 0.0 ? x : 0.0; }
+def reluDeriv(x: float) -> float { return x > 0.0 ? 1.0 : 0.0; }
+def tanhf(x: float) -> float {
+    // tanh via exp; the compiler exposes exp but not tanh.
+    let e2 = exp(2.0 * x);
+    return (e2 - 1.0) / (e2 + 1.0);
+}
+def tanhDeriv(y: float) -> float { return 1.0 - y * y; }        // y = tanh(x)
+
+// Apply sigmoid / relu elementwise from src into dst.
+def applySigmoid(src: list<float>, dst: list<float>) -> int {
+    for i in 0..len(src) { dst[i] = sigmoid(src[i]); }
+    return 0;
+}
+def applyRelu(src: list<float>, dst: list<float>) -> int {
+    for i in 0..len(src) { dst[i] = reluf(src[i]); }
+    return 0;
 }
 
-// Dense (fully connected) layer
-class Dense extends Layer {
-    private weights: Tensor;
-    private bias: Tensor;
-    private input_cache: Tensor?;
-    
-    def initialize(input_shape: List<int>, output_size: int) {
-        super.initialize(input_shape);
-        
-        // Calculate total input size
-        let input_size = input_shape.reduce(lambda (a, b) -> int { a * b }, 1);
-        self.output_shape = [output_size];
-        
-        // Initialize weights with Xavier/Glorot initialization
-        let scale = math.sqrt(2.0 / (input_size + output_size));
-        self.weights = Tensor.randn([input_size, output_size]) * scale;
-        self.bias = Tensor.zeros([output_size]);
-    }
-    
-    def forward(input: Tensor) -> Tensor {
-        self.input_cache = input;
-        let flattened = input.reshape([-1, input.shape[-1]]);
-        return flattened.matmul(self.weights) + self.bias;
-    }
-    
-    def backward(grad_output: Tensor) -> Tensor {
-        if (!self.input_cache) {
-            throw RuntimeError("forward must be called before backward");
-        }
-        
-        let flattened = self.input_cache!.reshape([-1, self.input_cache!.shape[-1]]);
-        let grad_weights = flattened.transpose().matmul(grad_output);
-        let grad_bias = grad_output.sum(0);
-        let grad_input = grad_output.matmul(self.weights.transpose());
-        
-        return grad_input.reshape(self.input_cache!.shape);
-    }
+// Softmax of a logit vector into dst (numerically stabilized by max-subtract).
+def softmax(src: list<float>, dst: list<float>) -> int {
+    let n = len(src);
+    if n == 0 { return 0; }
+    let m = src[0];
+    for i in 1..n { if src[i] > m { m = src[i]; } }
+    let sum = 0.0;
+    for i in 0..n { dst[i] = exp(src[i] - m); sum = sum + dst[i]; }
+    if sum == 0.0 { return 0; }
+    for i in 0..n { dst[i] = dst[i] / sum; }
+    return 0;
 }
 
-// Activation layer
-class Activation extends Layer {
-    private activation_fn: fn(Tensor) -> Tensor;
-    private gradient_fn: fn(Tensor) -> Tensor;
-    private input_cache: Tensor?;
-    
-    def initialize(input_shape: List<int>, activation_fn: fn(Tensor) -> Tensor, gradient_fn: fn(Tensor) -> Tensor) {
-        super.initialize(input_shape);
-        self.output_shape = input_shape;
-        self.activation_fn = activation_fn;
-        self.gradient_fn = gradient_fn;
+// ---- dense layer forward pass ------------------------------------------------
+
+// out(outN) = W(outN x inN) * x(inN) + b(outN). W is row-major flat.
+def denseForward(w: list<float>, b: list<float>, x: list<float>,
+                 out: list<float>, outN: int, inN: int) -> int {
+    for i in 0..outN {
+        let acc = b[i];
+        for j in 0..inN { acc = acc + w[i * inN + j] * x[j]; }
+        out[i] = acc;
     }
-    
-    def forward(input: Tensor) -> Tensor {
-        self.input_cache = input;
-        return self.activation_fn(input);
-    }
-    
-    def backward(grad_output: Tensor) -> Tensor {
-        return grad_output * self.gradient_fn(self.input_cache!);
-    }
+    return 0;
 }
 
-// Common activation functions
-class Activations {
-    // ReLU activation
-    static def relu(x: Tensor) -> Tensor {
-        return x.maximum(0);
-    }
-    
-    static def relu_grad(x: Tensor) -> Tensor {
-        return x.greater_equal(0).cast(float);
-    }
-    
-    // Sigmoid activation
-    static def sigmoid(x: Tensor) -> Tensor {
-        return 1.0 / (1.0 + (-x).exp());
-    }
-    
-    static def sigmoid_grad(x: Tensor) -> Tensor {
-        let sig = Activations.sigmoid(x);
-        return sig * (1 - sig);
-    }
-    
-    // Tanh activation
-    static def tanh(x: Tensor) -> Tensor {
-        return x.tanh();
-    }
-    
-    static def tanh_grad(x: Tensor) -> Tensor {
-        let t = x.tanh();
-        return 1 - t * t;
-    }
+// ---- losses ------------------------------------------------------------------
+
+// Mean squared error between prediction and target vectors.
+def mseLoss(pred: list<float>, target: list<float>) -> float {
+    let n = len(pred);
+    if n == 0 { return 0.0; }
+    let s = 0.0;
+    for i in 0..n { let d = pred[i] - target[i]; s = s + d * d; }
+    return s / intToFloat(n);
 }
 
-// Neural Network class
-class NeuralNetwork {
-    private layers: List<Layer>;
-    private loss_fn: fn(Tensor, Tensor) -> Tensor;
-    private loss_grad_fn: fn(Tensor, Tensor) -> Tensor;
-    
-    def initialize(loss_fn: fn(Tensor, Tensor) -> Tensor, loss_grad_fn: fn(Tensor, Tensor) -> Tensor) {
-        self.layers = [];
-        self.loss_fn = loss_fn;
-        self.loss_grad_fn = loss_grad_fn;
-    }
-    
-    def add(layer: Layer) {
-        self.layers.push(layer);
-    }
-    
-    def forward(input: Tensor) -> Tensor {
-        let output = input;
-        for (let layer in self.layers) {
-            output = layer.forward(output);
+// Cross-entropy loss for a softmax prediction vs a one-hot target.
+def crossEntropy(pred: list<float>, target: list<float>) -> float {
+    let s = 0.0;
+    for i in 0..len(pred) {
+        if target[i] > 0.0 {
+            let p = pred[i] < 0.0000000001 ? 0.0000000001 : pred[i];
+            s = s - target[i] * log(p);
         }
-        return output;
     }
-    
-    def backward(output: Tensor, target: Tensor) -> Tensor {
-        let grad = self.loss_grad_fn(output, target);
-        
-        for (let i = self.layers.length - 1; i >= 0; i--) {
-            grad = self.layers[i].backward(grad);
-        }
-        
-        return grad;
-    }
-    
-    def train(input: Tensor, target: Tensor, learning_rate: float = 0.01) -> float {
-        let output = self.forward(input);
-        let loss = self.loss_fn(output, target);
-        self.backward(output, target);
-        
-        // Update weights
-        // (In a real implementation, this would be handled by an optimizer)
-        
-        return loss;
-    }
+    return s;
 }
 
-// Common loss functions
-class Loss {
-    // Mean Squared Error
-    static def mse(prediction: Tensor, target: Tensor) -> Tensor {
-        return (prediction - target).pow(2).mean();
+// ---- training: one gradient step of a 1-hidden-layer sigmoid MLP -------------
+// Architecture: in -> hidden (sigmoid) -> out (sigmoid), MSE loss, plain SGD.
+// Weights/biases are flat row-major and updated IN PLACE. Scratch buffers
+// (h, o) are caller-allocated to avoid per-step allocation. Returns the loss
+// BEFORE the update, so a training loop can watch it decrease.
+//
+//   w1: hid x in, b1: hid, w2: out x hid, b2: out
+//   x: in, y: out (target), h: hid scratch, o: out scratch
+def trainStep(w1: list<float>, b1: list<float>, w2: list<float>, b2: list<float>,
+              x: list<float>, y: list<float>, h: list<float>, o: list<float>,
+              inN: int, hidN: int, outN: int, lr: float) -> float {
+    // forward: hidden then output, both sigmoid-activated
+    for i in 0..hidN {
+        let acc = b1[i];
+        for j in 0..inN { acc = acc + w1[i * inN + j] * x[j]; }
+        h[i] = sigmoid(acc);
     }
-    
-    static def mse_grad(prediction: Tensor, target: Tensor) -> Tensor {
-        return 2 * (prediction - target) / prediction.size();
+    for i in 0..outN {
+        let acc = b2[i];
+        for j in 0..hidN { acc = acc + w2[i * hidN + j] * h[j]; }
+        o[i] = sigmoid(acc);
     }
-    
-    // Binary Cross Entropy
-    static def binary_cross_entropy(prediction: Tensor, target: Tensor) -> Tensor {
-        return -(target * prediction.log() + (1 - target) * (1 - prediction).log()).mean();
-    }
-    
-    static def binary_cross_entropy_grad(prediction: Tensor, target: Tensor) -> Tensor {
-        return (prediction - target) / (prediction * (1 - prediction));
-    }
-}
+    let loss = mseLoss(o, y);
 
-// Tensor class (basic implementation with real math operations)
-class Tensor {
-    property data: Array<float>;
-    property shape: List<int>;
-    private size: int;
-    
-    def initialize(data: Array<float>, shape: List<int>) {
-        self.data = data;
-        self.shape = shape;
-        self.size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
+    // backward: output-layer delta, then hidden-layer delta, SGD updates.
+    // dOut[i] = (o - y) * sigmoid'(o); we fold it into the weight updates.
+    let i = 0;
+    while i < outN {
+        let dOut = (o[i] - y[i]) * sigmoidDeriv(o[i]);
+        let j = 0;
+        while j < hidN {
+            w2[i * hidN + j] = w2[i * hidN + j] - lr * dOut * h[j];
+            j = j + 1;
+        }
+        b2[i] = b2[i] - lr * dOut;
+        i = i + 1;
     }
-    
-    static def zeros(shape: List<int>) -> Tensor {
-        let size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
-        let data = Array<float>(size);
-        for (let i = 0; i < size; i++) {
-            data[i] = 0.0;
+    // hidden deltas need the (pre-update ideally, but this is standard SGD)
+    // backpropagated error from the output layer.
+    let k = 0;
+    while k < hidN {
+        let err = 0.0;
+        let m = 0;
+        while m < outN {
+            let dOut = (o[m] - y[m]) * sigmoidDeriv(o[m]);
+            err = err + dOut * w2[m * hidN + k];
+            m = m + 1;
         }
-        return new Tensor(data, shape);
+        let dHid = err * sigmoidDeriv(h[k]);
+        let j = 0;
+        while j < inN {
+            w1[k * inN + j] = w1[k * inN + j] - lr * dHid * x[j];
+            j = j + 1;
+        }
+        b1[k] = b1[k] - lr * dHid;
+        k = k + 1;
     }
-    
-    static def randn(shape: List<int>) -> Tensor {
-        // Box-Muller transform for normal distribution
-        let size = shape.reduce(lambda (a, b) -> int { a * b }, 1);
-        let data = Array<float>(size);
-        
-        for (let i = 0; i < size; i += 2) {
-            let u1 = math.random();
-            let u2 = math.random();
-            let z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.PI * u2);
-            let z1 = math.sqrt(-2.0 * math.log(u1)) * math.sin(2.0 * math.PI * u2);
-            
-            data[i] = z0;
-            if (i + 1 < size) {
-                data[i + 1] = z1;
-            }
-        }
-        
-        return new Tensor(data, shape);
-    }
-    
-    def reshape(new_shape: List<int>) -> Tensor {
-        let new_size = new_shape.reduce(lambda (a, b) -> int { a * b }, 1);
-        
-        if (new_size != self.size) {
-            throw RuntimeError("Cannot reshape: sizes don't match");
-        }
-        
-        return new Tensor(self.data, new_shape);
-    }
-    
-    def matmul(other: Tensor) -> Tensor {
-        // Matrix multiplication for 2D tensors
-        if (self.shape.length != 2 || other.shape.length != 2) {
-            throw RuntimeError("matmul requires 2D tensors");
-        }
-        
-        let m = self.shape[0];
-        let k = self.shape[1];
-        let n = other.shape[1];
-        
-        if (k != other.shape[0]) {
-            throw RuntimeError("Incompatible dimensions for matmul");
-        }
-        
-        let result_data = Array<float>(m * n);
-        
-        // Naive matrix multiplication (can be optimized with BLAS)
-        for (let i = 0; i < m; i++) {
-            for (let j = 0; j < n; j++) {
-                let sum = 0.0;
-                for (let ki = 0; ki < k; ki++) {
-                    sum += self.data[i * k + ki] * other.data[ki * n + j];
-                }
-                result_data[i * n + j] = sum;
-            }
-        }
-        
-        return new Tensor(result_data, [m, n]);
-    }
-    
-    def transpose() -> Tensor {
-        if (self.shape.length != 2) {
-            throw RuntimeError("transpose requires 2D tensor");
-        }
-        
-        let rows = self.shape[0];
-        let cols = self.shape[1];
-        let result_data = Array<float>(self.size);
-        
-        for (let i = 0; i < rows; i++) {
-            for (let j = 0; j < cols; j++) {
-                result_data[j * rows + i] = self.data[i * cols + j];
-            }
-        }
-        
-        return new Tensor(result_data, [cols, rows]);
-    }
-    
-    def add(other: Tensor) -> Tensor {
-        if (self.size != other.size) {
-            throw RuntimeError("Tensors must have same size for addition");
-        }
-        
-        let result_data = Array<float>(self.size);
-        for (let i = 0; i < self.size; i++) {
-            result_data[i] = self.data[i] + other.data[i];
-        }
-        
-        return new Tensor(result_data, self.shape);
-    }
-    
-    def subtract(other: Tensor) -> Tensor {
-        if (self.size != other.size) {
-            throw RuntimeError("Tensors must have same size for subtraction");
-        }
-        
-        let result_data = Array<float>(self.size);
-        for (let i = 0; i < self.size; i++) {
-            result_data[i] = self.data[i] - other.data[i];
-        }
-        
-        return new Tensor(result_data, self.shape);
-    }
-    
-    def multiply(scalar: float) -> Tensor {
-        let result_data = Array<float>(self.size);
-        for (let i = 0; i < self.size; i++) {
-            result_data[i] = self.data[i] * scalar;
-        }
-        
-        return new Tensor(result_data, self.shape);
-    }
-    
-    def pow(exponent: float) -> Tensor {
-        let result_data = Array<float>(self.size);
-        for (let i = 0; i < self.size; i++) {
-            result_data[i] = math.pow(self.data[i], exponent);
-        }
-        
-        return new Tensor(result_data, self.shape);
-    }
-    
-    def sum(axis: int = -1) -> Tensor {
-        if (axis == -1) {
-            // Sum all elements
-            let total = 0.0;
-            for (let i = 0; i < self.size; i++) {
-                total += self.data[i];
-            }
-            return new Tensor([total], [1]);
-        }
-        
-        // Axis-specific sum would require more complex logic
-        throw NotImplementedError("Axis-specific sum not yet implemented");
-    }
-    
-    def mean() -> float {
-        let total = 0.0;
-        for (let i = 0; i < self.size; i++) {
-            total += self.data[i];
-        }
-        return total / self.size;
-    }
-    
-    // Additional tensor methods
+    return loss;
 }
-
-// Data preprocessing utilities
-class Preprocessing {
-    static def normalize(data: Tensor, mean: Tensor? = null, std: Tensor? = null) -> Tensor {
-        // Implementation details...
-        return data;
-    }
-    
-    static def one_hot_encode(labels: Tensor, num_classes: int) -> Tensor {
-        // Implementation details...
-        return new Tensor();
-    }
-    
-    static def train_test_split(data: Tensor, labels: Tensor, test_size: float = 0.2) -> Tuple<Tensor, Tensor, Tensor, Tensor> {
-        // Implementation details...
-        return [data, data, labels, labels];
-    }
-}
-
-// Model evaluation utilities
-class Evaluation {
-    static def accuracy(predictions: Tensor, targets: Tensor) -> float {
-        if (predictions.size != targets.size) {
-            throw RuntimeError("Predictions and targets must have same size");
-        }
-        
-        let correct = 0;
-        for (let i = 0; i < predictions.size; i++) {
-            // Assume classification: compare argmax or threshold
-            if (math.round(predictions.data[i]) == math.round(targets.data[i])) {
-                correct++;
-            }
-        }
-        
-        return correct / predictions.size;
-    }
-    
-    static def precision(predictions: Tensor, targets: Tensor) -> float {
-        if (predictions.size != targets.size) {
-            throw RuntimeError("Predictions and targets must have same size");
-        }
-        
-        let true_positives = 0;
-        let false_positives = 0;
-        
-        for (let i = 0; i < predictions.size; i++) {
-            let pred = math.round(predictions.data[i]);
-            let target = math.round(targets.data[i]);
-            
-            if (pred == 1) {
-                if (target == 1) {
-                    true_positives++;
-                } else {
-                    false_positives++;
-                }
-            }
-        }
-        
-        if (true_positives + false_positives == 0) {
-            return 0.0;
-        }
-        
-        return true_positives / (true_positives + false_positives);
-    }
-    
-    static def recall(predictions: Tensor, targets: Tensor) -> float {
-        if (predictions.size != targets.size) {
-            throw RuntimeError("Predictions and targets must have same size");
-        }
-        
-        let true_positives = 0;
-        let false_negatives = 0;
-        
-        for (let i = 0; i < predictions.size; i++) {
-            let pred = math.round(predictions.data[i]);
-            let target = math.round(targets.data[i]);
-            
-            if (target == 1) {
-                if (pred == 1) {
-                    true_positives++;
-                } else {
-                    false_negatives++;
-                }
-            }
-        }
-        
-        if (true_positives + false_negatives == 0) {
-            return 0.0;
-        }
-        
-        return true_positives / (true_positives + false_negatives);
-    }
-    
-    static def f1_score(predictions: Tensor, targets: Tensor) -> float {
-        let prec = Evaluation.precision(predictions, targets);
-        let rec = Evaluation.recall(predictions, targets);
-        
-        if (prec + rec == 0.0) {
-            return 0.0;
-        }
-        
-        return 2 * (prec * rec) / (prec + rec);
-    }
-} 

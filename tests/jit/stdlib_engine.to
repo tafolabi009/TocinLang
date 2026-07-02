@@ -1,0 +1,43 @@
+import std.testing;
+import math.basic;
+import game.engine;
+
+def main() -> int {
+    testBegin();
+    let w = worldNew(16);
+    let a = spawnEntity(w, 0.0, 0.0, 1.0, 2.0);      // moving right+up
+    let b = spawnEntity(w, 10.0, 10.0, 0.0, 0.0);    // static
+    checkEq("two entities", entityCount(w), 2);
+    checkEq("ids", a + b, 1);                    // 0 + 1
+    check("start x=0", approxEqTol(getX(w, a), 0.0, 0.001));
+
+    // step 1 second: a moves to (1, 2)
+    step(w, 1.0);
+    check("x after step", approxEqTol(getX(w, a), 1.0, 0.001));
+    check("y after step", approxEqTol(getY(w, a), 2.0, 0.001));
+    check("static stays", approxEqTol(getX(w, b), 10.0, 0.001));
+
+    // gravity: apply ay=-10 for 1s, then vy should drop by 10
+    applyForce(w, 0.0, -10.0, 1.0);
+    check("gravity vy", approxEqTol(getVY(w, a), 2.0 - 10.0, 0.001));
+
+    // collision: two boxes of size 2 at same spot overlap
+    let c = spawnEntity(w, 5.0, 5.0, 0.0, 0.0);
+    let d = spawnEntity(w, 5.5, 5.5, 0.0, 0.0);
+    checkEq("collide", entitiesCollide(w, c, d, 2.0), 1);
+    let e = spawnEntity(w, 100.0, 100.0, 0.0, 0.0);
+    checkEq("no collide", entitiesCollide(w, c, e, 2.0), 0);
+
+    // kill removes from simulation
+    kill(w, a);
+    checkEq("killed", isAlive(w, a), 0);
+
+    // fixed timestep math: 0.05s frame at 60Hz (dt=0.01667) -> 2 or 3 steps
+    checkEq("fixed steps", fixedSteps(0.05, 0.01667), 2);
+
+    // AABB direct
+    checkEq("aabb overlap", aabbOverlap(0.0,0.0,2.0,2.0, 1.0,1.0,2.0,2.0), 1);
+    checkEq("aabb apart", aabbOverlap(0.0,0.0,1.0,1.0, 5.0,5.0,1.0,1.0), 0);
+
+    return testSummary();
+}

@@ -26,6 +26,7 @@ GCC=gcc
 OUTDIR=""
 RUNTIME=""
 GC=""
+STATIC=0
 EXTRA="-lm -lpthread -lstdc++"
 # KEEP_SYS=1 keeps the toolchain's original -L search dirs and relies on the
 # target's system libs (libc/libgcc_s/...) at link time - correct on Linux/macOS,
@@ -38,6 +39,7 @@ KEEP_SYS=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --gcc) GCC="$2"; shift ;;
+        --static) STATIC=1 ;;
         --out-dir) OUTDIR="$2"; shift ;;
         --runtime) RUNTIME="$2"; shift ;;
         --gc) GC="$2"; shift ;;
@@ -69,7 +71,9 @@ printf 'int main(void){return 0;}\n' > "$WORK/td.c"
 
 # Capture the real linker invocation. `gcc -v` prints the collect2/ld line,
 # space-separated and unquoted (toolchain paths contain no spaces).
-LINKLINE="$("$GCC" -v "$WORK/td.o" -o "$WORK/td_out" "$RUNTIME" ${GC:+$GC} $EXTRA 2>&1 \
+STATIC_FLAG=""
+[ "$STATIC" = 1 ] && STATIC_FLAG="-static"
+LINKLINE="$("$GCC" -v $STATIC_FLAG "$WORK/td.o" -o "$WORK/td_out" "$RUNTIME" ${GC:+$GC} $EXTRA 2>&1 \
             | grep -E '/collect2|[/\\]ld(\.exe)?( |$)|[/\\]ld\.lld' | tail -1 || true)"
 [ -n "$LINKLINE" ] || { echo "make-link-recipe: could not capture the linker line from '$GCC -v'" >&2; exit 1; }
 

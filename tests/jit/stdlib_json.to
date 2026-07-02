@@ -1,0 +1,43 @@
+import std.testing;
+import std.json;
+
+def main() -> int {
+    testBegin();
+    // parse a nested object
+    let doc = jsonParse("{\"name\":\"Tocin\",\"version\":5,\"stable\":true,\"tags\":[\"fast\",\"typed\"],\"meta\":{\"stars\":100}}");
+    checkEq("root is object", jsonType(doc), 5);
+    checkStrEq("name", jsonGetString(doc, "name", "?"), "Tocin");
+    checkEq("version", jsonGetInt(doc, "version", -1), 5);
+    let stable = jsonObjectGet(doc, "stable");
+    checkEq("bool", jsonAsBool(stable), 1);
+    // array
+    let tags = jsonObjectGet(doc, "tags");
+    checkEq("array type", jsonType(tags), 4);
+    checkEq("array len", jsonArrayLen(tags), 2);
+    checkStrEq("tag[0]", jsonAsString(jsonArrayGet(tags, 0)), "fast");
+    checkStrEq("tag[1]", jsonAsString(jsonArrayGet(tags, 1)), "typed");
+    // nested object
+    let meta = jsonObjectGet(doc, "meta");
+    checkEq("nested int", jsonGetInt(meta, "stars", -1), 100);
+    // number as float
+    let f = jsonParse("3.14");
+    check("float parse", jsonAsFloat(f) > 3.13);
+    check("float parse2", jsonAsFloat(f) < 3.15);
+    // missing key -> default
+    checkEq("missing default", jsonGetInt(doc, "nope", 999), 999);
+    // round-trip: stringify then re-parse
+    let s2 = jsonStringify(doc);
+    let doc2 = jsonParse(s2);
+    checkStrEq("roundtrip name", jsonGetString(doc2, "name", "?"), "Tocin");
+    checkEq("roundtrip version", jsonGetInt(doc2, "version", -1), 5);
+    // escape
+    let esc = jsonEscape("a\nb");  // real newline -> backslash-n
+    checkEq("escape len", strLen(esc), 4);
+    checkEq("escape slash", charAt(esc, 1), 92);
+    checkEq("escape n", charAt(esc, 2), 110);
+    // array of numbers
+    let nums = jsonParse("[10, 20, 30]");
+    checkEq("nums len", jsonArrayLen(nums), 3);
+    checkEq("nums[1]", jsonAsInt(jsonArrayGet(nums, 1)), 20);
+    return testSummary();
+}
