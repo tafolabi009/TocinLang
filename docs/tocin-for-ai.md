@@ -391,6 +391,8 @@ These are `.to` files under `stdlib/std/`, resolved by `import std.<name>;`. Imp
 - **`import std.math;`** — `gcd(a,b)`, `lcm(a,b)`, `factorial(n)`, `clamp(x,lo,hi)`, `isPrime(n)`. (Note: `abs/min/max/sqrt/pow` are compiler builtins, not in this module.)
 - **`import std.list;`** — `listSum(xs)`, `listMax(xs)`, `listMin(xs)`, `listContains(xs,target)`, `listReverse(xs)` (mutates in place).
 - **`import std.linq;`** — LINQ-style over `list<int>`: reductions `reduceSum`, `reduceProduct`, `count`, `countGreater(xs,t)`, `indexOf(xs,t)`, `allGreater(xs,t)`, `anyGreater(xs,t)`, `aggregate(xs,seed,op)` (op: 0=add,1=mul,2=max,3=min); and "into a destination list" transforms `mapScaleInto(dst,src,k)`, `mapAddInto(dst,src,k)`, `filterGreaterInto(dst,src,t)` (returns count written).
+- **`import std.strings;`** — string processing built on the char builtins: `strTrim(s)` / `strTrimLeft` / `strTrimRight`, `strRepeat(s,n)`, `strPadLeft(s,width,padChar)` / `strPadRight`, `strReverse(s)`, `strCountChar(s,ch)`, `strLastIndexOf(s,ch)`, `strIsInt(s)`, `strParseIntOr(s,fallback)` (checked parse), `strEqualsIgnoreCase(a,b)`. All return strings or `int`; char args are ASCII codes.
+- **`import std.testing;`** — a Tocin-native test harness: `testBegin()`, `check(name, cond)`, `checkEq(name, got, want)`, `checkStrEq(name, got, want)`, then `return testSummary();` (prints `N passed, M failed` and returns 0 if all passed, 1 otherwise — use it as `main`'s exit code).
 
 ```tocin
 import std.linq;
@@ -803,13 +805,16 @@ This loop uses boolean flags for illustration, but `break`/`continue` (including
 21. **`async`/`await` is thin.** It parses and wraps functions but is not a substitute for real concurrency — use goroutines + channels.
 22. **Non-blocking `select` (with `default`) is racy** if you expect a just-spawned goroutine to have produced a value. For determinism, use a blocking `select` (omit `default`) or pre-seed the channel.
 23. **Verifying exit codes:** the exit code is `main`'s return value. If you check `$?` in a shell, **don't pipe `tocin --run` through `head`/`tail`** — you'll read the pager's exit code, not the program's.
+24. **Module-level globals work.** A top-level `let`/`const` is a real global: mutable, shared across functions, and initialized before `main` (even non-constant initializers like `let buf = alloc(1024);` or computed values). Reads/writes from any function see the same storage. (Imported top-level declarations become globals too — §5.2.)
+25. **Runtime panics, not UB.** Integer division/modulo by zero, out-of-bounds `arr[i]`, and force-unwrap `!!` of `None` abort with `panic: <reason> at file:line:col` (exit 134) instead of a silent crash. The div/mod check is free when the divisor is a literal. (Suppressed under `--freestanding`.)
 
 ---
 
 ## 9. Capabilities and limitations summary
 
 **Tocin can today:**
-- Compile to native code via LLVM (default `-O2`, ~9% of C on compute), or JIT-run directly (`--run`).
+- Compile to native code via LLVM (default `-O2`; use `-O3 --native` for maximum speed — in a 12-kernel/8-language benchmark Tocin lands in the C/C++/Rust cluster, ahead of Go/Java/Node), or JIT-run directly (`--run`).
+- **Module-level global variables** (mutable, initialized before `main`), and **runtime panics** with located messages for division-by-zero, out-of-bounds indexing, and nil force-unwrap (instead of undefined behavior).
 - **Freestanding / kernel mode** (`--freestanding`): emit a relocatable object with no libc/GC/runtime for OS/kernel/bare-metal. Only arithmetic, control flow, functions, raw memory (`alloc`/`memcpy`/`memset`/`ptrAdd`/`load*`/`store*`), **volatile MMIO access (`volatileLoad8/16/32/64`, `volatileStore8/16/32/64`), memory barriers (`fence()`)**, char predicates, and **inline assembly — both `asm("cli")` and the constrained form `asm(tmpl, constraints, args...)` for port I/O, MSRs, and control registers** — are available; `print`/strings/collections/file-I/O/channels are compile errors. The object exports `main`; link it with `-nostdlib` and provide `__tocin_alloc` if you use `alloc`.
 - **Opt-in borrow checker** (`--borrow-check`, OFF by default): adds Rust-like move / use-after-move enforcement on owned (class/struct) values. Binding to another variable, passing by value, or returning a value MOVES it; using a moved value is a `B001` error; reassignment revives; copy types (int/float/bool/string) are never moved. WITHOUT the flag, class instances alias freely (GC-managed) — so only enable it for code you want move-checked. Move-only for now (no `&`/`&mut` borrows or lifetimes yet).
 - Functions (incl. mutual recursion, forward references, inferred return types, **nested `def`** — non-capturing), first-class function values and function-typed parameters, and **capturing closures** (single-expression lambdas that capture enclosing locals by value and can escape their scope).
