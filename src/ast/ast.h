@@ -35,6 +35,7 @@ namespace ast
     class BinaryExpr;
     class GroupingExpr;
     class LiteralExpr;
+    class ConditionalExpr;
     class UnaryExpr;
     class VariableExpr;
     class AssignExpr;
@@ -91,6 +92,9 @@ namespace ast
         virtual void visitBinaryExpr(BinaryExpr *expr) = 0;
         virtual void visitGroupingExpr(GroupingExpr *expr) = 0;
         virtual void visitLiteralExpr(LiteralExpr *expr) = 0;
+        // Non-pure so existing visitors need no change; the two that matter
+        // (IR generation, type checking) override it. Default: no-op.
+        virtual void visitConditionalExpr(ConditionalExpr *expr) {}
         virtual void visitUnaryExpr(UnaryExpr *expr) = 0;
         virtual void visitVariableExpr(VariableExpr *expr) = 0;
         virtual void visitAssignExpr(AssignExpr *expr) = 0;
@@ -285,6 +289,7 @@ namespace ast
         TypePtr type;
         bool isMoved;
         bool isVariadic = false; // trailing `name: T...` parameter (collects rest args into an array)
+        ExprPtr defaultValue = nullptr; // `name: T = expr` — used when the caller omits this arg
     };
 
     // Base class for expressions.
@@ -330,6 +335,24 @@ namespace ast
         void accept(Visitor &visitor) override;
         ExprPtr expression;
         TypePtr getType() const override { return expression ? expression->getType() : nullptr; }
+    };
+
+    /**
+     * @brief Conditional (ternary) expression: `cond ? thenExpr : elseExpr`.
+     * Short-circuits: only the taken branch is evaluated.
+     */
+    class ConditionalExpr : public Expression
+    {
+    public:
+        ConditionalExpr(const lexer::Token &token, ExprPtr condition,
+                        ExprPtr thenExpr, ExprPtr elseExpr)
+            : Expression(token), condition(std::move(condition)),
+              thenExpr(std::move(thenExpr)), elseExpr(std::move(elseExpr)) {}
+        void accept(Visitor &visitor) override;
+        ExprPtr condition;
+        ExprPtr thenExpr;
+        ExprPtr elseExpr;
+        TypePtr getType() const override { return thenExpr ? thenExpr->getType() : nullptr; }
     };
 
     /**
@@ -1079,6 +1102,7 @@ namespace ast
     inline void BinaryExpr::accept(Visitor &visitor) { visitor.visitBinaryExpr(this); }
     inline void GroupingExpr::accept(Visitor &visitor) { visitor.visitGroupingExpr(this); }
     inline void LiteralExpr::accept(Visitor &visitor) { visitor.visitLiteralExpr(this); }
+    inline void ConditionalExpr::accept(Visitor &visitor) { visitor.visitConditionalExpr(this); }
     inline void UnaryExpr::accept(Visitor &visitor) { visitor.visitUnaryExpr(this); }
     inline void VariableExpr::accept(Visitor &visitor) { visitor.visitVariableExpr(this); }
     inline void AssignExpr::accept(Visitor &visitor) { visitor.visitAssignExpr(this); }

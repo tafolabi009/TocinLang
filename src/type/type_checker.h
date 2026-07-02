@@ -71,6 +71,7 @@ namespace type_checker
         void visitBinaryExpr(ast::BinaryExpr *expr) override;
         void visitGroupingExpr(ast::GroupingExpr *expr) override;
         void visitLiteralExpr(ast::LiteralExpr *expr) override;
+        void visitConditionalExpr(ast::ConditionalExpr *expr) override;
         void visitUnaryExpr(ast::UnaryExpr *expr) override;
         void visitVariableExpr(ast::VariableExpr *expr) override;
         void visitAssignExpr(ast::AssignExpr *expr) override;
@@ -194,6 +195,7 @@ namespace type_checker
         // functions with a trailing variadic parameter (arity-checked loosely).
         std::unordered_set<std::string> knownModules_;
         std::unordered_set<std::string> variadicFns_;
+        std::unordered_map<std::string, size_t> fnMinArgs_;   // fn name -> required (non-default) arg count
         // Register an enum's members/variants (shared by pass-1 hoisting and
         // visitEnumStmt so forward references to variants resolve).
         void registerEnum(ast::EnumStmt *stmt);

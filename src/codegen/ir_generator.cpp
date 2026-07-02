@@ -2483,6 +2483,20 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
             args.push_back(coerceArg(av, pt));
         }
+        // Fill omitted trailing parameters with their default-value expressions.
+        if (decl)
+        {
+            for (size_t i = expr->arguments.size(); i < decl->parameters.size(); ++i)
+            {
+                if (!decl->parameters[i].defaultValue)
+                    break;
+                decl->parameters[i].defaultValue->accept(*this);
+                if (!lastValue)
+                    return;
+                llvm::Type *pt = i < funcType->getNumParams() ? funcType->getParamType(i) : nullptr;
+                args.push_back(coerceArg(lastValue, pt));
+            }
+        }
     }
     lastValue = builder.CreateCall(funcType, callee, args);
 }
@@ -6595,6 +6609,81 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 void IRGenerator::visitGroupingExpr(ast::GroupingExpr *expr)
 {
     if (expr->expression) expr->expression->accept(*this);
+}
+
+void IRGenerator::visitConditionalExpr(ast::ConditionalExpr *expr)
+{
+    curTok_ = expr->token;
+    // Short-circuit ternary: evaluate the condition, branch, evaluate only the
+    // taken arm, then merge with a phi. Mirrors how a C `?:` lowers.
+    if (!expr->condition || !expr->thenExpr || !expr->elseExpr)
+    {
+        lastValue = nullptr;
+        return;
+    }
+    expr->condition->accept(*this);
+    llvm::Value *condV = lastValue;
+    if (!condV) return;
+    if (condV->getType()->isPointerTy())
+        condV = builder.CreateICmpNE(
+            condV, llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(condV->getType())), "tern.nn");
+    else if (!condV->getType()->isIntegerTy(1))
+        condV = builder.CreateICmpNE(condV, llvm::ConstantInt::get(condV->getType(), 0), "tern.c");
+
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(context, "tern.then", fn);
+    llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(context, "tern.else", fn);
+    llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "tern.end", fn);
+    builder.CreateCondBr(condV, thenBB, elseBB);
+
+    // Evaluate each arm in its block, leaving both un-terminated so type
+    // coercion can append casts before we add the branch to the merge block.
+    builder.SetInsertPoint(thenBB);
+    expr->thenExpr->accept(*this);
+    llvm::Value *thenV = lastValue;
+    llvm::BasicBlock *thenEnd = builder.GetInsertBlock();
+
+    builder.SetInsertPoint(elseBB);
+    expr->elseExpr->accept(*this);
+    llvm::Value *elseV = lastValue;
+    llvm::BasicBlock *elseEnd = builder.GetInsertBlock();
+
+    if (!thenV || !elseV) { lastValue = nullptr; return; }
+
+    // Unify arm types so the phi is well-typed: widen int<->float and reconcile
+    // int widths; otherwise keep the then-arm's type.
+    llvm::Type *resTy = thenV->getType();
+    if (thenV->getType() != elseV->getType())
+    {
+        bool tf = thenV->getType()->isFloatingPointTy(), ti = thenV->getType()->isIntegerTy();
+        bool ef = elseV->getType()->isFloatingPointTy(), ei = elseV->getType()->isIntegerTy();
+        if ((tf || ti) && (ef || ei))
+            resTy = (tf || ef) ? llvm::Type::getDoubleTy(context)
+                    : (thenV->getType()->getIntegerBitWidth() >= elseV->getType()->getIntegerBitWidth()
+                           ? thenV->getType() : elseV->getType());
+    }
+    auto coerce = [&](llvm::Value *v) -> llvm::Value * {
+        if (v->getType() == resTy) return v;
+        if (resTy->isFloatingPointTy() && v->getType()->isIntegerTy())
+            return builder.CreateSIToFP(v, resTy, "tern.i2f");
+        if (resTy->isIntegerTy() && v->getType()->isIntegerTy())
+            return builder.CreateIntCast(v, resTy, true, "tern.icast");
+        return v;
+    };
+
+    builder.SetInsertPoint(thenEnd);
+    thenV = coerce(thenV);
+    builder.CreateBr(mergeBB);
+
+    builder.SetInsertPoint(elseEnd);
+    elseV = coerce(elseV);
+    builder.CreateBr(mergeBB);
+
+    builder.SetInsertPoint(mergeBB);
+    llvm::PHINode *phi = builder.CreatePHI(resTy, 2, "tern");
+    phi->addIncoming(thenV, thenEnd);
+    phi->addIncoming(elseV, elseEnd);
+    lastValue = phi;
 }
 
 void IRGenerator::visitVariableExpr(ast::VariableExpr *expr)

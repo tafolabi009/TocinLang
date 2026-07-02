@@ -111,6 +111,7 @@ namespace codegen
         void visitBinaryExpr(ast::BinaryExpr *expr) override;
         void visitGroupingExpr(ast::GroupingExpr *expr) override;
         void visitLiteralExpr(ast::LiteralExpr *expr) override;
+        void visitConditionalExpr(ast::ConditionalExpr *expr) override;
         void visitUnaryExpr(ast::UnaryExpr *expr) override;
         void visitVariableExpr(ast::VariableExpr *expr) override;
         void visitAssignExpr(ast::AssignExpr *expr) override;

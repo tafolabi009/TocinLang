@@ -88,6 +88,7 @@ namespace parser
         ast::StmtPtr throwStmt();
         ast::ExprPtr expression();
         ast::ExprPtr assignment();
+        ast::ExprPtr ternary();
         ast::ExprPtr elvis();
         ast::ExprPtr orExpr();
         ast::ExprPtr andExpr();
@@ -119,6 +120,7 @@ namespace parser
         lexer::Token previous() const;
         bool isAtEnd() const;
         lexer::Token consume(lexer::TokenType type, const std::string &message);
+        void consumeGenericClose(const std::string &message); // close type args, splitting >>
         void error(const lexer::Token &token, const std::string &message);
 
         std::vector<lexer::Token> tokens;

@@ -590,6 +590,12 @@ namespace type_checker
             globalEnv_->define(fn->name, functionTypeOf(fn), true);
             if (!fn->parameters.empty() && fn->parameters.back().isVariadic)
                 variadicFns_.insert(fn->name);
+            // Minimum required args = params with no default (defaults are
+            // trailing). Callers may omit the defaulted ones.
+            size_t minArgs = 0;
+            for (const auto &p : fn->parameters)
+                if (!p.defaultValue) minArgs++;
+            fnMinArgs_[fn->name] = minArgs;
         }
         else if (auto cls = dynamic_cast<ast::ClassStmt *>(stmt))
         {
@@ -865,12 +871,23 @@ namespace type_checker
                 calleeName = var->name;
                 variadic = variadicFns_.count(var->name) > 0;
             }
-            bool arityOk = variadic ? (nArgs + 1 >= nParams) : (nArgs == nParams);
+            // Defaulted trailing params make some args optional: accept any
+            // count in [minArgs, nParams] (or >= minArgs for variadic).
+            size_t minArgs = nParams;
+            if (!calleeName.empty())
+            {
+                auto mit = fnMinArgs_.find(calleeName);
+                if (mit != fnMinArgs_.end()) minArgs = mit->second;
+            }
+            bool arityOk = variadic ? (nArgs + 1 >= minArgs)
+                                    : (nArgs >= minArgs && nArgs <= nParams);
             if (!arityOk)
             {
                 std::string expected = variadic
-                                           ? "at least " + std::to_string(nParams - 1)
-                                           : std::to_string(nParams);
+                                           ? "at least " + std::to_string(minArgs)
+                                           : (minArgs == nParams
+                                                  ? std::to_string(nParams)
+                                                  : std::to_string(minArgs) + " to " + std::to_string(nParams));
                 errorHandler_.reportError(
                     error::ErrorCode::T007_INVALID_FUNCTION_CALL,
                     "Function " +
@@ -1428,6 +1445,34 @@ namespace type_checker
             expr->expression->accept(*this);
         else
             currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+    }
+
+    void TypeChecker::visitConditionalExpr(ast::ConditionalExpr *expr)
+    {
+        // cond ? a : b. Check all three; the result type is the common type of
+        // the two arms (widening int+float -> float), else one known arm, else
+        // unknown. The condition is checked but not constrained (any nonzero is
+        // truthy, matching if/while).
+        if (expr->condition)
+            expr->condition->accept(*this);
+        ast::TypePtr thenT, elseT;
+        if (expr->thenExpr) { expr->thenExpr->accept(*this); thenT = currentType_; }
+        if (expr->elseExpr) { expr->elseExpr->accept(*this); elseT = currentType_; }
+        if (thenT && elseT && !isUnknown(thenT) && !isUnknown(elseT))
+        {
+            if (sameType(thenT, elseT))
+                currentType_ = canonicalize(thenT);
+            else if (isNumeric(thenT) && isNumeric(elseT))
+                currentType_ = makeBasic(ast::TypeKind::FLOAT);
+            else
+                currentType_ = makeBasic(ast::TypeKind::UNKNOWN);
+        }
+        else
+        {
+            currentType_ = (thenT && !isUnknown(thenT)) ? canonicalize(thenT)
+                          : (elseT && !isUnknown(elseT)) ? canonicalize(elseT)
+                          : makeBasic(ast::TypeKind::UNKNOWN);
+        }
     }
 
     void TypeChecker::visitVariableExpr(ast::VariableExpr *expr)

@@ -275,6 +275,10 @@ namespace parser
             }
             else if (check(lexer::TokenType::IDENTIFIER))
             {
+                // `property name: Type [= init];` is an alternate field syntax.
+                // Consume the `property` keyword and fall through to the field.
+                if (peek().value == "property")
+                    advance();
                 // Bare field declaration: `name: Type;` (struct-style)
                 auto fieldName = consume(lexer::TokenType::IDENTIFIER, "Expected field name");
                 ast::TypePtr fieldType = nullptr;
@@ -775,9 +779,26 @@ namespace parser
         return expr;
     }
 
+    ast::ExprPtr Parser::ternary()
+    {
+        // cond ? thenExpr : elseExpr. Right-associative (the else-branch may be
+        // another ternary), binds looser than elvis/or and tighter than
+        // assignment. Only the taken branch is evaluated (short-circuit codegen).
+        ast::ExprPtr cond = elvis();
+        if (match(lexer::TokenType::QUESTION))
+        {
+            lexer::Token q = previous();
+            ast::ExprPtr thenE = ternary();
+            consume(lexer::TokenType::COLON, "Expected ':' in ternary expression");
+            ast::ExprPtr elseE = ternary();
+            return std::make_shared<ast::ConditionalExpr>(q, cond, thenE, elseE);
+        }
+        return cond;
+    }
+
     ast::ExprPtr Parser::assignment()
     {
-        ast::ExprPtr expr = elvis();
+        ast::ExprPtr expr = ternary();
 
         if (match(lexer::TokenType::EQUAL))
         {
@@ -1226,6 +1247,33 @@ namespace parser
         throw std::runtime_error("Parse error");
     }
 
+    void Parser::consumeGenericClose(const std::string &msg)
+    {
+        // Close a type-argument list. A single `>` is the normal case. When the
+        // lexer produced `>>` (RIGHT_SHIFT) - as in `Array<Array<T>>` - split it:
+        // consume one `>` here and rewrite the token to a lone `>` for the
+        // enclosing list to close on. Same idea for `>>=` -> `>=`. This is the
+        // standard nested-generics fix (C++/Rust/Java do it too).
+        if (check(lexer::TokenType::GREATER))
+        {
+            advance();
+            return;
+        }
+        if (check(lexer::TokenType::RIGHT_SHIFT))
+        {
+            tokens[current].type = lexer::TokenType::GREATER;
+            tokens[current].value = ">";
+            return; // do not advance: the rewritten token is the outer '>'
+        }
+        if (check(lexer::TokenType::RIGHT_SHIFT_EQUAL))
+        {
+            tokens[current].type = lexer::TokenType::GREATER_EQUAL;
+            tokens[current].value = ">=";
+            return;
+        }
+        consume(lexer::TokenType::GREATER, msg);
+    }
+
     ast::TypePtr Parser::parseType()
     {
         // Parenthesized type list: either a function type `(T1, T2) -> R` or a
@@ -1263,7 +1311,7 @@ namespace parser
             {
                 typeArgs.push_back(parseType());
             } while (match(lexer::TokenType::COMMA));
-            consume(lexer::TokenType::GREATER, "Expected '>' after type arguments");
+            consumeGenericClose("Expected '>' after type arguments");
             return std::make_shared<ast::GenericType>(token, token.value, typeArgs);
         }
         if (match(lexer::TokenType::LEFT_PAREN))
@@ -1334,8 +1382,14 @@ namespace parser
                     type = std::make_shared<ast::GenericType>(
                         name, "list", std::vector<ast::TypePtr>{type});
                 }
+                // Optional default value `name: T = expr`. Callers may omit this
+                // (and all following) arguments; the default is substituted.
+                ast::ExprPtr defVal = nullptr;
+                if (!variadic && match(lexer::TokenType::EQUAL))
+                    defVal = expression();
                 parameters.emplace_back(name.value, type);
                 parameters.back().isVariadic = variadic;
+                parameters.back().defaultValue = defVal;
             } while (match(lexer::TokenType::COMMA));
         }
         return parameters;
