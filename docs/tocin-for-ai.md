@@ -366,6 +366,10 @@ Two calling styles:
 | `ptrAdd(p, off)` | `(int, int) -> int` | address + byte offset |
 | `loadByte(p, off)` / `storeByte(p, off, v)` | 2/3 ints | 8-bit load (zero-extended) / store (truncating) |
 | `loadInt(p, off)` / `storeInt(p, off, v)` | 2/3 ints | 64-bit load / store |
+| `newArray(n)` | `(int) -> list<int>` | dynamically-sized, zero-filled int array (real `len()`/indexing/for-in). Annotate the binding: `let a: list<int> = newArray(n)` |
+| `zeros(n)` / `newFloatArray(n)` | `(int) -> list<float>` | dynamically-sized, zero-filled float array. `let a: list<float> = zeros(n)` — the `zeros()` every numeric language has |
+| `strFromAddr(addr)` | `(int) -> string` | reinterpret an int address as a string — read a string stored in a vector/map slot (`strFromAddr(vecGet(v, i))`). Enables `vector<string>` and string-valued maps |
+| `bufToStr(addr, n)` | `(int, int) -> string` | materialize `n` raw bytes as one string — the fast string builder (assemble bytes in a buffer, convert once, not O(n²) `+`) |
 
 **Kernel / MMIO primitives** (for drivers and OS work; all widths in bits, loads zero-extend, stores truncate)
 | Builtin | Signature | Behavior |
@@ -412,6 +416,18 @@ Beyond `std.*`, these domain modules also compile and run (import by path, e.g. 
 - **`import web.http;`** — HTTP/1.1 helpers: `httpMethod`/`httpPath`/`httpRoute`, `buildResponse`/`ok`/`okJson`/`notFound`/`statusText`, and a `serve`/`serveOnce`/`serveLoop` server over the tcp builtins.
 - **`import net.advanced;`** — HTTP client: `urlHost`/`urlPort`/`urlPath`, `httpGet`/`httpPost`, `responseStatus`/`responseBody`.
 - **`import web.websocket;`** — RFC 6455 frame codec over byte buffers: `writeFrame`, `frameOpcode`/`framePayloadLen`/`framePayloadOffset`, `unmaskPayload`.
+- **`import std.strseq;`** — split/join/replace: `splitChar`/`splitWhitespace` (→ vector), `joinStr`, `replaceChar`/`replaceAll`, `indexOfIgnoreCase`, `hasPrefix`/`hasSuffix`.
+- **`import std.functional;`** — `mapInts`, `filterInts`, `foldInts`, `zipWith`, `anyInt`/`allInt`/`countWhere`/`findFirst`, `takeWhile`/`dropWhile`, `rangeList`, `reversed`, `concatInts` (callbacks are `(int)->int` / `(int,int)->int`).
+- **`import std.json;`** — recursive JSON: `jsonParse` (→ value tree), `jsonType`, `jsonAsInt`/`Float`/`String`/`Bool`, `jsonArrayLen`/`Get`, `jsonObjectGet`/`Has`, `jsonGetInt`/`jsonGetString` (with defaults), `jsonStringify`, `jsonEscape`.
+- **`import data.collections;`** — classic structures: binary min-heap (`heapPush`/`heapPop`), union-find (`ufUnion`/`ufFind`/`ufConnected`), bitset (`bitSet`/`bitGet`/`bitsetCount`), ring buffer, BST (`bstPut`/`bstGet`/`bstInorder`), deque (`pushFront`/`popBack`/…), string list.
+- **`import ml.ten;`** — Temporal Eigenstate Networks: `tenEigenInit`, `tenScan` (the diagonal complex recurrence), `tenMix` (head coupling), `tenLayerForward` (full layer: project→evolve→reconstruct→gate→MLP), `tenSigmoid`/`tenSilu`.
+- **`import database.database;`** — in-memory engine: string KV (`kvPut`/`kvGet`), typed-row table (`tableNew`/`tableInsert`/`tableGet`), `selectWhere`/`selectGreater`, `columnSum`/`Max`/`Min`, `countWhere`.
+- **`import scripting.automation;`** — `renderTemplate` ({{key}}), `buildCommand`, `shellQuote`, `repeatStr`, `configKey`/`configValue`.
+- **`import game.shader;`** — software shading: `clamp01`/`mix`/`smoothstep`/`step`, vec3 `dot3`/`length3`/`normalize3`/`reflect3`, `lambert`/`blinnPhong`/`attenuation`, `packColor`/`unpackChannel`, `luminance`, `gammaCorrect`.
+- **`import game.engine;`** — headless ECS: `worldNew`/`spawnEntity`, `getX`/`getY`/`setVelocity`/`kill`, `step`/`applyForce`, `aabbOverlap`/`entitiesCollide`, `fixedSteps`.
+- **`import gui.core;` / `import gui.widgets;`** — immediate-mode GUI math: `rectContains`/`rectsOverlap`, `layoutRow`, `buttonState`/`buttonClicked`, `sliderValue`, `textWidth`/`alignX`, `progressFill`, `gridCell`/`flexItemSize`, `wrapLines`.
+
+**Full stdlib: 34 modules, all compiling; 15 `tests/cases/stdlib_*.to` suites (284 assertions) run via `tests/run_stdlib_tests.sh`.**
 
 ```tocin
 import std.linq;
