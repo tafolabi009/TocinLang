@@ -801,4 +801,19 @@ extern "C"
         std::fflush(stderr);
         std::abort();
     }
+
+    // Generic runtime panic: print "panic: <msg> [at file:line:col]" and abort.
+    // Used for the failure modes that would otherwise be silent UB or a bare
+    // SIGFPE/segfault - division by zero, force-unwrap of nil, etc. The location
+    // string is compiler-supplied ("" when unknown) so users see where it blew
+    // up instead of just a crash.
+    void __tocin_panic(const char *msg, const char *loc)
+    {
+        if (loc && loc[0])
+            std::fprintf(stderr, "panic: %s at %s\n", msg ? msg : "aborted", loc);
+        else
+            std::fprintf(stderr, "panic: %s\n", msg ? msg : "aborted");
+        std::fflush(stderr);
+        std::abort();
+    }
 }

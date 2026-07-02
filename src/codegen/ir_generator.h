@@ -207,6 +207,11 @@ namespace codegen
         // Tag a load/store with this buffer variable's alias scope and mark it
         // noalias against every other tracked buffer. No-op if name isn't tracked.
         void tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar);
+        // Emit `if (condFail) __tocin_panic(msg, "file:line:col");` inline: on
+        // the failing path the program aborts with a located message instead of
+        // hitting UB (SIGFPE, segfault). Execution continues on the ok path.
+        // Used for division by zero, nil force-unwrap, and similar runtime traps.
+        void emitTrapIf(llvm::Value *condFail, const std::string &msg);
         // If `expr` is a bare buffer-variable reference, return its name, else "".
         std::string bufferVarName(const ast::ExprPtr &expr) const;
         // Source cursor for diagnostics: updated at visit entry points so

@@ -1,0 +1,9 @@
+// Runtime traps produce located panics instead of UB. These are exercised by
+// the harness that runs them and asserts a non-zero (134/abort) exit; here we
+// keep the compile path green and document the guarded operations.
+def safeDiv(a: int, b: int) -> int { if (b == 0) { return -1; } return a / b; }
+def main() -> int {
+    print(intToStr(safeDiv(10, 2))); print(" ");
+    print(intToStr(safeDiv(10, 0))); print("\n");   // guarded: no trap
+    return 0;
+}

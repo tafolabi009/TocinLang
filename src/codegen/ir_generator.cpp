@@ -575,6 +575,36 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
     }
 }
 
+void IRGenerator::emitTrapIf(llvm::Value *condFail, const std::string &msg)
+{
+    if (!condFail || !builder.GetInsertBlock())
+        return;
+    llvm::Function *fn = builder.GetInsertBlock()->getParent();
+    if (!fn)
+        return;
+    llvm::Function *panicFn = module->getFunction("__tocin_panic");
+    if (!panicFn)
+    {
+        llvm::Type *pty = llvm::PointerType::get(context, 0);
+        panicFn = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pty, pty}, false),
+            llvm::Function::ExternalLinkage, "__tocin_panic", *module);
+    }
+    llvm::BasicBlock *trapBB = llvm::BasicBlock::Create(context, "trap", fn);
+    llvm::BasicBlock *contBB = llvm::BasicBlock::Create(context, "trap.cont", fn);
+    builder.CreateCondBr(condFail, trapBB, contBB);
+    builder.SetInsertPoint(trapBB);
+    std::string loc;
+    if (!std::string(curTok_.filename).empty())
+        loc = std::string(curTok_.filename) + ":" + std::to_string(curTok_.line) +
+              ":" + std::to_string(curTok_.column);
+    llvm::Value *msgStr = builder.CreateGlobalStringPtr(msg, "panic.msg");
+    llvm::Value *locStr = builder.CreateGlobalStringPtr(loc, "panic.loc");
+    builder.CreateCall(panicFn, {msgStr, locStr});
+    builder.CreateUnreachable();
+    builder.SetInsertPoint(contBB);
+}
+
 std::string IRGenerator::bufferVarName(const ast::ExprPtr &expr) const
 {
     if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
@@ -2909,18 +2939,9 @@ void IRGenerator::visitUnaryExpr(ast::UnaryExpr *expr)
             operand,
             llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(operand->getType())),
             "uw.isnull");
-        llvm::BasicBlock *nullBB = llvm::BasicBlock::Create(context, "unwrap.null", fn);
-        llvm::BasicBlock *okBB = llvm::BasicBlock::Create(context, "unwrap.ok", fn);
-        builder.CreateCondBr(isNull, nullBB, okBB);
-        builder.SetInsertPoint(nullBB);
-        llvm::Function *abortFn = module->getFunction("abort");
-        if (!abortFn)
-            abortFn = llvm::Function::Create(
-                llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
-                llvm::Function::ExternalLinkage, "abort", *module);
-        builder.CreateCall(abortFn, {});
-        builder.CreateUnreachable();
-        builder.SetInsertPoint(okBB);
+        // Trap with a located message ("panic: force-unwrap ... at f:line:col")
+        // rather than a bare abort(), so `x!!` on a nil value is diagnosable.
+        emitTrapIf(isNull, "force-unwrap '!!' of a nil value");
         lastValue = operand;
         break;
     }
@@ -6190,6 +6211,12 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 
     case lexer::TokenType::SLASH:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            // Integer division by zero is UB (SIGFPE). Trap with a message
+            // instead. Skipped in --freestanding (no runtime panic available).
+            if (!freestanding) {
+                llvm::Value *zero = llvm::ConstantInt::get(right->getType(), 0);
+                emitTrapIf(builder.CreateICmpEQ(right, zero, "divz"), "integer division by zero");
+            }
             lastValue = builder.CreateSDiv(left, right, "div");
         } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                    (right->getType()->isFloatTy() || right->getType()->isDoubleTy())) {
@@ -6204,6 +6231,10 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
 
     case lexer::TokenType::PERCENT:
         if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy()) {
+            if (!freestanding) {
+                llvm::Value *zero = llvm::ConstantInt::get(right->getType(), 0);
+                emitTrapIf(builder.CreateICmpEQ(right, zero, "modz"), "integer modulo by zero");
+            }
             lastValue = builder.CreateSRem(left, right, "mod");
         } else {
             errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
