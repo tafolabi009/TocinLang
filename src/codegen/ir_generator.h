@@ -194,6 +194,21 @@ namespace codegen
         struct OwnedInstance { llvm::AllocaInst *slot; std::string className; llvm::AllocaInst *reached; };
         std::vector<OwnedInstance> destructorStack;
         std::string currentClassName;                                              // Enclosing class while generating a method
+        // restrict-style aliasing: locals initialized directly from `alloc(...)`
+        // each get a distinct alias scope. Accesses through them (loadInt/
+        // storeInt/...) are tagged so LLVM knows two different buffers never
+        // overlap - which is what lets loop interchange + contiguous
+        // vectorization fire (e.g. matmul). Sound because distinct alloc() calls
+        // return disjoint memory; a buffer var is dropped from the map the
+        // moment it is reassigned, and only alloc-initialized locals qualify (a
+        // copy `let b = a;` is not tracked, so it conservatively may-alias).
+        llvm::MDNode *restrictDomain_ = nullptr;                                    // lazily created alias-scope domain
+        std::map<std::string, llvm::MDNode *> bufferScopes_;                        // buffer var name -> its alias scope (per function)
+        // Tag a load/store with this buffer variable's alias scope and mark it
+        // noalias against every other tracked buffer. No-op if name isn't tracked.
+        void tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar);
+        // If `expr` is a bare buffer-variable reference, return its name, else "".
+        std::string bufferVarName(const ast::ExprPtr &expr) const;
         // Source cursor for diagnostics: updated at visit entry points so
         // reportError sites deep in codegen can attach a file:line:column
         // instead of the useless "",0,0. Approximate (statement/expression

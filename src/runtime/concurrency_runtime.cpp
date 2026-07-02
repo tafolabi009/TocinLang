@@ -45,8 +45,19 @@ extern "C"
 {
     void GC_init(void);
     void *GC_malloc(size_t);
+    // Allocate memory guaranteed to contain NO pointers. The collector never
+    // scans it, which makes allocation cheaper and dramatically cuts mark time
+    // for pointer-free data (strings, raw byte buffers) - exactly the churn in
+    // string-heavy code like int->string conversion.
+    void *GC_malloc_atomic(size_t);
     void *GC_realloc(void *, size_t);
     void GC_free(void *);
+    // Throughput tuning: raise the garbage tolerated between collections (lower
+    // divisor = collect less often = fewer mark phases) and pre-grow the heap
+    // so allocation-heavy code isn't throttled by early collections. Trades
+    // peak memory for speed - the right call for batch/compute workloads.
+    void GC_set_free_space_divisor(size_t);
+    void GC_expand_hp(size_t);
     void GC_allow_register_threads(void);
     int GC_register_my_thread(void *);   // GC_stack_base *
     int GC_unregister_my_thread(void);
@@ -75,6 +86,12 @@ namespace
         std::call_once(g_gcInit, [] {
             GC_init();
             GC_allow_register_threads();
+            // Tune for throughput: collect ~4x less often than the default
+            // (divisor 3) and start with a 64 MB heap so short-lived-allocation
+            // workloads (string conversion, temporaries) don't stall on early
+            // collections. Overridable via the standard GC_* environment vars.
+            GC_set_free_space_divisor(1);
+            GC_expand_hp((size_t)64 * 1024 * 1024);
         });
     }
 #endif
@@ -89,6 +106,19 @@ extern "C"
 #ifdef TOCIN_HAVE_GC
         tocin_gc_ensure_init();
         return GC_malloc((size_t)size);
+#else
+        return std::malloc((size_t)size);
+#endif
+    }
+    // Allocate a pointer-free buffer (strings, byte arrays). Same interface as
+    // __tocin_alloc but the GC skips scanning it - meaningfully faster for the
+    // high allocation rates of string-producing builtins.
+    void *__tocin_alloc_atomic(int64_t size)
+    {
+        if (size < 0) size = 0;
+#ifdef TOCIN_HAVE_GC
+        tocin_gc_ensure_init();
+        return GC_malloc_atomic((size_t)size);
 #else
         return std::malloc((size_t)size);
 #endif
@@ -359,7 +389,7 @@ extern "C"
 {
     static char *tocin_str_empty()
     {
-        char *p = (char *)__tocin_alloc(1);
+        char *p = (char *)__tocin_alloc_atomic(1);
         if (p) p[0] = '\0';
         return p;
     }
@@ -379,7 +409,7 @@ extern "C"
         if (start > n) start = n;
         if (len < 0) len = 0;
         if (start + len > n) len = n - start;
-        char *out = (char *)__tocin_alloc((size_t)len + 1);
+        char *out = (char *)__tocin_alloc_atomic((size_t)len + 1);
         if (!out) return nullptr;
         std::memcpy(out, s + start, (size_t)len);
         out[len] = '\0';
@@ -407,12 +437,23 @@ extern "C"
     }
     char *__tocin_int_to_str(int64_t n)
     {
-        char buf[32];
-        int len = std::snprintf(buf, sizeof(buf), "%lld", (long long)n);
-        if (len < 0) return tocin_str_empty();
-        char *out = (char *)__tocin_alloc((size_t)len + 1);
+        // Tight base-10 conversion: write digits back-to-front into a stack
+        // buffer, then one exact-size atomic allocation. This avoids snprintf's
+        // format-string parsing (its cost dominated string-heavy loops) and
+        // uses a non-scanned allocation since the result holds no pointers.
+        char tmp[20];              // enough for -9223372036854775808 + NUL
+        char *p = tmp + sizeof(tmp);
+        uint64_t mag = (n < 0) ? (uint64_t)0 - (uint64_t)n : (uint64_t)n; // handles INT64_MIN
+        do {
+            *--p = (char)('0' + (int)(mag % 10));
+            mag /= 10;
+        } while (mag != 0);
+        if (n < 0) *--p = '-';
+        size_t len = (size_t)(tmp + sizeof(tmp) - p);
+        char *out = (char *)__tocin_alloc_atomic(len + 1);
         if (!out) return nullptr;
-        std::memcpy(out, buf, (size_t)len + 1);
+        std::memcpy(out, p, len);
+        out[len] = '\0';
         return out;
     }
     int64_t __tocin_str_to_int(const char *s) { return s ? (int64_t)std::atoll(s) : 0; }
@@ -422,14 +463,14 @@ extern "C"
         char buf[64];
         int len = std::snprintf(buf, sizeof(buf), "%g", d);
         if (len < 0) return tocin_str_empty();
-        char *out = (char *)__tocin_alloc((size_t)len + 1);
+        char *out = (char *)__tocin_alloc_atomic((size_t)len + 1);
         if (!out) return nullptr;
         std::memcpy(out, buf, (size_t)len + 1);
         return out;
     }
     char *__tocin_char_to_str(int64_t c)
     {
-        char *out = (char *)__tocin_alloc(2);
+        char *out = (char *)__tocin_alloc_atomic(2);
         if (!out) return nullptr;
         out[0] = (char)(unsigned char)c;
         out[1] = '\0';
@@ -440,7 +481,7 @@ extern "C"
         if (!a) a = "";
         if (!b) b = "";
         size_t la = std::strlen(a), lb = std::strlen(b);
-        char *out = (char *)__tocin_alloc(la + lb + 1);
+        char *out = (char *)__tocin_alloc_atomic(la + lb + 1);
         if (!out) return nullptr;
         std::memcpy(out, a, la);
         std::memcpy(out + la, b, lb + 1);
@@ -452,7 +493,7 @@ extern "C"
     {
         if (!s) return tocin_str_empty();
         size_t n = std::strlen(s);
-        char *out = (char *)__tocin_alloc(n + 1);
+        char *out = (char *)__tocin_alloc_atomic(n + 1);
         if (!out) return nullptr;
         for (size_t i = 0; i < n; ++i)
             out[i] = (char)std::toupper((unsigned char)s[i]);
@@ -463,7 +504,7 @@ extern "C"
     {
         if (!s) return tocin_str_empty();
         size_t n = std::strlen(s);
-        char *out = (char *)__tocin_alloc(n + 1);
+        char *out = (char *)__tocin_alloc_atomic(n + 1);
         if (!out) return nullptr;
         for (size_t i = 0; i < n; ++i)
             out[i] = (char)std::tolower((unsigned char)s[i]);

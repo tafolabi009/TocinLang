@@ -11,6 +11,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
@@ -574,6 +575,32 @@ void IRGenerator::visitLiteralExpr(ast::LiteralExpr *expr)
     }
 }
 
+std::string IRGenerator::bufferVarName(const ast::ExprPtr &expr) const
+{
+    if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
+        if (bufferScopes_.count(v->name))
+            return v->name;
+    return "";
+}
+
+void IRGenerator::tagBufferAccess(llvm::Instruction *inst, const std::string &bufVar)
+{
+    auto it = bufferScopes_.find(bufVar);
+    if (it == bufferScopes_.end() || !inst)
+        return;
+    // This access is in bufVar's scope...
+    inst->setMetadata(llvm::LLVMContext::MD_alias_scope,
+                      llvm::MDNode::get(context, {it->second}));
+    // ...and does not alias any OTHER tracked buffer (distinct allocations).
+    std::vector<llvm::Metadata *> others;
+    for (auto &kv : bufferScopes_)
+        if (kv.first != bufVar)
+            others.push_back(kv.second);
+    if (!others.empty())
+        inst->setMetadata(llvm::LLVMContext::MD_noalias,
+                          llvm::MDNode::get(context, others));
+}
+
 void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 {
     curTok_ = stmt->token;
@@ -632,6 +659,29 @@ void IRGenerator::visitVariableStmt(ast::VariableStmt *stmt)
 
     // Store the variable in the symbol table
     namedValues[stmt->name] = alloca;
+
+    // restrict tracking: a local initialized directly by `alloc(...)` owns a
+    // fresh, disjoint buffer. Give it a unique alias scope so accesses through
+    // it can be marked noalias against other buffers (enables loop interchange /
+    // vectorization). Any later reassignment drops it (see handleVariableAssignment).
+    bufferScopes_.erase(stmt->name);
+    if (auto call = std::dynamic_pointer_cast<ast::CallExpr>(stmt->initializer))
+    {
+        if (auto callee = std::dynamic_pointer_cast<ast::VariableExpr>(call->callee))
+        {
+            if (callee->name == "alloc")
+            {
+                if (!restrictDomain_)
+                {
+                    llvm::MDBuilder mdb(context);
+                    restrictDomain_ = mdb.createAnonymousAliasScopeDomain("tocin.restrict");
+                }
+                llvm::MDBuilder mdb(context);
+                bufferScopes_[stmt->name] =
+                    mdb.createAnonymousAliasScope(restrictDomain_, stmt->name);
+            }
+        }
+    }
 
     // Track the variable's class (for field/method resolution). Done after the
     // initializer is evaluated so generic-constructor calls have already been
@@ -933,6 +983,7 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
 
     // Fresh symbol tables for this function body.
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varClasses.clear();
     varArrayElem.clear();
     varFuncSig.clear();
@@ -1557,8 +1608,19 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 auto s = pptr(0); if (!s) return;
                 lastValue = builder.CreateCall(rt("__tocin_str_len", i64b, {ptrb}), {s}, "strlen"); return; }
             if (funcName == "charAt" && na == 2) {
+                // Inline byte load instead of a runtime call. The old runtime
+                // helper re-ran strlen on every call, making a charAt loop over
+                // an n-char string O(n^2) - a real drag on lexers/parsers (and
+                // the digitsum benchmark). Contract: valid index in [0, len);
+                // a negative index yields -1 (preserved), matching loadByte's
+                // trust-the-index model for the fast path.
                 auto s = pptr(0); auto i = slot(1); if (!s || !i) return;
-                lastValue = builder.CreateCall(rt("__tocin_str_char_at", i64b, {ptrb, i64b}), {s, i}, "charat"); return; }
+                llvm::Type *i8t = llvm::Type::getInt8Ty(context);
+                llvm::Value *neg = builder.CreateICmpSLT(i, llvm::ConstantInt::get(i64b, 0), "ca.neg");
+                llvm::Value *g = builder.CreateGEP(i8t, s, i, "ca.p");
+                llvm::Value *byte = builder.CreateZExt(builder.CreateLoad(i8t, g, "ca.b"), i64b, "ca.b64");
+                lastValue = builder.CreateSelect(neg, llvm::ConstantInt::get(i64b, -1), byte, "charat");
+                return; }
             if (funcName == "substring" && na == 3) {
                 auto s = pptr(0); auto a = slot(1); auto b = slot(2); if (!s || !a || !b) return;
                 lastValue = builder.CreateCall(rt("__tocin_str_substring", ptrb, {ptrb, i64b, i64b}), {s, a, b}, "substr"); return; }
@@ -1703,22 +1765,28 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "ptradd");
                 lastValue = builder.CreatePtrToInt(g, i64b, "ptraddr"); return; }
             if (funcName == "loadByte" && na == 2) {    // *(u8*)(p+off) zero-extended
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "lb.p");
-                lastValue = builder.CreateZExt(builder.CreateLoad(i8b, g, "lb"), i64b, "lb64"); return; }
+                auto *ld = builder.CreateLoad(i8b, g, "lb"); tagBufferAccess(ld, bv);
+                lastValue = builder.CreateZExt(ld, i64b, "lb64"); return; }
             if (funcName == "storeByte" && na == 3) {   // *(u8*)(p+off) = v
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "sb.p");
-                builder.CreateStore(builder.CreateTrunc(v, i8b, "sb.v"), g);
+                auto *st = builder.CreateStore(builder.CreateTrunc(v, i8b, "sb.v"), g); tagBufferAccess(st, bv);
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
             if (funcName == "loadInt" && na == 2) {     // *(i64*)(p+off)
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); if (!p || !off) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "li.p");
-                lastValue = builder.CreateLoad(i64b, g, "li"); return; }
+                auto *ld = builder.CreateLoad(i64b, g, "li"); tagBufferAccess(ld, bv);
+                lastValue = ld; return; }
             if (funcName == "storeInt" && na == 3) {    // *(i64*)(p+off) = v
+                std::string bv = bufferVarName(expr->arguments[0]);
                 auto p = pptr(0); auto off = slot(1); auto v = slot(2); if (!p || !off || !v) return;
                 llvm::Value *g = builder.CreateGEP(i8b, p, off, "si.p");
-                builder.CreateStore(v, g);
+                auto *st = builder.CreateStore(v, g); tagBufferAccess(st, bv);
                 lastValue = llvm::ConstantInt::get(i64b, 0); return; }
 
             // ---- volatile memory access (MMIO / device registers) ----
@@ -3178,6 +3246,7 @@ void IRGenerator::visitLambdaExpr(ast::LambdaExpr *expr)
     currentFunction = function;
     // Inside the lambda only params + captures are in scope.
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     varByRef.clear();
@@ -4263,6 +4332,7 @@ llvm::Function *IRGenerator::emitGenericInstance(ast::FunctionStmt *stmt,
     builder.SetInsertPoint(entry);
     currentFunction = function;
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     varClasses.clear();
@@ -4655,6 +4725,7 @@ void IRGenerator::generateMethod(const std::string &className, llvm::StructType 
     currentFunction = function;
     currentClassName = className;
     namedValues.clear();
+    bufferScopes_.clear();   // restrict scopes are per-function
     varFuncSig.clear();
     varIsString.clear();
     deferStack.clear();
@@ -5242,6 +5313,12 @@ bool IRGenerator::handleVariableAssignment(ast::AssignExpr *expr, llvm::Value *r
     if (auto varExpr = dynamic_cast<ast::VariableExpr *>(expr->target.get()))
     {
         std::string name = varExpr->name; // Use direct member access instead of getName()
+
+        // Reassigning a tracked buffer variable may make it alias another
+        // buffer, so its restrict guarantee no longer holds: drop it. Accesses
+        // already emitted (with the original scope) stay correct; later accesses
+        // get no scope and conservatively may-alias.
+        bufferScopes_.erase(name);
 
         // Look up the variable. Variables are tracked in the flat namedValues
         // table (populated by variable declarations and function parameters),

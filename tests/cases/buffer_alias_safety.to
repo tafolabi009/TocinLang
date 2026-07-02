@@ -1,0 +1,19 @@
+def main() -> int {
+    let a = alloc(80);
+    storeInt(a, 0, 111);
+    let b = a;              // b aliases a (copy of address) — NOT alloc-initialized
+    storeInt(b, 0, 222);    // must be visible through a (no false noalias)
+    let viaA = loadInt(a, 0);
+    if (viaA != 222) { print("ALIAS BUG: a sees "); print(intToStr(viaA)); print("\n"); return 1; }
+
+    // Reassignment case: c starts as its own buffer, then points at a.
+    let c = alloc(80);
+    storeInt(c, 0, 333);
+    c = a;                  // reassigned — restrict tracking must be dropped
+    storeInt(c, 0, 444);
+    let viaA2 = loadInt(a, 0);
+    if (viaA2 != 444) { print("REASSIGN BUG: a sees "); print(intToStr(viaA2)); print("\n"); return 1; }
+
+    print("alias safety: OK\n");
+    return 0;
+}
