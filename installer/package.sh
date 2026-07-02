@@ -83,6 +83,32 @@ echo "$VER" > "$STAGE/VERSION"
 cp "$REPO_ROOT/installer/install.sh" "$STAGE/install.sh"
 chmod +x "$STAGE/install.sh"
 
+# --- Self-contained native linking bundle ---------------------------------
+# Stage libexec/link/ (vendored ld.lld + a link recipe generated from the
+# build toolchain) so `tocin file.to -o app` links native executables on
+# machines with NO gcc/clang installed. tryBundledLink() looks for link/
+# next to the compiler binary (libexec/tocin -> libexec/link).
+LLD_BIN="$(command -v ld.lld || echo /usr/lib/llvm-18/bin/ld.lld)"
+if [ -x "$LLD_BIN" ] && [ "$OS" = linux ]; then
+    echo ">> staging self-contained link bundle (ld.lld + recipe)"
+    # Fully-static recipe: bundle-linked programs carry their own libc/libgc/
+    # libstdc++, so the output runs on ANY Linux (Go-style static binaries)
+    # and never touches a system toolchain OR runtime package.
+    GC_A="$("${CC:-gcc}" -print-file-name=libgc.a 2>/dev/null)"
+    [ -f "$GC_A" ] || GC_A=""
+    if KEEP_SYS=0 bash "$REPO_ROOT/installer/make-link-recipe.sh" \
+        --gcc "${CC:-gcc}" --static \
+        --out-dir "$STAGE/libexec/link" \
+        --runtime "$BUILD/libtocin_runtime.a" \
+        ${GC_A:+--gc "$GC_A"}; then
+        cp -L "$LLD_BIN" "$STAGE/libexec/link/ld.lld"
+    else
+        echo "!! link-recipe generation failed; -o will fall back to system cc"
+    fi
+else
+    echo "!! no ld.lld found; skipping self-contained link bundle"
+fi
+
 # --- Optionally vendor non-system shared libraries ------------------------
 if [ "$BUNDLE_LIBS" = 1 ]; then
     echo ">> bundling shared libraries (fully portable build)"

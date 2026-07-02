@@ -9,10 +9,33 @@ There are two package flavors per platform:
 
 | Flavor | Size | Needs on the machine |
 |---|---|---|
-| **Portable** (`--bundle-libs`) | ~55 MB | nothing but a libc (and a C compiler *only* for native `-o` output) |
+| **Portable** (`--bundle-libs`) | ~62 MB | nothing but a libc — **not even a C compiler** |
 | **Standard** | <1 MB | system **LLVM 18** + **libgc** already installed |
 
-The portable flavor is what most people want — it "just works".
+The portable flavor is what most people want — it "just works". It ships a
+vendored `ld.lld` plus a static link recipe, so `tocin file.to -o app`
+produces a native binary **with no gcc/clang/ld installed** — and those output
+binaries are fully static (they run on any Linux, like a Go binary).
+
+## Native installers (GUI, double-click)
+
+Download the file for your platform and open it:
+
+| Platform | File | How it installs |
+|---|---|---|
+| **Windows** | `Tocin-<ver>-Setup.exe` | GUI wizard (welcome → license → components → PATH). NSIS; adds `tocin` to PATH and a `.to` file association. |
+| **Debian/Ubuntu** | `tocin_<ver>_amd64.deb` | Double-click → GNOME Software / KDE Discover, or `sudo apt install ./tocin_<ver>_amd64.deb`. Installs to `/opt/tocin`. |
+| **Any Linux** | `tocin-<ver>-linux-<arch>.run` | `sh tocin-*.run` → GUI dialog (zenity/kdialog) or terminal prompt; installs to `~/.tocin`, no root. |
+| **macOS** | `tocin-<ver>-macos-<arch>.pkg` / `.dmg` | Native macOS Installer GUI; installs to `/usr/local/tocin`. |
+
+Build them all yourself from a source checkout:
+
+```
+installer/build-all.sh     # Linux: .tar.gz + .run + .deb   (macOS: .pkg + .dmg)
+```
+
+On Windows: `powershell installer\windows\Build-TocinInstaller.ps1` (produces the
+`.zip` and, if NSIS is on PATH, `Setup.exe`).
 
 ---
 
