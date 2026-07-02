@@ -54,9 +54,12 @@ Section "Tocin compiler + runtime (required)" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
 
-  ; Staged payload: libexec\ (tocin.exe + link\ bundle), lib\, stdlib\, share\.
+  ; Staged payload: libexec\ (tocin.exe + DLLs + link\ bundle) and stdlib\ are
+  ; required. lib\ and share\ are optional: the Windows staging script
+  ; (Build-TocinInstaller.ps1) puts every DLL next to tocin.exe in libexec\
+  ; and creates no lib\ at all, so lib\ must not be a hard requirement.
   File /r "${STAGE}\libexec"
-  File /r "${STAGE}\lib"
+  File /nonfatal /r "${STAGE}\lib"
   File /r "${STAGE}\stdlib"
   File /nonfatal /r "${STAGE}\share"
   File /oname=LICENSE.txt "..\..\LICENSE"
