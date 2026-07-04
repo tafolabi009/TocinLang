@@ -31,7 +31,7 @@ match name {
 The `?` operator provides a convenient way to propagate `None` values:
 
 ```tocin
-fn process_name(name: Option<string>) -> Option<string> {
+def process_name(name: Option<string>) -> Option<string> {
     // If name is None, the function returns None immediately
     // If name is Some(value), value is extracted and assigned to x
     let x = name?;
@@ -68,7 +68,7 @@ match divide(10.0, 2.0) {
 The `?` operator works with Result types to propagate errors:
 
 ```tocin
-fn calculate(a: float, b: float) -> Result<float, string> {
+def calculate(a: float, b: float) -> Result<float, string> {
     // If divide returns Err, the function returns that error immediately
     // If divide returns Ok(value), value is extracted and assigned to result
     let result = divide(a, b)?;
@@ -94,7 +94,7 @@ You can convert between Option and Result types:
 
 ```tocin
 // Convert an Option to a Result
-fn option_to_result<T>(opt: Option<T>, error: E) -> Result<T, E> {
+def option_to_result<T>(opt: Option<T>, error: E) -> Result<T, E> {
     match opt {
         Some(value) => Ok(value),
         None => Err(error)
@@ -102,7 +102,7 @@ fn option_to_result<T>(opt: Option<T>, error: E) -> Result<T, E> {
 }
 
 // Convert a Result to an Option
-fn result_to_option<T, E>(res: Result<T, E>) -> Option<T> {
+def result_to_option<T, E>(res: Result<T, E>) -> Option<T> {
     match res {
         Ok(value) => Some(value),
         Err(_) => None

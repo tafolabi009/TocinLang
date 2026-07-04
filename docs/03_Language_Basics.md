@@ -22,9 +22,6 @@ Tocin uses a clean, readable syntax that will feel familiar to developers with e
 Tocin source files use the `.to` extension. A simple program might look like this:
 
 ```tocin
-// Import standard library modules
-import system.io;
-
 // Define the main function
 def main() -> int {
     println("Hello, Tocin!");

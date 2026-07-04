@@ -8,10 +8,15 @@ producing and publishing the release packages.
 
 | File | Role |
 |---|---|
+| `build-all.sh` | **One-command builder** — produces every installer this platform can make (Linux: `.tar.gz` + `.run` + `.deb`; macOS: `.pkg` + `.dmg`). |
 | `linux/Build-TocinInstaller.sh` | **Turnkey Linux builder** — bootstraps the toolchain, builds, bundles, and packages in one run (see below). |
 | `windows/Build-TocinInstaller.ps1` | **Turnkey Windows builder** — bootstraps the toolchain, builds, and packages in one run (see below). |
 | `package.sh` | Build a Linux/macOS tarball (`dist/tocin-<ver>-<os>-<arch>.tar.gz`); `--bundle-libs` for the self-contained flavor. |
 | `package.ps1` | Build a Windows zip when the toolchain is *already* installed. |
+| `linux/make-run.sh` | Build the self-extracting Linux `.run` installer from the staged tarball. |
+| `linux/make-deb.sh` | Turn the staged payload into a Debian/Ubuntu `.deb` (GUI install via the software center). |
+| `macos/make-pkg.sh` | Build the macOS `.pkg` and a `.dmg` wrapping it (run on macOS). |
+| `make-link-recipe.sh` | Build the self-contained native-link bundle so `tocin file.to -o app` links without a system gcc/clang. |
 | `install.sh` | Per-user installer that ships *inside* each Unix tarball. |
 | `install.ps1` | Per-user installer for Windows (also a download bootstrap). |
 | `get-tocin.sh` | `curl \| sh` bootstrap: download the latest release + install. |

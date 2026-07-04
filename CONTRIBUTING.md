@@ -39,9 +39,8 @@ Thank you for your interest in contributing to Tocin! We welcome contributions o
 ## Continuous Integration (CI/CD)
 
 - All pull requests and pushes are automatically built and tested using GitHub Actions.
-- The workflow runs on Windows, Linux, and macOS using a build matrix.
-- All tests in `tests/` must pass for a PR to be merged.
-- Code coverage is collected and reported for each build.
+- The Linux builds (Release and Debug) are the authoritative gate; macOS and Windows builds are best-effort and do not block a PR.
+- The Linux CI jobs (ctest and the `.to` test suites) must pass for a PR to be merged.
 - Contributors can check CI status on the PR page or in the Actions tab.
 - If CI fails, review the logs, fix issues, and push updates until all checks pass.
 

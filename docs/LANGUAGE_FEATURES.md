@@ -38,7 +38,7 @@ let failure: Result<int, string> = Err("Something went wrong");
 Tocin supports generic types and functions:
 
 ```tocin
-fn identity<T>(value: T) -> T {
+def identity<T>(value: T) -> T {
     return value;
 }
 
@@ -55,11 +55,11 @@ Traits define behavior that types can implement:
 
 ```tocin
 trait ToString {
-    fn toString() -> string;
+    def toString() -> string;
 }
 
 impl ToString for int {
-    fn toString() -> string {
+    def toString() -> string {
         // Implementation
     }
 }
@@ -95,7 +95,7 @@ match point {
 Lightweight threads for concurrent execution:
 
 ```tocin
-fn computeValue() -> int {
+def computeValue() -> int {
     // Some computation
     return 42;
 }
@@ -141,7 +141,7 @@ select {
 Tocin uses the Result type for explicit error handling without exceptions:
 
 ```tocin
-fn divide(a: float, b: float) -> Result<float, string> {
+def divide(a: float, b: float) -> Result<float, string> {
     if b == 0.0 {
         return Err("Division by zero");
     }
@@ -149,7 +149,7 @@ fn divide(a: float, b: float) -> Result<float, string> {
 }
 
 // Using the ? operator for error propagation
-fn calculate(a: float, b: float) -> Result<float, string> {
+def calculate(a: float, b: float) -> Result<float, string> {
     let result = divide(a, b)?;  // Returns Err if divide returns Err
     return Ok(result * 2);
 }
@@ -175,7 +175,7 @@ match optionalName {
 }
 
 // Safe access using the ? operator
-fn greet(optionalName: Option<string>) -> Option<string> {
+def greet(optionalName: Option<string>) -> Option<string> {
     let name = optionalName?;  // Returns None if optionalName is None
     return Some("Hello, " + name);
 }
@@ -186,7 +186,7 @@ fn greet(optionalName: Option<string>) -> Option<string> {
 The `defer` statement ensures that a function call is performed when the current function returns:
 
 ```tocin
-fn processFile(path: string) -> Result<string, string> {
+def processFile(path: string) -> Result<string, string> {
     let file = open(path)?;
     defer file.close();  // Will be called when function returns
 
@@ -231,7 +231,7 @@ Add methods to existing types without inheritance:
 ```tocin
 // Add a method to the string type
 extension string {
-    fn capitalize() -> string {
+    def capitalize() -> string {
         if self.length() == 0 {
             return self;
         }
@@ -254,12 +254,12 @@ struct Buffer {
     data: Array<byte>;
     
     // Move constructor
-    fn move(self) -> Buffer {
+    def move(self) -> Buffer {
         return Buffer { data: self.data.move() };
     }
     
     // Access after move is a compile error
-    fn use() {
+    def use() {
         let buf1 = Buffer { data: [1, 2, 3] };
         let buf2 = buf1.move();
         
@@ -284,17 +284,17 @@ struct Buffer {
 ```tocin
 // Call C functions
 extern "C" {
-    fn printf(format: string, ...): int;
+    def printf(format: string, ...): int;
 }
 
 // Call JavaScript (through V8)
 extern "js" {
-    fn alert(message: string): void;
+    def alert(message: string): void;
 }
 
 // Call Python (through Python C API)
 extern "python" {
-    fn numpy_array(data: Array<float>): PyObject;
+    def numpy_array(data: Array<float>): PyObject;
 }
 ```
 
@@ -302,7 +302,7 @@ extern "python" {
 
 See the `examples/` directory for demonstration programs showing these features in action:
 
-- `option_result_demo.tc`: Shows Option and Result types
-- `traits_demo.tc`: Demonstrates the trait system
-- `concurrency_demo.tc`: Shows goroutines and channels
-- `pattern_matching_demo.tc`: Shows pattern matching capabilities 
+- `option_result_demo.to`: Shows Option and Result types
+- `traits_demo.to`: Demonstrates the trait system
+- `concurrency_demo.to`: Shows goroutines and channels
+- `pattern_matching_demo.to`: Shows pattern matching capabilities 

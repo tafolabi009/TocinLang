@@ -5,15 +5,15 @@ This guide covers how to build the Tocin compiler and runtime on all major platf
 ## Prerequisites
 - CMake 3.15+
 - C++17 compatible compiler (GCC 7+, Clang 5+, MSVC 2017+)
-- LLVM 11.0 or newer
+- LLVM 18 (up to LLVM 22 is supported)
 - Python 3.6+ (for Python FFI, optional)
-- Node.js 12+ and V8 (for JavaScript FFI, optional)
+- V8/JavaScript FFI is non-functional and always disabled (`-DWITH_V8=OFF`) — no Node.js/V8 needed
 - zstd, zlib, libffi, libxml2 (optional, for extra features)
 
 ## Basic Build (All Platforms)
 ```bash
-git clone https://github.com/yourusername/tocin-compiler.git
-cd tocin-compiler
+git clone https://github.com/tafolabi009/TocinLang.git
+cd TocinLang
 mkdir build && cd build
 cmake ..
 cmake --build .
@@ -25,7 +25,7 @@ You can enable or disable optional features using CMake flags:
 cmake -DWITH_PYTHON=ON -DWITH_V8=OFF -DWITH_ZSTD=ON -DWITH_XML=OFF ..
 ```
 - `WITH_PYTHON`: Enable Python FFI (default ON)
-- `WITH_V8`: Enable JavaScript (V8) FFI (default ON)
+- `WITH_V8`: JavaScript (V8) FFI — non-functional; always disabled (`-DWITH_V8=OFF`)
 - `WITH_ZSTD`: Enable zstd compression (default ON)
 - `WITH_XML`: Enable XML support (default ON)
 
@@ -100,4 +100,4 @@ cmake --install --preset=default
 - If the IDE does not detect presets, ensure you are using CMake 3.19+ and the latest IDE version.
 - You can always fall back to manual `cmake ..` configuration if needed.
 
-See also: [README.md](../README.md), [BENCHMARKS.md](../BENCHMARKS.md) 
+See also: [README.md](../README.md), [PERFORMANCE.md](PERFORMANCE.md) 

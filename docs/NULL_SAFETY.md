@@ -21,10 +21,10 @@ Provide a default value if null:
 let value = s ?: "default";
 ```
 
-## Not-Null Assertion (`!`)
+## Not-Null Assertion (`!!`)
 Assert that a value is not null (throws if null):
 ```to
-let force_len = s!.length; // Throws if s is null
+let force_len = s!!.length; // Throws if s is null
 ```
 
 ## Best Practices
@@ -34,7 +34,7 @@ let force_len = s!.length; // Throws if s is null
 
 ## Troubleshooting
 - **Safe call on non-nullable:** Only use `?.` on nullable types.
-- **Not-null assertion failed:** Ensure the value is not null before using `!`.
+- **Not-null assertion failed:** Ensure the value is not null before using `!!`.
 - **Type mismatch:** Assigning null to a non-nullable type is an error.
 
 See also: [Language Basics](03_Language_Basics.md), [Advanced Topics](05_Advanced_Topics.md) 

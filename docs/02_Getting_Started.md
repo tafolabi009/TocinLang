@@ -1,287 +1,138 @@
 # Getting Started with Tocin
 
-This guide will help you set up your development environment, install the Tocin compiler, and write your first Tocin program.
+Install the compiler, run your first program, and learn the everyday commands.
 
-## System Requirements
+## 1. Install Tocin
 
-Tocin can be installed on the following operating systems:
+### Option A — native installers (recommended)
 
-- **Windows**: Windows 10 or later (64-bit)
-- **macOS**: 10.14 (Mojave) or later
-- **Linux**: Most modern distributions including Ubuntu 18.04+, Debian 10+, Fedora 32+, and CentOS 8+
+Download the file for your platform and open it (full details in
+[../INSTALL.md](../INSTALL.md)):
 
-Hardware requirements:
-- 2 GHz dual-core processor or better
-- 4 GB RAM (8 GB recommended)
-- 1 GB disk space for the Tocin toolchain and standard library
+| Platform | File |
+|---|---|
+| Windows | `Tocin-<ver>-Setup.exe` — GUI wizard; adds `tocin` to PATH and a `.to` file association |
+| Debian/Ubuntu | `tocin_<ver>_amd64.deb` — double-click or `sudo apt install ./tocin_<ver>_amd64.deb` |
+| Any Linux | `tocin-<ver>-linux-<arch>.run` — `sh tocin-*.run`; installs to `~/.tocin`, no root |
+| macOS | `tocin-<ver>-macos-<arch>.pkg` / `.dmg` — native Installer GUI |
 
-## Installing Tocin
+Or use the quick-install one-liners (they fetch the latest GitHub Release):
 
-### Using the Official Installer
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/tafolabi009/TocinLang/master/installer/get-tocin.sh | sh
+```
 
-1. Download the latest Tocin installer from the [official website](https://tocin.io/downloads).
-2. Run the installer and follow the on-screen instructions.
-3. Verify the installation by opening a terminal or command prompt and running:
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/tafolabi009/TocinLang/master/installer/install.ps1 | iex
+```
+
+The installed packages are **self-contained**: compiler, runtime, the full
+standard library, docs, examples, an uninstaller — and a bundled linker, so
+compiling to native executables needs **no C compiler on your machine**.
+
+### Option B — build from source
+
+You need CMake ≥ 3.16, a C++20 compiler, and LLVM 18–22 dev packages
+(see [BUILDING.md](BUILDING.md)):
+
+```bash
+git clone https://github.com/tafolabi009/TocinLang.git
+cd TocinLang
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DWITH_V8=OFF -DLLVM_DIR=$(llvm-config-18 --cmakedir)
+cmake --build build -j
+```
+
+This produces `build/tocin`.
+
+### Verify
 
 ```bash
 tocin --version
 ```
 
-This should display the version of the Tocin compiler you installed.
-
-### Using Package Managers
-
-#### Windows (via Chocolatey)
-
-```bash
-choco install tocin
-```
-
-#### macOS (via Homebrew)
-
-```bash
-brew install tocin
-```
-
-#### Linux (via Apt for Ubuntu/Debian)
-
-```bash
-sudo apt update
-sudo apt install tocin
-```
-
-### Building from Source
-
-For advanced users who want to build Tocin from source:
-
-1. Ensure you have a C++ compiler (GCC 8+, Clang 10+, or MSVC 2019+), CMake 3.15+, and Git installed.
-2. Clone the repository:
-
-```bash
-git clone https://github.com/tocin-lang/tocin-compiler.git
-cd tocin-compiler
-```
-
-3. Build the compiler:
-
-```bash
-mkdir build && cd build
-cmake ..
-cmake --build . --config Release
-```
-
-4. Install the compiler:
-
-```bash
-cmake --install .
-```
-
-## Setting Up Your Development Environment
-
-### Command Line Tools
-
-The basic Tocin installation includes:
-
-- `tocin`: The compiler
-- `tocin-fmt`: Code formatter
-- `tocin-doc`: Documentation generator
-- `tocin-pkg`: Package manager
-
-### Integrated Development Environment (IDE) Support
-
-Tocin has excellent IDE support through plugins:
-
-#### Visual Studio Code
-
-1. Install Visual Studio Code
-2. Open the Extensions view (Ctrl+Shift+X or Cmd+Shift+X)
-3. Search for "Tocin"
-4. Install the "Tocin Language Support" extension
-
-The extension provides:
-- Syntax highlighting
-- Code completion
-- Error diagnostics
-- Code navigation
-- Refactoring tools
-
-#### JetBrains IDEs (IntelliJ IDEA, CLion, etc.)
-
-1. Open Settings/Preferences
-2. Go to Plugins > Marketplace
-3. Search for "Tocin"
-4. Install the "Tocin" plugin
-
-#### Other Editors
-
-- **Vim/Neovim**: Install the `tocin.vim` plugin
-- **Emacs**: Install the `tocin-mode` package
-- **Sublime Text**: Install the "Tocin" package from Package Control
-
-## Your First Tocin Program
-
-Let's write a simple "Hello, World!" program to verify your setup.
-
-1. Create a new file named `hello.to`
-2. Add the following code:
+## 2. Your first program
 
 ```tocin
-def main() -> int {
-    println("Hello, World!");
+// hello.to
+def main() {
+    println("Hello from Tocin!");
     return 0;
 }
 ```
 
-3. Compile and run the program:
+Run it immediately with the JIT — no separate build step:
 
 ```bash
-tocin build hello.to
-./hello
+tocin hello.to --run
 ```
 
-You should see "Hello, World!" printed to the console.
+Or compile a native executable:
 
-### Understanding the Hello World Program
+```bash
+tocin hello.to -o hello
+./hello                     # (hello.exe on Windows)
+```
 
-Let's break down the Hello World program:
+The process exit code is whatever `main` returns.
+
+## 3. Start a project
+
+```bash
+tocin new myapp
+cd myapp
+tocin main.to --run
+```
+
+`tocin new` scaffolds a directory with `main.to`, a `README.md`, and a
+`.gitignore`.
+
+## 4. The commands you'll use daily
+
+| Command | What it does |
+|---|---|
+| `tocin app.to --run` | JIT-compile and run right now (fastest iteration loop). |
+| `tocin app.to -o app` | Build a native executable. `-o app.ll` / `app.s` / `app.o` emit IR / assembly / an object instead. |
+| `tocin check app.to` | Typecheck only — full strict diagnostics, no codegen. Great as a pre-commit or CI gate. |
+| `tocin doc app.to` | Print Markdown API docs generated from signatures and the `//` comments above them. |
+| `tocin app.to -o app -O3 --native` | Maximum optimization, tuned to your CPU. Default is `-O2`. |
+
+When something is wrong, the compiler tells you precisely where and often what
+you meant:
+
+```text
+app.to:3:8: error [T013]: Cannot assign to constant 'X' (declared with `const`). Use `let` for a mutable binding.
+    3 |     X = 6;
+      |        ^
+1 error generated.
+```
+
+## 5. Use the standard library
+
+The stdlib ships with the installer (34 modules — math, data structures,
+strings, JSON, testing, ML, web, and more). Import what you need; names are
+global after import:
 
 ```tocin
-def main() -> int {
-    println("Hello, World!");
+import std.math;
+
+def main() {
+    println("{}", clamp(15, 0, 10));   // 10
     return 0;
 }
 ```
 
-- `def main() -> int {`: Defines the main function, which is the entry point of the program. It returns an integer.
-- `println("Hello, World!");`: Calls the `println` function to print a string to the console.
-- `return 0;`: Returns the value 0, indicating successful execution.
+The installer's launcher sets `TOCIN_PATH` so imports just work; when running
+a source checkout, `export TOCIN_PATH=/path/to/TocinLang/stdlib`.
 
-## Creating a More Complex Program
+## 6. Where to next
 
-Let's create a slightly more complex program that calculates the factorial of a number:
-
-```tocin
-def factorial(n: int) -> int {
-    if (n <= 1) {
-        return 1;
-    }
-    return n * factorial(n - 1);
-}
-
-def main() -> int {
-    println("Calculate factorials");
-    
-    for (let i = 1; i <= 10; i++) {
-        println("Factorial of " + i.toString() + " is " + factorial(i).toString());
-    }
-    
-    return 0;
-}
-```
-
-Save this as `factorial.to`, then compile and run it:
-
-```bash
-tocin build factorial.to
-./factorial
-```
-
-## Project Structure
-
-For larger projects, Tocin uses a project structure with a configuration file. Here's how to create a new project:
-
-1. Create a new directory for your project:
-
-```bash
-mkdir my_project
-cd my_project
-```
-
-2. Initialize a new Tocin project:
-
-```bash
-tocin init
-```
-
-This creates a basic project structure:
-
-```
-my_project/
-├── src/
-│   └── main.to
-├── tests/
-├── .gitignore
-└── tocin.toml
-```
-
-3. The `tocin.toml` file contains your project configuration:
-
-```toml
-[package]
-name = "my_project"
-version = "0.1.0"
-authors = ["Your Name <your.email@example.com>"]
-
-[dependencies]
-# Add dependencies here
-```
-
-4. Build and run your project:
-
-```bash
-tocin build
-./out/my_project
-```
-
-## Using the Package Manager
-
-Tocin has a built-in package manager called `tocin-pkg`. Here's how to use it:
-
-1. Add a dependency to your `tocin.toml` file:
-
-```toml
-[dependencies]
-json = "1.0.2"
-```
-
-2. Install the dependency:
-
-```bash
-tocin-pkg install
-```
-
-3. Use the package in your code:
-
-```tocin
-import json;
-
-def main() -> int {
-    let data = json.parse("{\"name\": \"John\", \"age\": 30}");
-    println("Name: " + data["name"].toString());
-    return 0;
-}
-```
-
-## Debugging
-
-Tocin integrates with common debuggers like GDB and LLDB. To compile with debug information:
-
-```bash
-tocin build --debug
-```
-
-Then use your debugger:
-
-```bash
-gdb ./out/my_project
-```
-
-## Next Steps
-
-Now that you've set up your environment and written your first programs, you're ready to explore more of what Tocin has to offer:
-
-1. Continue to [Language Basics](03_Language_Basics.md) to learn more about Tocin's syntax and features
-2. Explore the [Standard Library](04_Standard_Library.md) to see what built-in functionality is available
-3. Check out the [Tocin Cookbook](../cookbook/README.md) for practical examples and recipes
-
-Happy coding!
+- **Learn the language**: [tutorial.md](tutorial.md) — every feature, with
+  runnable code.
+- **Look something up**: [language-reference.md](language-reference.md) and
+  [stdlib-reference.md](stdlib-reference.md).
+- **Explore the stdlib**: [04_Standard_Library.md](04_Standard_Library.md).
+- **Run the examples**: `tocin ~/.tocin/share/examples/hello.to --run`
+  (installed) or the `examples/` directory of a checkout.
