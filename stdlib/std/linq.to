@@ -1,9 +1,9 @@
 // Tocin standard library: LINQ-style collection operations over int lists.
 //
-// Tocin does not yet have first-class lambdas, so transforms come in two forms:
-//   * reductions/aggregations that return a scalar, and
-//   * `*Into` transforms that write into a caller-allocated destination list.
-// Booleans are represented as int (0/1), matching std.list / std.math.
+// These are the allocation-light variants: reductions/aggregations that
+// return a scalar, and `*Into` transforms that write into a caller-allocated
+// destination list. For higher-order map/filter/fold with lambda callbacks,
+// use std.functional. Booleans are int (0/1), matching std.list / std.math.
 
 // ---- Reductions / aggregations ----
 

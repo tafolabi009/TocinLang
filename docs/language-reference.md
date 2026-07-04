@@ -2,8 +2,8 @@
 
 This is the authoritative reference for the Tocin programming language as
 implemented by the compiler in this repository. Tocin is a **statically typed,
-compiled** language that lowers to **LLVM 18** IR and can either be JIT-executed
-or compiled to a native object/executable.
+compiled** language that lowers to **LLVM IR (LLVM 18–22)** and can either be
+JIT-executed or compiled to a native object/executable.
 
 Every nontrivial construct documented here has been verified by compiling and
 running a snippet with the in-tree compiler. Where a feature is lexed but not
@@ -110,18 +110,24 @@ let const def async await class struct enum trait impl
 if elif else while for in return match case default
 import lambda new delete try catch finally throw
 go select channel and or true false None void self
-extern break continue
+extern break continue switch defer yield
 ```
 
 `break` and `continue` are fully implemented and work in every loop form (see
-[§4](#4-statements)).
+[§4](#4-statements)). `switch` is an alias of `match`, `defer` schedules a
+statement to run at function return, and `yield` defines generator functions
+([§5](#5-functions)).
 
 The following are reserved by the lexer but **not** wired into the grammar/
-codegen and are best avoided as identifiers: `from switch interface pub priv
+codegen and are best avoided as identifiers: `from interface pub priv
 static final abstract virtual override super null undefined typeof instanceof
-as is where yield generator coroutine spawn join mutex lock unlock atomic
+as is where generator coroutine spawn join mutex lock unlock atomic
 volatile move borrow constexpr inline export module package namespace using
-with defer panic recover assert debug trace log warn error fatal`.
+with panic recover assert`.
+
+> `debug`, `trace`, `log`, `warn`, `error`, and `fatal` are **ordinary
+> identifiers** — they were unreserved so that names like the `log(x)` math
+> builtin and user-defined `error(...)` helpers work.
 
 `macro` is **not** a reserved keyword — it is recognized as an ordinary
 identifier by a token-level preprocessing pass (see [§15](#15-macros)).
@@ -187,8 +193,9 @@ Rules (verified):
 * `let x: int = 5;` annotates explicitly. An initializer whose type does not
   match the annotation is an error unless it is a numeric widen/narrow that the
   compiler can cast (int↔int, float↔float).
-* `const` is parsed and behaves like `let` for codegen (no enforced
-  immutability today).
+* `const` declares an **immutable binding** — assigning to it later is a
+  compile error:
+  `error [T013]: Cannot assign to constant 'X' (declared with `const`)`.
 
 There is a special rule for **function-typed locals initialized from a call** —
 see [§5](#5-functions).
@@ -208,6 +215,7 @@ see [§5](#5-functions).
 | Logical | `and` / `&&`, `or` / `\|\|` | `and`/`&&` are the same operator; `or`/`\|\|` likewise. |
 | Unary | `-x`, `!x`, `~x` | Numeric negation; boolean (and integer) logical-not; integer bitwise-not. |
 | Compound assignment | `+=` `-=` `*=` `/=` `%=` | `x op= e` is shorthand for `x = x op e`. Valid on variables, array elements (`arr[i] += e`), and strings (`s += t` concatenates). |
+| Conditional (ternary) | `cond ? a : b` | Evaluates `a` if `cond` is true, else `b`; only the taken branch is evaluated. Right-associative: `c1 ? x : c2 ? y : z` is `c1 ? x : (c2 ? y : z)`. |
 | Null safety | `?.`, `?:`, `!!` | Safe navigation, elvis/coalesce, force-unwrap. See [§12](#12-null-safety). |
 | Coalesce | `??` | Synonym for `?:`. |
 | Channel | `<-` | `ch <- v` sends; `<-ch` receives. See [§14](#14-concurrency). |
@@ -229,19 +237,27 @@ This is the precedence as implemented by the recursive-descent parser
 | Level | Operators | Associativity |
 |---|---|---|
 | 1 (loosest) | `=` and compound `+= -= *= /= %=` (assignment) | right |
-| 2 | `?:`, `??` (elvis / coalesce) | left |
-| 3 | `or` / `\|\|` | left |
-| 4 | `and` / `&&` | left |
-| 5 | `\|` (bitwise OR) | left |
-| 6 | `^` (bitwise XOR) | left |
-| 7 | `&` (bitwise AND) | left |
-| 8 | `==`, `!=` | left |
-| 9 | `<`, `<=`, `>`, `>=` | left |
-| 10 | `<<`, `>>` (shifts) | left |
-| 11 | `+`, `-` | left |
-| 12 | `*`, `/`, `%` | left |
-| 13 (prefix) | unary `-`, `!`, `~`, `<-` (receive), `await`, `new`, `delete` | right |
-| 14 (tightest) | call `f()`, member `.`, safe member `?.`, index `[]`, force-unwrap `!!` | left (postfix) |
+| 2 | `cond ? a : b` (ternary conditional) | right |
+| 3 | `?:`, `??` (elvis / coalesce) | left |
+| 4 | `or` / `\|\|` | left |
+| 5 | `and` / `&&` | left |
+| 6 | `\|` (bitwise OR) | left |
+| 7 | `^` (bitwise XOR) | left |
+| 8 | `&` (bitwise AND) | left |
+| 9 | `==`, `!=` | left |
+| 10 | `<`, `<=`, `>`, `>=` | left |
+| 11 | `<<`, `>>` (shifts) | left |
+| 12 | `+`, `-` | left |
+| 13 | `*`, `/`, `%` | left |
+| 14 (prefix) | unary `-`, `!`, `~`, `<-` (receive), `await`, `new`, `delete` | right |
+| 15 (tightest) | call `f()`, member `.`, safe member `?.`, index `[]`, force-unwrap `!!` | left (postfix) |
+
+The ternary is right-associative — `1 ? 2 : 0 ? 3 : 4` parses as
+`1 ? 2 : (0 ? 3 : 4)` and yields `2` — and only the taken branch is evaluated:
+
+```tocin
+let m = a > b ? a : b;     // max
+```
 
 This is the standard C-style ordering: the bitwise operators bind looser than
 comparison, the shifts bind between comparison and `+`/`-`, and unary `~` binds
@@ -475,6 +491,24 @@ def add(a: int, b: int) {   // inferred -> int
 }
 ```
 
+### Default parameter values
+
+A trailing parameter may declare a default with `= expr` after its type (the
+type annotation is **required** on a defaulted parameter). Call sites that omit
+the trailing arguments get the defaults filled in:
+
+```tocin
+def f(a: int, b: int = 10) -> int { return a + b; }
+
+def main() {
+    println("{} {}", f(1), f(1, 2));   // 11 3
+    return 0;
+}
+```
+
+`def g(a: int, b = 7)` — a default without a type — is a compile error.
+Defaulted parameters must come after all non-defaulted ones.
+
 ### Recursion & forward references
 
 Functions may call themselves and may call functions declared later in the file
@@ -529,10 +563,25 @@ println("{}", apply(lambda (x: int) -> int x * x, 9));  // 81
 
 ### Capturing closures
 
-A lambda **closes over the enclosing locals it references, capturing them by
-value** (a snapshot taken when the lambda is created). Because the capture is a
-copy, later mutations of the original variable do not change what the lambda
-sees, and the lambda cannot write back to the original:
+A lambda closes over the enclosing locals it references. Capture is
+**by value for reads and by reference for writes**:
+
+* a closure that only **reads** a captured local takes a snapshot at creation
+  time — later mutations of the original do not change what it sees;
+* a closure that **assigns** to a captured local shares the underlying cell —
+  the write is visible in the enclosing scope after the closure runs:
+
+```tocin
+def main() -> int {
+    let count = 0;
+    let inc = lambda () -> int count = count + 1;   // writes `count`
+    inc(); inc(); inc();
+    println("{}", count);      // 3 — the mutation is visible outside
+    return count;
+}
+```
+
+The read-only (snapshot) behavior:
 
 ```tocin
 def main() -> int {
@@ -561,9 +610,11 @@ def main() -> int {
 }
 ```
 
-> Capture is **by value only** — there is no capture by reference. See
-> [§20](#20-limitations--not-yet-supported). If you need a non-capturing helper,
-> a nested `def` (below) is also available.
+> Read-only captures are snapshots; written captures share the cell (see
+> `examples/byref_closures.to`). The remaining gap is an **escaping** written
+> capture — a write-capturing closure that outlives its defining frame — see
+> [§20](#20-limitations--not-yet-supported). If you need a non-capturing
+> helper, a nested `def` (below) is also available.
 
 ### Function-typed locals
 
@@ -597,6 +648,27 @@ capture.
 def main() -> int {
     def dbl(x: int) -> int { return x * 2; }
     return dbl(21);   // 42
+}
+```
+
+### Generator functions (`yield`)
+
+A function whose body contains `yield` is a **generator**: calling it runs the
+body and collects every yielded value into a sequence, which `for` then walks.
+Collection is **eager** (finite sequences — the generator runs to completion
+when called; truly lazy/infinite generators are future work). The declared
+return type is the **element** type:
+
+```tocin
+def counter(n: int) -> int {
+    for i in 0..n { yield i; }
+}
+
+def main() -> int {
+    let s = 0;
+    for v in counter(5) { s = s + v; }
+    println("{}", s);      // 10  (0+1+2+3+4)
+    return s;
 }
 ```
 
@@ -677,12 +749,16 @@ def main() {
 
 Notes / current behavior:
 
-* Traits are essentially a way to declare and group method signatures. `impl`
-  blocks attach concrete methods to the named type; calls are resolved
-  statically by receiver type.
-* Trait *bounds* on generics are parsed (`<T: SomeTrait>`) but **ignored** —
-  there is no constraint checking or dynamic dispatch through trait objects.
-  See [TRAITS.md](TRAITS.md) for the broader design intent.
+* `impl` blocks attach concrete methods to the named type; when the receiver's
+  concrete type is known, calls resolve statically.
+* **Trait bounds are enforced.** `def f<T: Bound>(...)` rejects, at compile
+  time, a type argument that does not implement `Bound`, and trait methods
+  called on the bounded parameter dispatch to the concrete type.
+* **Trait objects (dynamic dispatch) work.** A value typed as a trait — a
+  parameter, a `let`, or an element of `list<Trait>` — carries its concrete
+  type and dispatches method calls virtually, so one collection can hold many
+  concrete types: `let xs: list<Shape> = [Circle(5), Rect(2, 3)];`. See
+  `examples/trait_objects.to`.
 
 ---
 
@@ -1184,6 +1260,35 @@ Each receive case is `case v = <-ch: { … }` (the `v =` binding is optional).
 The values moved through channels are 64-bit slots (see
 [§18](#18-memory-model--abi)). See [CONCURRENCY.md](CONCURRENCY.md) for more.
 
+### `async` / `await`
+
+`async def` declares an asynchronous function and `await` retrieves its
+result. The semantics today are **eager**: the async body executes on the
+calling path, and `await f` evaluates to the completed result — correct
+composition in expressions and across async calls, without true suspension.
+(The cooperative M:N scheduler that would suspend a pending `await` and run
+other tasks on a worker pool is designed but not yet wired in — see
+[async-scheduler-design.md](async-scheduler-design.md). Use goroutines +
+channels for actual parallelism.)
+
+```tocin
+async def slow(n: int) -> int {
+    sleepMs(5);
+    return n * 2;
+}
+
+def main() -> int {
+    let f = slow(21);     // starts the async computation
+    let v = await f;      // suspends until it completes
+    println("{}", v);     // 42
+    return v;
+}
+```
+
+`await` is a prefix operator (it binds with the other unary operators — see
+[§3](#3-operators--precedence)). Async composes with goroutines and channels;
+`--no-async` disables the feature.
+
 ---
 
 ## 15. Macros
@@ -1331,14 +1436,17 @@ x86-64 SysV ABI — use `-> i32` if you need an exact C `int`.
 ## 18. Memory model & ABI
 
 * **Heap allocation.** Class instances, `Option`/`Result` records, array/list
-  literals, channels, and dynamic collections live on the heap (via `malloc` /
-  runtime allocators). Class/array/channel values are passed around as **opaque
-  pointers**.
-* **No automatic memory management.** There is no garbage collector and no
-  automatic destruction; heap allocations are **leaked** for the program
-  lifetime unless an explicit free builtin is called (`vecFree`, `mapFree`).
-  `new`/`delete` are parsed but allocate stack-locally and are not a general
-  heap-management facility. For typical short-lived programs the leak is benign.
+  literals, channels, and dynamic collections live on the heap, allocated
+  through the GC-backed runtime allocator. Class/array/channel values are
+  passed around as **opaque pointers**.
+* **Garbage collection.** Heap memory — instances, strings, closures, arrays,
+  `Option`/`Result` records, vectors, maps — is reclaimed automatically by the
+  **Boehm conservative collector**, so long-running programs don't leak.
+  `free` / `vecFree` / `mapFree` remain for eager release; `--no-gc` maps
+  allocation to plain `malloc` with no collection (for freestanding or
+  externally-managed environments). RAII destructors (`__del__`) and `defer`
+  give deterministic cleanup on top of the GC. `new`/`delete` are parsed but
+  are not the general heap-management facility.
 * **Arrays.** An array literal `[a, b, c]` is a flat heap block laid out as
   `[i64 length][elem 0][elem 1]…`. `len(arr)` reads the length word; `arr[i]`
   computes `base + 8 + i*sizeof(elem)`. The element type is tracked from the
@@ -1365,6 +1473,9 @@ x86-64 SysV ABI — use `-> i32` if you need an exact C `int`.
 
 ```text
 tocin [options] FILE.to
+tocin check FILE.to        # typecheck only (no codegen); exit 0 if clean
+tocin new NAME             # scaffold a new project directory
+tocin doc FILE.to          # generate Markdown API docs to stdout
 ```
 
 | Option | Effect |
@@ -1372,10 +1483,43 @@ tocin [options] FILE.to
 | `--run` (alias `--jit`) | JIT-compile and run immediately. The program's exit code is `main`'s return value. |
 | `-o <file>` | Write output. The extension selects the format: `.ll` = LLVM IR, `.s` = assembly, `.o` = object file, anything else = **native executable**. |
 | `-O0` / `-O1` / `-O2` / `-O3` | Optimization level. **Default is `-O2`.** |
+| `--native` | Tune output for the build machine's CPU (POPCNT/AVX reach the vectorizer); the binary is not portable to older CPUs. |
+| `--permissive` | Downgrade type errors to warnings and compile anyway. Not recommended — strict is the supported mode. |
+| `--freestanding` | Emit a no-libc/no-GC relocatable object for kernel / bare-metal work (link with `-nostdlib`). |
+| `--no-gc` | Link without the garbage collector (allocation falls back to `malloc`). |
+| `--borrow-check` | Enable the opt-in move / use-after-move checker. |
 | `--dump-ir` | Print the generated LLVM IR to stdout. |
 | `--target <native\|wasm>` | Compilation target (native is the supported path). |
 | `--no-ffi`, `--no-concurrency`, `--no-advanced`, `--no-macros`, `--no-async` | Disable the corresponding feature/pass. |
+| `--version` / `-V` | Print the compiler version. |
 | `--help` | Show usage. |
+
+### Diagnostics
+
+Type checking is **strict by default**: unknown identifiers, wrong argument
+counts (builtins included), and type mismatches are hard errors, rendered
+rustc-style — the offending source line, a caret underline, colors on
+terminals (respects `NO_COLOR`), and a `did you mean '…'?` suggestion when a
+similarly-spelled name exists — followed by an `N errors generated.` summary:
+
+```text
+app.to:3:8: error [T013]: Cannot assign to constant 'X' (declared with `const`). Use `let` for a mutable binding.
+    3 |     X = 6;
+      |        ^
+1 error generated.
+```
+
+`--permissive` downgrades type errors to warnings; `tocin check file.to` runs
+just the checker (no codegen) and exits 0 on a clean file.
+
+### Runtime traps
+
+Integer division/modulo by zero and out-of-bounds indexing abort with a
+located panic instead of silently corrupting state:
+
+```text
+panic: integer division by zero at app.to:4:16
+```
 
 Examples:
 
@@ -1397,13 +1541,11 @@ Known gaps in the current implementation (verified against the compiler):
 
 * **No power operator `**` and no increment/decrement `++` / `--`.** Use the
   `pow()` builtin and `x += 1` / `x -= 1`. ([§3](#3-operators--precedence))
-* **`switch` aliases `match`; `defer` runs cleanup at function return.** Prefer `match` / `case` for
-  multi-way branching ([§10](#10-pattern-matching)); there is no `defer`
-  facility (use `try`/`finally` for cleanup). ([§11](#11-error-handling))
-* **Closures capture by value (snapshot), not by reference.** Mutating the
-  original after capture does not change the captured copy, and the lambda
-  cannot write back to the original. Lambda bodies are a **single expression**
-  (no block). ([§5](#5-functions))
+* **Closure capture is by value for reads, by reference for writes.** A
+  read-only capture is a snapshot (mutating the original afterward doesn't
+  change it); a written capture shares the cell. An **escaping** written
+  capture (outliving its defining frame) is not supported yet. Lambda bodies
+  are a **single expression** (no block). ([§5](#5-functions))
 * **Nested `def` functions are non-capturing** — they are lifted to module
   scope and cannot see the enclosing function's locals; use a lambda to
   capture. ([§5](#5-functions))
@@ -1413,23 +1555,18 @@ Known gaps in the current implementation (verified against the compiler):
 * **Exceptions carry an integer payload only**; there is no exception type
   hierarchy, no typed `catch`, and no bare `throw;` rethrow.
   ([§11](#11-error-handling))
-* **Trait bounds on generics are ignored**; there is no constraint checking and
-  no trait-object dynamic dispatch. Generics have **no explicit type-argument
-  syntax** (turbofish) — types are inferred. ([§7](#7-traits--impl),
-  [§8](#8-generics))
-* **No garbage collection**; heap allocations (strings from concatenation,
-  closures, array/list literals, `Option`/`Result`, vectors, maps, channels)
-  are **not freed automatically** and leak for the process lifetime. Manual
-  `vecFree` / `mapFree` exist for the dynamic collections. ([§18](#18-memory-model--abi))
-* **`const` is not enforced** (behaves like `let`). ([§2](#2-types))
+* **No explicit generic type arguments** (turbofish) — type arguments are
+  always inferred from the call/constructor site. A generic class whose type
+  argument is itself a generic class (e.g. `Box<Box<int>>`) is **not supported
+  yet**; generics over plain classes (`Box<W>`) work. ([§8](#8-generics))
 * **Dictionary literals** construct a value, but there is no rich, ergonomic
   dict API at the language level; the `map*` builtins are the practical
   key/value store. ([§21](#21-built-in-function-reference))
 * **Python / JavaScript FFI are not functional** — only the C path works.
   ([§17](#17-ffi))
-* Many lexer keywords (`interface`, `yield`, `async`/`await` beyond parsing,
-  etc.) are reserved but not implemented end-to-end; avoid them as identifiers
-  and don't rely on them.
+* A few lexer keywords (`interface`, `spawn`, `mutex`, `atomic`, `volatile`,
+  `move`, `borrow`, …) remain reserved but unimplemented; avoid them as
+  identifiers.
 
 ---
 
@@ -1469,6 +1606,10 @@ print("a"); print("b"); println("c");  // abc
 | `abs(x)` | numeric → same type | Absolute value (int or float). |
 | `min(a, b)` / `max(a, b)` | numeric → same type | Two-argument min/max. |
 
+> `sqrt`, `fabs`, `floor`, `ceil`, `round`, and `pow` lower to LLVM intrinsics,
+> so loops over them vectorize at `-O2`/`-O3` (this is why the `sqrtsum`
+> benchmark kernel beats its libm-calling C equivalent).
+
 ```tocin
 println("{}", pow(2.0, 10.0));  // 1024
 println("{}", sqrt(16.0));      // 4
@@ -1486,7 +1627,7 @@ Arrays also support `arr[i]` (read) and `arr[i] = v` (write).
 ### Dynamic vector (heap, 64-bit slots)
 
 `vecNew()`, `vecPush(v, x)`, `vecGet(v, i)`, `vecSet(v, i, x)`, `vecLen(v)`,
-`vecPop(v)`, `vecFree(v)`.
+`vecPop(v)`, `vecToArray(v)`, `vecFree(v)`.
 
 ```tocin
 let v = vecNew();
@@ -1509,8 +1650,12 @@ println("{} {}", mapGet(m, 2), mapHas(m, 3));  // 200 0
 ### Strings
 
 `strLen(s)`, `charAt(s, i)`, `substring(s, a, b)`, `strEq(a, b)`,
-`strCmp(a, b)`, `indexOfChar(s, c)`, `intToStr(n)`, `strToInt(s)`,
-`charToStr(c)`. String concatenation uses `+`.
+`strCmp(a, b)`, `indexOfChar(s, c)`, `strIndexOf(s, sub)`,
+`strContains(s, sub)`, `startsWith(s, p)`, `endsWith(s, p)`, `toUpper(s)`,
+`toLower(s)`, `intToStr(n)`, `strToInt(s)`, `charToStr(c)`,
+`bufToStr(buf, n)` (copy `n` bytes from a raw buffer into a new string),
+`strFromAddr(p)` (view a raw address as a NUL-terminated string).
+String concatenation uses `+`.
 
 ```tocin
 let s = "hello";
@@ -1521,6 +1666,36 @@ println("{} {} {}", strLen(s), charAt(s, 1), strEq("a", "a"));  // 5 101 1
 
 `readFile(path)` → string, `writeFile(path, content)`, `appendFile(path, content)`,
 `readLine()` → string (reads a line from stdin).
+
+### Networking, time, hashing, random (runtime services)
+
+| Group | Builtins |
+|---|---|
+| TCP sockets | `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpSend`, `tcpRecv`, `tcpClose` — clients and concurrent servers; see `examples/tcp_echo.to`. |
+| Time | `timeSec()`, `timeMs()` (wall clock), `monoNanos()` (monotonic), `sleepMs(n)`. |
+| Hashing | `hashStr(s)`, `hashBytes(p, n)` (FNV-1a), `hashInt(x)` (splitmix64). |
+| Random | `randSeed(s)`, `randInt()`, `randRange(lo, hi)` — seeded, reproducible. |
+| Process / env | `envGet(name)`, `sysExit(code)`, `input()`. |
+
+### Raw memory & kernel primitives
+
+`alloc(n)`, `free(p)`, `memcpy(dst, src, n)`, `memset(p, b, n)`,
+`ptrAdd(p, off)`, `loadByte`/`storeByte`/`loadInt`/`storeInt` for raw buffers;
+volatile MMIO accessors `volatileLoad8/16/32/64(p, off)` and
+`volatileStore8/16/32/64(p, off, v)` (never elided or merged, even at `-O3`);
+a full memory `fence()`; and inline assembly:
+
+```tocin
+asm("nop");                                  // template-only
+let fortytwo = asm("mov $$42, $0", "=r");    // one output
+let sum = asm("lea 100($1), $0", "=r,r", x); // output + input
+let tsc = asm("rdtsc", "={ax},~{dx}");       // register constraint + clobber
+```
+
+At most one `=`-output constraint is allowed; templates use AT&T syntax with
+`$0`, `$1`, … operands. Combined with `--freestanding` these are the
+primitives for MMIO device registers and kernel work — see
+`tests/jit/kernel_primitives.to` for a runnable tour.
 
 ### LINQ-style collection ops (require `import std.linq;`)
 
@@ -1538,5 +1713,10 @@ def main() {
 }
 ```
 
-See [LINQ.md](LINQ.md) and [STDLIB_GUIDE.md](STDLIB_GUIDE.md) for the broader
-standard library.
+For higher-order `map`/`filter`/`fold`/`zip` with function-value (lambda)
+callbacks, `import std.functional;` (`mapInts`, `filterInts`, …).
+
+See [LINQ.md](LINQ.md), [04_Standard_Library.md](04_Standard_Library.md), and
+[STDLIB_GUIDE.md](STDLIB_GUIDE.md) for the broader standard library — 34
+modules spanning math, data structures, ML (including `ml.ten` — Temporal
+Eigenstate Networks), web, game, GUI, audio, embedded, and more.

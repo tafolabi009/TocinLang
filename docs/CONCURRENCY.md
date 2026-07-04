@@ -12,17 +12,18 @@ To start a function in a new goroutine, use the `go` keyword:
 
 ```tocin
 // Define a function
-fn sayHello(name: string) {
+def sayHello(name: string) {
     println("Hello, " + name);
 }
 
 // Run it in a goroutine
 go sayHello("World");
 
-// Anonymous function in a goroutine
-go func() {
+// Any named function can be spawned
+def announce() {
     println("Running in a goroutine");
-}();
+}
+go announce();
 ```
 
 Goroutines are multiplexed onto a small number of OS threads, similar to Go's approach. This allows thousands of goroutines to run efficiently.
@@ -112,7 +113,7 @@ select {
 ### Fan-Out (Distribution)
 
 ```tocin
-fn fanOut() {
+def fanOut() {
     let work = Channel<int>(100);
     
     // Create 5 workers
@@ -129,7 +130,7 @@ fn fanOut() {
     work.close();
 }
 
-fn worker(id: int, work: Channel<int>) {
+def worker(id: int, work: Channel<int>) {
     for {
         match work.tryReceive() {
             Some(task) => println("Worker " + id.toString() + " processing " + task.toString()),
@@ -142,28 +143,23 @@ fn worker(id: int, work: Channel<int>) {
 ### Fan-In (Collection)
 
 ```tocin
-fn fanIn(input1: Channel<int>, input2: Channel<int>) -> Channel<int> {
+def collect(input: Channel<int>, merged: Channel<int>) {
+    for {
+        match input.tryReceive() {
+            Some(v) => merged.send(v),
+            None => break
+        }
+    }
+}
+
+def fanIn(input1: Channel<int>, input2: Channel<int>) -> Channel<int> {
     let merged = Channel<int>();
     
     // Start goroutine to collect from input1
-    go func() {
-        for {
-            match input1.tryReceive() {
-                Some(v) => merged.send(v),
-                None => break
-            }
-        }
-    }();
+    go collect(input1, merged);
     
     // Start goroutine to collect from input2
-    go func() {
-        for {
-            match input2.tryReceive() {
-                Some(v) => merged.send(v),
-                None => break
-            }
-        }
-    }();
+    go collect(input2, merged);
     
     return merged;
 }

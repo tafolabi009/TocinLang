@@ -1,1102 +1,432 @@
 # Tocin Standard Library
 
-The Tocin Standard Library provides a rich set of modules and functions that enable developers to build sophisticated applications without reinventing common functionality. This document provides an overview of the core modules available in the standard library.
+The Tocin standard library is a set of 34 modules written in pure Tocin,
+shipped as source under `stdlib/`. Every module builds on the compiler's
+built-in functions (`println`, `len`, `sqrt`, `vecNew`, `mapNew`, `alloc`,
+`tcpListen`, ...), which are always available with no import — see
+[stdlib-reference.md](stdlib-reference.md) for that list. Every function name
+and example in this document was verified against the in-tree source and, for
+complete programs, by running them with `build/tocin FILE.to --run`.
 
-## Table of Contents
+## Imports and `TOCIN_PATH`
 
-- [Tocin Standard Library](#tocin-standard-library)
-  - [Table of Contents](#table-of-contents)
-  - [System Modules](#system-modules)
-    - [system.io](#systemio)
-    - [system.time](#systemtime)
-    - [system.json](#systemjson)
-  - [Mathematics Modules](#mathematics-modules)
-    - [math.basic](#mathbasic)
-    - [math.linear](#mathlinear)
-    - [math.geometry](#mathgeometry)
-    - [math.stats](#mathstats)
-  - [Concurrency Modules](#concurrency-modules)
-    - [concurrency.coroutine](#concurrencycoroutine)
-    - [concurrency.channel](#concurrencychannel)
-  - [Data Structure Modules](#data-structure-modules)
-    - [collections.array](#collectionsarray)
-    - [collections.map](#collectionsmap)
-    - [collections.set](#collectionsset)
-    - [collections.list](#collectionslist)
-  - [Networking Modules](#networking-modules)
-    - [net.http](#nethttp)
-    - [net.server](#netserver)
-    - [net.advanced.rest](#netadvancedrest)
-  - [GUI Modules](#gui-modules)
-    - [gui.core](#guicore)
-    - [gui.widgets](#guiwidgets)
-    - [gui.layout](#guilayout)
-    - [gui.events](#guievents)
-  - [Game Development Modules](#game-development-modules)
-    - [game.engine](#gameengine)
-    - [game.graphics](#gamegraphics)
-    - [game.physics](#gamephysics)
-    - [game.input](#gameinput)
-    - [game.audio](#gameaudio)
-  - [Machine Learning Modules](#machine-learning-modules)
-    - [ml.model](#mlmodel)
-    - [ml.nn](#mlnn)
-    - [ml.optimizer](#mloptimizer)
-    - [ml.data](#mldata)
-    - [ml.preprocessing](#mlpreprocessing)
-
-## System Modules
-
-### system.io
-
-The `system.io` module provides functionality for file and directory operations.
+A dotted import maps to a relative file path; a string import is used as-is
+(the trailing `.to` is added if absent):
 
 ```tocin
-import system.io;
+import std.math;          // resolves to std/math.to
+import data.algorithms;   // resolves to data/algorithms.to
+import "std/math";        // same file, string form
+```
 
-// Reading a file
-let content = io.readFile("path/to/file.txt");
+For each import the compiler searches, in order:
 
-// Writing to a file
-io.writeFile("path/to/output.txt", "Hello, Tocin!");
+1. the directory of the importing file,
+2. the directory named by the **`TOCIN_PATH`** environment variable, if set,
+3. the compiled-in standard-library path.
 
-// Checking if a file exists
-if (io.fileExists("path/to/file.txt")) {
-    println("File exists");
+The installers create a launcher that sets `TOCIN_PATH` to the installed
+`stdlib/` automatically. When running from a source checkout, set it yourself:
+
+```sh
+TOCIN_PATH=/path/to/TocinLang/stdlib ./build/tocin program.to --run
+```
+
+**There is no namespacing.** An imported file's top-level declarations are
+merged into the program, so you call imported functions by their bare names
+(`gcd(12, 18)`, never `std.math.gcd(...)`). Stdlib names are prefixed by
+module or data structure (`listSum`, `strTrim`, `heapPush`, `tenScan`) to keep
+them unique. A few short names do repeat across distant domains (`countWhere`,
+`mix`, `step`); importing two modules that define the same name into one
+program is not supported — see [STDLIB_GUIDE.md](STDLIB_GUIDE.md).
+
+Two conventions run through the whole library:
+
+- **Booleans are `int`**: predicates return `1` (true) or `0` (false).
+- **Handles are `int`**: structures built on raw buffers (`heapNew`,
+  `tableNew`, `worldNew`, ...) return an `int` address; pass it to the
+  structure's functions and release it with the matching `*Free`.
+
+| Domain | Modules |
+|---|---|
+| `std` | `std/math`, `std/list`, `std/functional`, `std/linq`, `std/strings`, `std/strseq`, `std/json`, `std/testing` |
+| `data` | `data/algorithms`, `data/structures`, `data/collections` |
+| `math` | `math/basic`, `math/linear`, `math/geometry`, `math/stats`, `math/stats_advanced`, `math/differential` |
+| `ml` | `ml/neural_network`, `ml/deep_learning`, `ml/computer_vision`, `ml/ten` |
+| `web`, `net` | `web/http`, `web/websocket`, `net/advanced` |
+| `database` | `database/database` |
+| `game` | `game/engine`, `game/graphics`, `game/shader` |
+| `gui` | `gui/core`, `gui/widgets` |
+| `audio` | `audio/audio` |
+| `embedded` | `embedded/gpio` |
+| `scripting` | `scripting/automation` |
+| `pkg` | `pkg/manager` |
+
+## std — core utilities
+
+The `std` modules cover everyday programming: integer math (`std.math`),
+`list<int>` helpers (`std.list`), higher-order functions over int lists
+(`std.functional`), query-style reductions (`std.linq`, see
+[LINQ.md](LINQ.md)), string cleanup and parsing (`std.strings`), splitting and
+joining (`std.strseq`), a JSON parser/serializer (`std.json`), and a test
+harness (`std.testing`, see [STDLIB_GUIDE.md](STDLIB_GUIDE.md)).
+
+| Function | Module | Description |
+|---|---|---|
+| `gcd(a: int, b: int) -> int` | `std.math` | Greatest common divisor |
+| `isPrime(n: int) -> int` | `std.math` | Primality test |
+| `listSum(xs: list<int>) -> int` | `std.list` | Sum of the elements |
+| `listContains(xs: list<int>, target: int) -> int` | `std.list` | Membership test |
+| `mapInts(xs: list<int>, f: (int) -> int) -> list<int>` | `std.functional` | Apply a function value to every element |
+| `foldInts(xs: list<int>, init: int, f: (int, int) -> int) -> int` | `std.functional` | Left fold with a binary function |
+| `reduceSum(xs: list<int>) -> int` | `std.linq` | Sum reduction |
+| `strTrim(s: string) -> string` | `std.strings` | Strip surrounding whitespace |
+| `strParseIntOr(s: string, fallback: int) -> int` | `std.strings` | Parse an integer, with fallback |
+| `splitChar(s: string, delim: int) -> vector` | `std.strseq` | Split on a character code |
+| `joinStr(parts: vector, sep: string) -> string` | `std.strseq` | Join a vector of strings |
+| `jsonParse(s: string) -> int` | `std.json` | Parse JSON text into a node handle |
+
+`std.json` follows the handle convention: `jsonParse` returns a node you read
+with `jsonType`, `jsonAsInt`, `jsonAsString`, `jsonArrayGet`,
+`jsonObjectGet`, or the shortcut accessors `jsonGetInt(v, key, dflt)` and
+`jsonGetString(v, key, dflt)`; `jsonStringify(v)` serializes a node back to
+text.
+
+```tocin
+import std.strseq;
+import std.strings;
+
+def main() {
+    let parts = splitChar("alpha,beta,gamma", 44);   // ',' is char code 44
+    println("{}", joinStr(parts, " | "));
+    println("{}", strTrim("   padded   "));
+    println("{}", strParseIntOr("42", 0) + strParseIntOr("oops", -1));
+    return 0;
 }
+```
 
-// Creating a directory
-io.createDirectory("path/to/new/directory");
+```text
+alpha | beta | gamma
+padded
+41
+```
 
-// Listing directory contents
-let files = io.listDirectory("path/to/directory");
-for (let file of files) {
-    println(file);
+## data — algorithms and containers
+
+`data.algorithms` sorts and searches `list<int>` (quicksort, binary search,
+arg-min/max, counting). `data.structures` wraps the `vector`/`map` builtins
+into a stack, FIFO queue, integer set, and frequency counter.
+`data.collections` builds classic structures on raw buffers: a binary
+min-heap, union-find, bitset, ring buffer, string list, binary search tree,
+and a double-ended queue.
+
+| Function | Module | Description |
+|---|---|---|
+| `sort(xs: list<int>)` | `data.algorithms` | In-place quicksort |
+| `binarySearch(xs: list<int>, target: int) -> int` | `data.algorithms` | Index in a sorted list, `-1` if absent |
+| `argMax(xs: list<int>) -> int` | `data.algorithms` | Index of the largest element |
+| `stackPush(s, x)` / `stackPop(s)` | `data.structures` | LIFO stack over a `vector` |
+| `enqueue(q, x)` / `dequeue(q)` | `data.structures` | FIFO queue |
+| `setAdd(s, x)` / `setContains(s, x)` | `data.structures` | Integer set over a `map` |
+| `countAdd(c, x)` / `countOf(c, x)` | `data.structures` | Frequency counter |
+| `heapPush(h, x)` / `heapPop(h)` | `data.collections` | Binary min-heap (priority queue) |
+| `ufUnion(uf, a, b)` / `ufConnected(uf, a, b)` | `data.collections` | Union-find over disjoint sets |
+| `bstPut(t, key, value)` / `bstGet(t, key, dflt)` | `data.collections` | Binary search tree map |
+| `pushBack(d, x)` / `popFront(d)` | `data.collections` | Double-ended queue |
+| `bitSet(bs, i)` / `bitGet(bs, i)` | `data.collections` | Fixed-size bitset |
+
+```tocin
+import data.algorithms;
+import data.structures;
+
+def main() {
+    let xs = [9, 4, 7, 1, 4];
+    sort(xs);
+    println("{} {} {}", xs[0], xs[4], binarySearch(xs, 7));
+    let s = stackNew();
+    stackPush(s, 10);
+    stackPush(s, 20);
+    println("{} {}", stackPop(s), stackSize(s));
+    return 0;
 }
 ```
 
-### system.time
-
-The `system.time` module provides functionality for working with dates, times, and durations.
-
-```tocin
-import system.time;
-
-// Getting the current time
-let now = time.now();
-println("Current time: " + now.toString());
-
-// Creating a specific date and time
-let birthday = time.Date(1990, 5, 15, 14, 30, 0);
-
-// Formatting dates
-println(now.format("yyyy-MM-dd HH:mm:ss"));
-
-// Calculating duration
-let duration = now - birthday;
-println("Duration in days: " + duration.toDays());
-
-// Sleeping (pausing execution)
-println("Waiting for 2 seconds...");
-time.sleep(2000);  // Sleep for 2000 milliseconds
-println("Done waiting");
+```text
+1 9 3
+20 1
 ```
 
-### system.json
+## math — numerics
 
-The `system.json` module provides functionality for working with JSON data.
+`math.basic` adds constants (`PI`, `TAU`, `E`, `SQRT2`, `EPSILON`) and float
+and integer helpers on top of the math builtins. `math.linear` works on flat
+row-major matrices stored in `list<float>`; `math.geometry` provides 2-D and
+3-D vector math on scalar components; `math.stats` and `math.stats_advanced`
+cover descriptive statistics through regression and the normal distribution;
+`math.differential` does numeric calculus on function values.
 
-```tocin
-import system.json;
+| Function | Module | Description |
+|---|---|---|
+| `lerp(a: float, b: float, t: float) -> float` | `math.basic` | Linear interpolation |
+| `clampf(x, lo, hi) -> float` | `math.basic` | Clamp a float to a range |
+| `hypot(a: float, b: float) -> float` | `math.basic` | `sqrt(a*a + b*b)` without intermediate overflow |
+| `ipow(base: int, n: int) -> int` | `math.basic` | Integer power |
+| `matMul(a, b, dst, r, m, p)` | `math.linear` | Matrix product of flat row-major matrices |
+| `vecDot(a, b) -> float` / `vecNorm(a) -> float` | `math.linear` | Dot product / Euclidean norm |
+| `dist2(ax, ay, bx, by) -> float` | `math.geometry` | Distance between 2-D points |
+| `circleArea(r: float) -> float` | `math.geometry` | Area of a circle |
+| `mean(xs)` / `median(xs)` / `stddev(xs)` | `math.stats` | Descriptive statistics over `list<float>` |
+| `correlation(x, y) -> float` | `math.stats_advanced` | Pearson correlation |
+| `linearRegression(x, y, out)` | `math.stats_advanced` | Least squares; writes slope to `out[0]`, intercept to `out[1]` |
+| `derivative(f: (float) -> float, x: float) -> float` | `math.differential` | Numeric derivative of a function value |
 
-// Parsing JSON from a string
-let jsonString = "{\"name\": \"Alice\", \"age\": 30}";
-let data = json.parse(jsonString);
-
-// Accessing JSON data
-println("Name: " + data["name"]);
-println("Age: " + data["age"]);
-
-// Creating JSON objects
-let person = {
-    name: "Bob",
-    age: 25,
-    address: {
-        city: "New York",
-        country: "USA"
-    }
-};
-
-// Converting to JSON string
-let personJson = json.stringify(person);
-println(personJson);
-
-// Pretty printing JSON
-println(json.stringify(person, true));  // With pretty printing
-```
-
-## Mathematics Modules
-
-### math.basic
-
-The `math.basic` module provides basic mathematical functions and constants.
-
-```tocin
-import math.basic;
-
-// Mathematical constants
-println("Pi: " + Math.PI);
-println("Euler's number: " + Math.E);
-
-// Basic functions
-println("Square root of 16: " + Math.sqrt(16));
-println("Absolute value of -5: " + Math.abs(-5));
-println("5 raised to power 2: " + Math.pow(5, 2));
-
-// Trigonometric functions
-println("Sine of 30 degrees: " + Math.sin(Math.toRadians(30)));
-println("Cosine of 60 degrees: " + Math.cos(Math.toRadians(60)));
-println("Tangent of 45 degrees: " + Math.tan(Math.toRadians(45)));
-
-// Rounding
-println("Round 3.7: " + Math.round(3.7));
-println("Floor 3.7: " + Math.floor(3.7));
-println("Ceiling 3.2: " + Math.ceil(3.2));
-
-// Random numbers
-println("Random number between 0 and 1: " + Math.random());
-println("Random integer between 1 and 10: " + Math.floor(Math.random() * 10) + 1);
-```
-
-### math.linear
-
-The `math.linear` module provides functionality for linear algebra operations.
-
-```tocin
-import math.linear;
-
-// Creating vectors
-let v1 = new Vector2(3, 4);
-let v2 = new Vector2(1, 2);
-
-// Vector operations
-let v3 = v1 + v2;  // Addition
-let v4 = v1 - v2;  // Subtraction
-let dotProduct = v1.dot(v2);  // Dot product
-let magnitude = v1.magnitude();  // Magnitude
-let normalized = v1.normalize();  // Normalization
-
-// Creating matrices
-let m1 = new Matrix(2, 2);
-m1.set(0, 0, 1);  // Row 0, Col 0
-m1.set(0, 1, 2);  // Row 0, Col 1
-m1.set(1, 0, 3);  // Row 1, Col 0
-m1.set(1, 1, 4);  // Row 1, Col 1
-
-// Matrix operations
-let m2 = Matrix.identity(2);  // Identity matrix
-let m3 = m1 * m2;  // Matrix multiplication
-let determinant = m1.determinant();  // Determinant
-let transpose = m1.transpose();  // Transpose
-let inverse = m1.inverse();  // Inverse
-```
-
-### math.geometry
-
-The `math.geometry` module provides functionality for geometric calculations.
-
-```tocin
-import math.geometry;
-
-// Working with points
-let p1 = new Point(2, 3);
-let p2 = new Point(5, 7);
-let distance = p1.distanceTo(p2);
-
-// Working with lines
-let line = new Line(p1, p2);
-let length = line.length();
-let midpoint = line.midpoint();
-
-// Working with rectangles
-let rect = new Rectangle(10, 10, 100, 50);  // x, y, width, height
-let area = rect.area();
-let perimeter = rect.perimeter();
-
-// Working with circles
-let circle = new Circle(new Point(50, 50), 25);  // center, radius
-let circleArea = circle.area();
-let circumference = circle.circumference();
-
-// Checking if a point is inside a shape
-let isInside = rect.contains(new Point(15, 20));
-```
-
-### math.stats
-
-The `math.stats` module provides functionality for statistical calculations.
+`math.differential` also offers `integrateTrapezoid`, `integrateSimpson`,
+`newtonRoot`, `bisectRoot`, and `eulerIntegrate` — all taking
+`(float) -> float` function values (named functions or lambdas).
 
 ```tocin
 import math.stats;
+import math.linear;
 
-// Creating a dataset
-let data = [12, 15, 18, 22, 25, 27, 30];
-
-// Basic statistics
-let mean = stats.mean(data);
-let median = stats.median(data);
-let mode = stats.mode(data);
-let stdDev = stats.standardDeviation(data);
-let variance = stats.variance(data);
-
-// Range statistics
-let min = stats.min(data);
-let max = stats.max(data);
-let range = stats.range(data);
-
-// Percentiles
-let percentile75 = stats.percentile(data, 75);
-
-// Probability distributions
-let normalPdf = stats.normalPdf(0, 0, 1);  // PDF of standard normal at x=0
-let normalCdf = stats.normalCdf(1.96, 0, 1);  // CDF of standard normal at x=1.96
-```
-
-## Concurrency Modules
-
-### concurrency.coroutine
-
-The `concurrency.coroutine` module provides support for coroutines, which enable efficient asynchronous programming.
-
-```tocin
-import concurrency.coroutine;
-import system.time;
-
-// Define a function to be run as a coroutine
-def longTask(name: string, duration: int) -> string {
-    println(name + " started");
-    time.sleep(duration);
-    println(name + " completed after " + duration.toString() + "ms");
-    return name + " result";
-}
-
-// Spawn multiple coroutines
-def main() -> int {
-    println("Starting tasks");
-    
-    // Spawn coroutines
-    let task1 = coroutine.spawn(longTask, "Task 1", 1000);
-    let task2 = coroutine.spawn(longTask, "Task 2", 500);
-    let task3 = coroutine.spawn(longTask, "Task 3", 1500);
-    
-    // Wait for all tasks to complete and collect results
-    let results = coroutine.waitAll([task1, task2, task3]);
-    
-    println("All tasks completed");
-    for (let result of results) {
-        println("Result: " + result);
-    }
-    
+def main() {
+    let xs = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+    println("mean {}  stddev {}", mean(xs), stddev(xs));
+    let a = [1.0, 2.0, 2.0];
+    println("norm {}", vecNorm(a));
     return 0;
 }
 ```
 
-### concurrency.channel
+```text
+mean 5  stddev 2
+norm 3
+```
 
-The `concurrency.channel` module provides channels for communication between coroutines.
+## ml — machine learning
+
+`ml.neural_network` implements the numeric core of a multilayer perceptron:
+activations, a dense forward pass, softmax, MSE and cross-entropy losses, and
+`trainStep` — one in-place SGD step of a one-hidden-layer sigmoid MLP that
+returns the pre-update loss. `ml.deep_learning` adds evaluation metrics,
+weight initialization, and learning-rate schedules; `ml.computer_vision`
+processes grayscale images stored in raw byte buffers.
+
+| Function | Module | Description |
+|---|---|---|
+| `sigmoid(x)` / `reluf(x)` / `tanhf(x)` | `ml.neural_network` | Activation functions |
+| `softmax(src, dst)` | `ml.neural_network` | Softmax over a `list<float>` |
+| `denseForward(w, b, x, out, outN, inN)` | `ml.neural_network` | Dense layer: `out = W*x + b` |
+| `mseLoss(pred, target)` / `crossEntropy(pred, target)` | `ml.neural_network` | Loss functions |
+| `trainStep(w1, b1, w2, b2, x, y, h, o, inN, hidN, outN, lr) -> float` | `ml.neural_network` | One SGD step of a 2-layer sigmoid MLP |
+| `argmax(v: list<float>) -> int` | `ml.deep_learning` | Index of the largest score |
+| `accuracy(preds, labels, rows, classes) -> float` | `ml.deep_learning` | Classification accuracy |
+| `heScale(fanIn)` / `xavierScale(fanIn)` / `initWeights(w, scale, seed)` | `ml.deep_learning` | Weight initialization |
+| `lrExpDecay(lr0, decay, epoch)` / `lrStepDecay(lr0, factor, stepEpochs, epoch)` | `ml.deep_learning` | Learning-rate schedules |
+| `threshold` / `boxBlur` / `sobel` / `resize` | `ml.computer_vision` | Grayscale image operations on byte buffers |
+
+### ml.ten — Temporal Eigenstate Networks
+
+`ml.ten` is an implementation of **Temporal Eigenstate Networks (TEN)**: a
+sequence model that replaces attention with a spectral recurrence. Each layer
+projects the (layer-normed) input to K complex eigenstate drives, evolves them
+with a diagonal complex recurrence `c_k(t) = lambda_k * c_k(t-1) + beta_k(t)`
+where each `lambda_k = mag_k * e^(i*freq_k)` is a learned per-head complex
+eigenvalue, mixes the eigenstates with per-head block-diagonal coupling, and
+reconstructs the hidden state through a gated output projection plus a SiLU
+MLP, both with residual connections. The result is an exact `O(T*K)` causal
+convolution instead of `O(T^2)` attention. All tensors are flat row-major
+`list<float>`, batch size 1, with caller-owned weights.
+
+Key entry points: `tenEigenInit(mag, freq, K)` parameterizes the eigenvalues;
+`tenScan(br, bi, mag, freq, cr, ci, T, K)` runs the complex recurrence
+(`tenScanRegions` is a variant reading both drive halves from one buffer);
+`tenMix(cr, ci, coupling, scratch, T, K, heads)` applies the per-head
+coupling; `tenLayerNorm(x, out, T, D)` is the pre-norm;
+`tenLayerForward(...)` chains the full layer; and
+`tenClosedFormReal`/`tenClosedFormImag` give the analytic impulse response
+used to validate the scan.
 
 ```tocin
-import concurrency.channel;
-import concurrency.coroutine;
-import system.time;
+import ml.ten;
 
-// Producer function that sends values through a channel
-def producer(ch: Channel<int>, count: int) -> void {
-    for (let i = 1; i <= count; i++) {
-        println("Producing: " + i.toString());
-        ch.send(i);
-        time.sleep(100);
-    }
-    ch.close();  // Close the channel when done
-}
-
-// Consumer function that receives values from a channel
-def consumer(ch: Channel<int>) -> void {
-    while (true) {
-        let value = ch.tryReceive();
-        if (value != null) {
-            println("Consuming: " + value.toString());
-        } else {
-            // Channel is closed and empty
-            println("Channel closed");
-            break;
-        }
-    }
-}
-
-def main() -> int {
-    // Create a channel
-    let channel = new Channel<int>(5);  // Buffer size of 5
-    
-    // Spawn producer and consumer coroutines
-    coroutine.spawn(producer, channel, 10);
-    coroutine.spawn(consumer, channel);
-    
-    // Wait for both coroutines to finish
-    time.sleep(2000);
-    
+def main() {
+    let mag = [0.0, 0.0];
+    let freq = [0.0, 0.0];
+    tenEigenInit(mag, freq, 2);                       // K = 2 eigenstates
+    let br = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0];          // impulse at t = 0 (T x K)
+    let bi = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let cr = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let ci = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    tenScan(br, bi, mag, freq, cr, ci, 3, 2);         // T = 3 steps
+    println("state 0: {} {} {}", cr[0], cr[2], cr[4]);
     return 0;
 }
 ```
 
-## Data Structure Modules
-
-The Tocin Standard Library provides various data structure modules for efficient data management.
-
-For more detailed information on these modules and others in the standard library, please refer to the API reference documentation or use the built-in documentation tools:
-
-```tocin
-// Display help information for a specific module
-help(collections.array);
+```text
+state 0: 1 0.0474259 0.00224921
 ```
 
-### collections.array
-
-The `collections.array` module provides enhanced functionality for working with arrays.
-
-```tocin
-import collections.array;
-
-// Creating arrays
-let numbers = [1, 2, 3, 4, 5];
-let strings = ["apple", "banana", "cherry"];
-
-// Array operations
-numbers.push(6);  // Add an element to the end
-numbers.pop();    // Remove an element from the end
-numbers.insert(0, 0);  // Insert 0 at index 0
-numbers.remove(2);  // Remove element at index 2
-
-// Higher-order functions
-let doubled = numbers.map(n => n * 2);
-let evens = numbers.filter(n => n % 2 == 0);
-let sum = numbers.reduce((acc, n) => acc + n, 0);
-
-// Sorting
-numbers.sort();  // Sort in ascending order
-strings.sort((a, b) => b.compareTo(a));  // Sort in descending order
-
-// Finding elements
-let found = numbers.find(n => n > 3);
-let index = numbers.findIndex(n => n == 2);
-let includes = numbers.includes(5);
-
-// Slicing
-let sliced = numbers.slice(1, 3);  // Elements at index 1 and 2
-```
-
-### collections.map
-
-The `collections.map` module provides functionality for key-value pair collections.
-
-```tocin
-import collections.map;
-
-// Creating a map
-let userAges = new Map<string, int>();
-
-// Adding entries
-userAges.set("Alice", 30);
-userAges.set("Bob", 25);
-userAges.set("Charlie", 35);
-
-// Accessing entries
-let aliceAge = userAges.get("Alice");  // 30
-let unknownAge = userAges.get("Unknown");  // null
-
-// Checking if a key exists
-if (userAges.has("Bob")) {
-    println("Bob's age is " + userAges.get("Bob").toString());
-}
-
-// Removing entries
-userAges.delete("Charlie");
-
-// Getting all keys, values, or entries
-let keys = userAges.keys();
-let values = userAges.values();
-let entries = userAges.entries();
-
-// Iterating over a map
-for (let [name, age] of userAges) {
-    println(name + " is " + age.toString() + " years old");
-}
-
-// Getting the size of a map
-println("Map has " + userAges.size.toString() + " entries");
-```
-
-### collections.set
-
-The `collections.set` module provides functionality for unique value collections.
-
-```tocin
-import collections.set;
-
-// Creating a set
-let uniqueNumbers = new Set<int>();
-
-// Adding values
-uniqueNumbers.add(1);
-uniqueNumbers.add(2);
-uniqueNumbers.add(3);
-uniqueNumbers.add(1);  // Duplicate, will be ignored
-
-// Checking if a value exists
-if (uniqueNumbers.has(2)) {
-    println("Set contains 2");
-}
-
-// Removing values
-uniqueNumbers.delete(3);
-
-// Getting the size of a set
-println("Set has " + uniqueNumbers.size.toString() + " values");
-
-// Set operations
-let setA = new Set<int>([1, 2, 3]);
-let setB = new Set<int>([3, 4, 5]);
-
-let union = setA.union(setB);          // {1, 2, 3, 4, 5}
-let intersection = setA.intersection(setB);  // {3}
-let difference = setA.difference(setB);      // {1, 2}
-```
-
-### collections.list
-
-The `collections.list` module provides a doubly-linked list implementation.
-
-```tocin
-import collections.list;
-
-// Creating a linked list
-let list = new LinkedList<string>();
-
-// Adding elements
-list.addFirst("apple");  // Add to the front
-list.addLast("banana");  // Add to the end
-list.insert(1, "cherry");  // Insert at index 1
-
-// Accessing elements
-let first = list.first();  // "apple"
-let last = list.last();    // "banana"
-let item = list.get(1);    // "cherry"
-
-// Removing elements
-list.removeFirst();  // Remove from the front
-list.removeLast();   // Remove from the end
-list.remove(0);      // Remove at index 0
-
-// Iterating over a list
-for (let item of list) {
-    println(item);
-}
-
-// Getting the size of a list
-println("List has " + list.size.toString() + " elements");
-```
-
-## Networking Modules
-
-### net.http
-
-The `net.http` module provides functionality for making HTTP requests.
-
-```tocin
-import net.http;
-
-// Making a GET request
-let response = http.get("https://api.example.com/data");
-println("Status: " + response.status.toString());
-println("Body: " + response.body);
-
-// Making a POST request
-let postResponse = http.post("https://api.example.com/users", {
-    headers: {
-        "Content-Type": "application/json"
-    },
-    body: json.stringify({
-        name: "John Doe",
-        email: "john@example.com"
-    })
-});
-
-// Working with JSON responses
-let data = json.parse(response.body);
-println("Data: " + data["name"]);
-
-// Asynchronous requests
-http.get("https://api.example.com/data", (response) => {
-    println("Async response received");
-    println(response.body);
-});
-
-// Using fetch API
-let fetchResponse = await http.fetch("https://api.example.com/data", {
-    method: "GET",
-    headers: {
-        "Accept": "application/json"
-    }
-});
-
-let jsonData = await fetchResponse.json();
-```
-
-### net.server
-
-The `net.server` module provides functionality for creating HTTP servers.
-
-```tocin
-import net.server;
-
-// Create a simple HTTP server
-let server = new server.HttpServer({
-    port: 3000
-});
-
-// Add a route for the root path
-server.get("/", (req, res) => {
-    res.send("Hello, Tocin!");
-});
-
-// Add a route for a specific path
-server.get("/users", (req, res) => {
-    let users = [
-        { id: 1, name: "Alice" },
-        { id: 2, name: "Bob" }
-    ];
-    res.json(users);
-});
-
-// Add a route with URL parameters
-server.get("/users/:id", (req, res) => {
-    let id = parseInt(req.params.get("id"));
-    res.json({ id: id, name: "User " + id.toString() });
-});
-
-// Handle POST requests
-server.post("/users", (req, res) => {
-    let user = req.body;
-    // Process the user data
-    res.status(201).json({ id: 3, ...user });
-});
-
-// Start the server
-server.start();
-println("Server running on port 3000");
-```
-
-### net.advanced.rest
-
-The `net.advanced.rest` module provides functionality for creating RESTful APIs.
-
-```tocin
-import net.advanced.rest;
-
-// Create a REST API
-let api = new rest.Api();
-
-// Define a resource
-let userResource = api.resource("users");
-
-// Define CRUD operations for the resource
-userResource.get((req, res) => {
-    // Get all users
-    res.json([
-        { id: 1, name: "Alice" },
-        { id: 2, name: "Bob" }
-    ]);
-});
-
-userResource.get("/:id", (req, res) => {
-    // Get a specific user
-    let id = parseInt(req.params.get("id"));
-    res.json({ id: id, name: "User " + id.toString() });
-});
-
-userResource.post((req, res) => {
-    // Create a new user
-    let user = req.body;
-    // Process the user data
-    res.status(201).json({ id: 3, ...user });
-});
-
-userResource.put("/:id", (req, res) => {
-    // Update a user
-    let id = parseInt(req.params.get("id"));
-    let user = req.body;
-    res.json({ id: id, ...user });
-});
-
-userResource.delete("/:id", (req, res) => {
-    // Delete a user
-    let id = parseInt(req.params.get("id"));
-    res.status(204).send();
-});
-
-// Create a server with the API
-let server = new server.HttpServer({
-    port: 3000
-});
-
-// Mount the API at the /api path
-server.use("/api", api);
-
-// Start the server
-server.start();
-println("REST API server running on port 3000");
-```
-
-## GUI Modules
-
-### gui.core
-
-The `gui.core` module provides core functionality for building graphical user interfaces.
-
-```tocin
-import gui.core;
-
-// Create an application
-class MyApp extends Application {
-    def initialize() {
-        // Initialize the application with a title and dimensions
-        super.initialize("My Tocin App", 800, 600);
-    }
-    
-    def createUI() -> void {
-        // Create the UI here
-    }
-    
-    override def start() -> void {
-        createUI();
-        // Additional setup code
-    }
-}
-
-// Run the application
-let app = new MyApp();
-app.run();
-```
-
-### gui.widgets
-
-The `gui.widgets` module provides UI widgets like buttons, text fields, and labels.
-
-```tocin
-import gui.widgets;
-
-// Create various widgets
-let button = new Button("Click Me");
-let label = new Label("Hello, Tocin!");
-let textField = new TextField("Enter text here");
-let checkbox = new Checkbox("Enable feature", true);
-let comboBox = new ComboBox(["Option 1", "Option 2", "Option 3"]);
-let slider = new Slider(0, 100, 50);  // min, max, current value
-let progressBar = new ProgressBar(0, 100, 25);  // min, max, current value
-
-// Configure widget properties
-button.enabled = true;
-label.textColor = ColorRGBA.BLUE;
-textField.width = 200;
-checkbox.checked = true;
-```
-
-### gui.layout
-
-The `gui.layout` module provides layout managers for arranging widgets.
-
-```tocin
-import gui.layout;
-
-// Create various layouts
-let vLayout = new VerticalLayout();
-let hLayout = new HorizontalLayout();
-let gridLayout = new GridLayout(3, 2);  // 3 columns, 2 rows
-let stackLayout = new StackLayout();
-let flowLayout = new FlowLayout();
-
-// Configure layout properties
-vLayout.spacing = 10;
-hLayout.padding = EdgeInsets.all(8);
-gridLayout.cellSpacing = 5;
-
-// Add widgets to layouts
-vLayout.add(new Label("Top"));
-vLayout.add(new Button("Middle"));
-vLayout.add(new TextField("Bottom"));
-
-// Add widgets to grid layout
-gridLayout.add(new Label("Name:"), 0, 0);  // column 0, row 0
-gridLayout.add(new TextField(""), 1, 0);  // column 1, row 0
-gridLayout.add(new Label("Email:"), 0, 1);  // column 0, row 1
-gridLayout.add(new TextField(""), 1, 1);  // column 1, row 1
-```
-
-### gui.events
-
-The `gui.events` module provides functionality for handling UI events.
-
-```tocin
-import gui.events;
-
-// Create a button
-let button = new Button("Click Me");
-
-// Add a click event listener
-button.addEventListener("click", (event) => {
-    println("Button clicked!");
-});
-
-// Add mouse event listeners
-button.addEventListener("mouseEnter", (event) => {
-    button.backgroundColor = ColorRGBA.LIGHT_BLUE;
-});
-
-button.addEventListener("mouseLeave", (event) => {
-    button.backgroundColor = ColorRGBA.WHITE;
-});
-
-// Add a key event listener to a text field
-let textField = new TextField("");
-textField.addEventListener("keyPress", (event) => {
-    println("Key pressed: " + event.key);
-});
-
-// Using the event object
-button.addEventListener("click", (event) => {
-    println("Clicked at: " + event.x.toString() + ", " + event.y.toString());
-    event.stopPropagation();  // Prevent event from bubbling up
-});
-```
-
-## Game Development Modules
-
-### game.engine
-
-The `game.engine` module provides core functionality for game development.
-
-```tocin
-import game.engine;
-
-// Create a game
-class MyGame extends Game {
-    def initialize() {
-        // Initialize the game with a title and dimensions
-        super.initialize("My Tocin Game", 800, 600);
-    }
-    
-    override def load() -> void {
-        // Load resources
-    }
-    
-    override def update(deltaTime: float) -> void {
-        // Update game state
-    }
-    
-    override def render() -> void {
-        // Render the game
-    }
-}
-
-// Run the game
-let game = new MyGame();
-game.run();
-```
-
-### game.graphics
-
-The `game.graphics` module provides functionality for rendering graphics.
-
-```tocin
-import game.graphics;
-
-// Load a sprite
-let playerSprite = new Sprite("assets/player.png");
-
-// Draw the sprite
-graphics.drawSprite(playerSprite, 100, 100);
-
-// Draw shapes
-graphics.setFillColor(ColorRGBA.RED);
-graphics.fillRect(50, 50, 100, 100);
-
-graphics.setStrokeColor(ColorRGBA.BLUE);
-graphics.setStrokeWidth(2);
-graphics.drawCircle(400, 300, 50);
-
-graphics.drawLine(0, 0, 800, 600);
-
-// Draw text
-graphics.setFont(new Font("Arial", 24));
-graphics.setFillColor(ColorRGBA.BLACK);
-graphics.fillText("Game Score: 100", 20, 30);
-```
-
-### game.physics
-
-The `game.physics` module provides functionality for game physics.
-
-```tocin
-import game.physics;
-
-// Create physics bodies
-let playerBody = new RigidBody2D();
-playerBody.position = new Vector2(100, 100);
-playerBody.velocity = new Vector2(5, 0);
-playerBody.mass = 1.0;
-
-// Create colliders
-let playerCollider = new BoxCollider2D(50, 50);  // 50x50 box
-let enemyCollider = new CircleCollider2D(25);  // Circle with radius 25
-
-// Check for collisions
-if (physics.checkCollision(playerCollider, enemyCollider)) {
-    println("Collision detected!");
-}
-
-// Apply forces
-playerBody.applyForce(new Vector2(0, -10));  // Apply upward force
-
-// Update physics
-physics.step(0.016);  // Update physics for 16ms timestep
-```
-
-### game.input
-
-The `game.input` module provides functionality for handling user input.
-
-```tocin
-import game.input;
-
-// Check keyboard input
-if (input.keyboard.isKeyDown("ArrowUp")) {
-    // Move player up
-}
-
-if (input.keyboard.wasKeyPressed("Space")) {
-    // Jump (only triggers once when key is first pressed)
-}
-
-if (input.keyboard.wasKeyReleased("E")) {
-    // Interact (triggers once when key is released)
-}
-
-// Check mouse input
-if (input.mouse.isButtonDown(0)) {
-    // Left mouse button is down
-}
-
-let mouseX = input.mouse.getX();
-let mouseY = input.mouse.getY();
-
-// Check gamepad input
-if (input.gamepad.isButtonDown(0, "A")) {
-    // Gamepad 0, button A is down
-}
-
-let leftStickX = input.gamepad.getAxisValue(0, "LeftStickX");
-```
-
-### game.audio
-
-The `game.audio` module provides functionality for game audio.
-
-```tocin
-import game.audio;
-
-// Load audio clips
-let jumpSound = new AudioClip("assets/jump.wav");
-let music = new AudioClip("assets/music.mp3");
-
-// Create audio sources
-let jumpSource = new AudioSource(jumpSound);
-let musicSource = new AudioSource(music);
-
-// Configure audio properties
-jumpSource.volume = 0.5;
-musicSource.loop = true;
-musicSource.volume = 0.3;
-
-// Play sounds
-jumpSource.play();
-musicSource.play();
-
-// Pause and stop
-musicSource.pause();
-musicSource.stop();
-
-// Check if playing
-if (jumpSource.isPlaying()) {
-    println("Jump sound is playing");
-}
-```
-
-## Machine Learning Modules
-
-### ml.model
-
-The `ml.model` module provides functionality for creating and using machine learning models.
-
-```tocin
-import ml.model;
-
-// Create a machine learning model
-let model = new model.Model();
-
-// Load a pre-trained model
-let pretrainedModel = model.load("path/to/model.tocin");
-
-// Make predictions
-let input = new Tensor([1.0, 2.0, 3.0, 4.0]);
-let prediction = pretrainedModel.predict(input);
-
-// Save a model
-model.save("path/to/save/model.tocin");
-```
-
-### ml.nn
-
-The `ml.nn` module provides neural network components for deep learning.
-
-```tocin
-import ml.nn;
-
-// Create a sequential neural network
-let model = new nn.Sequential([
-    new nn.Linear(784, 128),  // Input layer with 784 features, 128 neurons
-    new nn.ReLU(),            // Activation function
-    new nn.Dropout(0.2),      // Dropout for regularization
-    new nn.Linear(128, 64),   // Hidden layer with 64 neurons
-    new nn.ReLU(),            // Activation function
-    new nn.Linear(64, 10)     // Output layer with 10 classes
-]);
-
-// Initialize with specific options
-model.initialize({
-    weightInit: "xavier",
-    biasInit: "zeros"
-});
-
-// Define loss function
-let lossFn = new nn.CrossEntropyLoss();
-
-// Forward pass
-let input = new Tensor([/* input data */]);
-let output = model.forward(input);
-
-// Compute loss
-let target = new Tensor([/* target data */]);
-let loss = lossFn.forward(output, target);
-
-// Backward pass
-loss.backward();
-```
-
-### ml.optimizer
-
-The `ml.optimizer` module provides optimization algorithms for training neural networks.
-
-```tocin
-import ml.optimizer;
-
-// Create an optimizer
-let sgd = new optimizer.SGD(model.parameters(), {
-    learningRate: 0.01,
-    momentum: 0.9
-});
-
-// Create other types of optimizers
-let adam = new optimizer.Adam(model.parameters(), {
-    learningRate: 0.001,
-    beta1: 0.9,
-    beta2: 0.999
-});
-
-// Training loop
-for (let epoch = 0; epoch < 10; epoch++) {
-    // Zero gradients
-    sgd.zeroGrad();
-    
-    // Forward pass, compute loss, backward pass
-    // ...
-    
-    // Update weights
-    sgd.step();
-}
-```
-
-### ml.data
-
-The `ml.data` module provides functionality for loading and processing datasets.
-
-```tocin
-import ml.data;
-
-// Load a dataset
-let mnist = data.loadMNIST();
-
-// Create a dataset from arrays
-let xData = [/* features */];
-let yData = [/* labels */];
-let dataset = new data.Dataset(xData, yData);
-
-// Create a data loader for batch processing
-let dataLoader = new data.DataLoader(dataset, {
-    batchSize: 64,
-    shuffle: true
-});
-
-// Iterate over batches
-for (let batch of dataLoader) {
-    let {inputs, targets} = batch;
-    // Process batch
-}
-
-// Split a dataset
-let {trainData, testData} = dataset.split(0.8);  // 80% train, 20% test
-```
-
-### ml.preprocessing
-
-The `ml.preprocessing` module provides functionality for preprocessing data for machine learning.
-
-```tocin
-import ml.preprocessing;
-
-// Create a preprocessing pipeline
-let transform = preprocessing.Compose([
-    preprocessing.ToTensor(),
-    preprocessing.Normalize([0.5], [0.5])
-]);
-
-// Apply to a dataset
-let transformedDataset = dataset.map(transform);
-
-// One-hot encoding
-let encoder = new preprocessing.OneHotEncoder();
-let encoded = encoder.fit_transform(labels);
-
-// Standardization
-let scaler = new preprocessing.StandardScaler();
-let scaled = scaler.fit_transform(features);
-
-// Image preprocessing for computer vision
-let imageTransform = preprocessing.Compose([
-    preprocessing.Resize(256),
-    preprocessing.CenterCrop(224),
-    preprocessing.ToTensor(),
-    preprocessing.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-]);
-```
-
-This completes the overview of the Tocin Standard Library. For more detailed information on each module and function, please refer to the API reference documentation. 
+## web and net — HTTP and WebSocket
+
+`web.http` parses request lines (`httpMethod`, `httpPath`, `httpRoute`),
+builds HTTP/1.1 responses, and runs a blocking single-threaded server on the
+`tcp*` builtins where the handler is a `(string) -> string` function value.
+`web.websocket` encodes and decodes WebSocket frames in raw buffers.
+`net.advanced` is the client side: URL parsing and one-shot `httpGet`/
+`httpPost` requests.
+
+| Function | Module | Description |
+|---|---|---|
+| `httpMethod(req)` / `httpPath(req)` | `web.http` | Parse the request line |
+| `httpRoute(req, method, path) -> int` | `web.http` | Does the request match method + path? |
+| `buildResponse(status, contentType, body) -> string` | `web.http` | Build a full HTTP/1.1 response |
+| `ok(body)` / `okJson(body)` / `notFound()` | `web.http` | Response shorthands |
+| `serve(port)` / `serveOnce(listenFd, handler)` / `serveLoop(listenFd, handler, count)` | `web.http` | Blocking server; handler is `(string) -> string` |
+| `writeFrame(dst, opcode, src, len, masked, maskKey)` | `web.websocket` | Encode a WebSocket frame |
+| `frameOpcode(frame)` / `framePayloadLen(frame)` / `framePayloadOffset(frame)` | `web.websocket` | Decode a frame header |
+| `unmaskPayload(frame)` | `web.websocket` | Unmask a client frame in place |
+| `httpGet(url)` / `httpPost(url, contentType, body)` | `net.advanced` | One-shot HTTP client requests |
+| `urlHost(url)` / `urlPort(url)` / `urlPath(url)` | `net.advanced` | URL parsing |
+| `responseStatus(resp)` / `responseBody(resp)` | `net.advanced` | Split a raw HTTP response |
+
+## database — in-memory storage
+
+`database.database` provides a string key/value store over the `map` builtins
+and a typed-row table engine (fixed column count, `int` cells) with insert,
+scan, select, and aggregation — the relational core, with no disk or SQL
+parser. Note: it defines `countWhere(t, col, value)`, which clashes with
+`std.functional`'s `countWhere`; do not import both modules into one program.
+
+| Function | Description |
+|---|---|
+| `kvNew()` / `kvPut(db, key, value)` / `kvGet(db, key, dflt)` / `kvHas(db, key)` | String key/value store |
+| `tableNew(ncols, capacityRows) -> int` | Create a table handle |
+| `tableInsert(t, row: list<int>)` | Append a row |
+| `tableGet(t, row, col)` / `tableSet(t, row, col, value)` | Cell access |
+| `selectWhere(t, col, value, out)` / `selectGreater(t, col, threshold, out)` | Collect matching row indices into a `vector` |
+| `columnSum(t, col)` / `columnMax(t, col)` / `columnMin(t, col)` | Column aggregates |
+| `countWhere(t, col, value) -> int` | Count rows with `row[col] == value` |
+| `tableDelete(t, row)` / `tableFree(t)` | Remove a row / release the table |
+
+## game — entities, framebuffers, shading math
+
+`game.engine` is a small entity world (positions and velocities stored
+fixed-point in one buffer) with spawning, integration steps, forces, and AABB
+collision tests. `game.graphics` draws into a raw RGBA framebuffer:
+rectangles, lines (Bresenham), and circles. `game.shader` collects
+GLSL-style shading math (`smoothstep`, `mix`, reflection, Lambert and
+Blinn-Phong lighting, color packing). `game.shader` reuses the names `step`,
+`mix`, and `fract` — import it separately from `game.engine`, `audio.audio`,
+and `math.basic`.
+
+| Function | Module | Description |
+|---|---|---|
+| `worldNew(cap)` / `spawnEntity(w, x, y, vx, vy)` | `game.engine` | Create a world / add an entity |
+| `step(w, dt)` / `applyForce(w, ax, ay, dt)` | `game.engine` | Integrate positions / accelerate everything |
+| `entitiesCollide(w, e1, e2, size)` / `aabbOverlap(...)` | `game.engine` | Collision tests |
+| `fixedSteps(frameTime, fixedDt) -> int` | `game.engine` | Fixed-timestep step count |
+| `createFramebuffer(width, height) -> int` | `game.graphics` | Allocate an RGBA framebuffer |
+| `setPixel` / `fillRect` / `drawLine` / `fillCircle` / `clear` | `game.graphics` | Drawing primitives |
+| `smoothstep(edge0, edge1, x)` / `mix(a, b, t)` | `game.shader` | Interpolation curves |
+| `lambert(...)` / `blinnPhong(...)` | `game.shader` | Diffuse / specular lighting terms |
+| `packColor(r, g, b, a) -> int` / `unpackChannel(color, c)` | `game.shader` | RGBA8 color packing |
+| `luminance(r, g, b) -> float` | `game.shader` | Perceptual brightness |
+
+## gui — layout and widget math
+
+`gui.core` supplies rectangle tests, a vertical layout cursor, and
+immediate-mode widget state: `buttonState` folds mouse position and button
+into hover/pressed/active flags (`WS_HOVERED`, `WS_PRESSED`, `WS_ACTIVE`),
+and `sliderValue` maps a mouse position onto a value range. `gui.widgets`
+computes text metrics, alignment, progress-bar fill, scrollbar thumb geometry,
+grid cells, and flex item sizes — the math layer a renderer plugs into.
+
+| Function | Module | Description |
+|---|---|---|
+| `rectContains(x, y, w, h, px, py)` / `rectsOverlap(...)` | `gui.core` | Hit tests |
+| `layoutNew(x, y, spacing)` / `layoutRow(l, h)` | `gui.core` | Vertical layout cursor |
+| `buttonState(x, y, w, h, mx, my, mouseDown)` / `buttonClicked(state)` | `gui.core` | Immediate-mode button state |
+| `sliderValue(trackX, trackW, mx, minV, maxV)` / `sliderKnobX(...)` | `gui.core` | Slider position math |
+| `textWidth(n)` / `textHeight()` | `gui.widgets` | Monospace text metrics |
+| `progressFill(trackW, fraction)` | `gui.widgets` | Progress-bar fill width |
+| `scrollThumbLen(...)` / `scrollThumbPos(...)` | `gui.widgets` | Scrollbar thumb geometry |
+| `gridCell(...)` / `flexItemSize(total, n, gap)` / `wrapLines(charCount, widthChars)` | `gui.widgets` | Grid, flex, and wrapping layout |
+
+## audio — synthesis and DSP
+
+`audio.audio` generates and processes sample buffers (`list<float>`):
+oscillators, gain staging, mixing, clipping, attack/release envelopes,
+metering, a one-pole lowpass, and MIDI note conversion.
+
+| Function | Description |
+|---|---|
+| `genSine(buf, freq, sampleRate, amp)` / `genSquare(...)` / `genSaw(...)` | Fill a buffer with an oscillator waveform |
+| `gain(buf, g)` | Scale all samples |
+| `mix(dst, src, level)` | Mix `src` into `dst` at a level |
+| `clip(buf, limit)` | Hard-clip samples to `[-limit, limit]` |
+| `applyEnvelope(buf, attack, release)` | Linear attack/release envelope |
+| `rms(buf)` / `peak(buf)` | Level metering |
+| `normalize(buf, target)` | Scale so the peak hits `target` |
+| `lowpass(buf, a)` | One-pole lowpass filter in place |
+| `midiToFreq(note) -> float` | MIDI note number to frequency |
+
+## embedded — memory-mapped GPIO
+
+`embedded.gpio` drives a memory-mapped GPIO register block through the
+volatile access builtins (`volatileLoad32`/`volatileStore32`/`fence`), so
+reads and writes are never optimized away or reordered — the pattern a
+bare-metal or RTOS driver needs (pair with `--freestanding`). Register
+offsets (`GPIO_DIR`, `GPIO_OUT`, `GPIO_IN`, `GPIO_SET`, `GPIO_CLR`) follow a
+common MMIO layout; adapt `base` to your SoC.
+
+| Function | Description |
+|---|---|
+| `pinMode(base, pin, output)` | Configure a pin as input or output |
+| `digitalWrite(base, pin, high)` | Drive a pin via the atomic set/clear registers |
+| `digitalRead(base, pin) -> int` | Read a pin level |
+| `toggle(base, pin)` | Flip an output pin |
+| `writePort(base, value)` / `readPort(base)` | Whole-port access |
+| `barrier()` | Memory fence between device accesses |
+
+## scripting — text automation
+
+`scripting.automation` is string plumbing for scripts and code generation:
+`{{key}}` template rendering, shell command assembly with quoting,
+environment expansion, and `key=value` config-line parsing. Actual process
+spawning belongs behind FFI.
+
+| Function | Description |
+|---|---|
+| `renderTemplate(tmpl, keys, vals) -> string` | Replace every `{{key}}` placeholder |
+| `buildCommand(program, args) -> string` | Assemble a command line, double-quoting arguments with spaces |
+| `shellQuote(s) -> string` | POSIX single-quote a string for the shell |
+| `expandVar(name) -> string` | Read an environment variable |
+| `repeatStr(s, count) -> string` | Repeat a string |
+| `configKey(line)` / `configValue(line)` | Split a `key=value` line |
+
+## pkg — semantic versioning
+
+`pkg.manager` implements semver parsing and constraint matching for package
+tooling: split versions into fields, compare them, and test caret/tilde
+ranges.
+
+| Function | Description |
+|---|---|
+| `major(v)` / `minor(v)` / `patch(v)` | Extract version fields from `"1.2.3"` |
+| `versionCode(v) -> int` | Encode a version as one comparable integer |
+| `compareVersions(a, b) -> int` | Three-way comparison |
+| `versionEq(a, b)` / `versionGt(a, b)` / `versionLt(a, b)` | Comparison predicates |
+| `satisfiesCaret(version, base)` | `^base` range test (left-most non-zero field fixed) |
+| `satisfiesTilde(version, base)` | `~base` range test (patch-level changes only) |
+| `satisfies(version, base, op)` | Range test by operator code |
+| `bestMatch(candidates, baseCode, op) -> int` | Pick the best matching version code |
+
+## Built-in functions
+
+Everything above is ordinary Tocin source layered on the runtime builtins —
+`print`/`println`, `len`, math (`sqrt`, `sin`, `pow`, ...), strings
+(`strLen`, `substr`, `startsWith`, ...), dynamic collections (`vecNew`,
+`mapNew`, ...), raw memory (`alloc`, `loadInt`, `storeByte`, ...), file I/O,
+and TCP sockets. These need no import and are documented with verified
+signatures in [stdlib-reference.md](stdlib-reference.md).

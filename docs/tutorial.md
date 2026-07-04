@@ -1072,9 +1072,13 @@ sum of squares = 14
 ### Capturing closures
 
 A lambda can use the local variables of the function it is defined in, not just
-its own parameters — this makes it a *closure*. The capture is **by value**: the
-lambda takes a snapshot of each captured variable at the moment it is created.
-Changing the original variable afterwards does not change what the lambda saw.
+its own parameters — this makes it a *closure*. Capture works two ways:
+
+- a lambda that only **reads** a captured variable takes a **by-value
+  snapshot** at the moment it is created — changing the original afterwards
+  does not change what the lambda saw;
+- a lambda that **assigns** to a captured variable **shares it** — the write
+  is visible in the enclosing scope after the lambda runs.
 
 ```tocin
 def main() {
@@ -1120,12 +1124,25 @@ add10(1)  = 11
 add100(1) = 101
 ```
 
+Writing to a captured variable shares it instead — handy for counters and
+accumulators:
+
+```tocin
+def main() -> int {
+    let count = 0;
+    let inc = lambda () -> int count = count + 1;   // assigns the capture
+    inc(); inc(); inc();
+    println("count = {}", count);   // 3 — visible out here
+    return 0;
+}
+```
+
 A few things worth knowing:
 
-> **Capture is by value, not by reference.** A closure can read the snapshot it
-> captured, but it cannot reach back and mutate the caller's variable, and
-> later changes to that variable are not seen by the closure. If you need shared
-> mutable state, pass it explicitly (for example a `vector` handle).
+> **Read captures are snapshots; write captures are shared.** A closure that
+> only reads sees the value from creation time; one that assigns mutates the
+> caller's variable. A *write*-capturing closure must not outlive the function
+> that created it (returning read-capturing closures, as above, is fine).
 >
 > **A function-typed local may be annotated, but doesn't have to be.** Storing a
 > returned function in `let f = chooser(1);` works with or without the
@@ -1361,18 +1378,22 @@ practical limitations in mind:
   using it on a string yields a garbage number.
 - Collection handles are opaque: annotate parameters with the type names
   `vector` and `map`, and use the `vec*`/`map*` functions to work with them.
-- Lambdas **capture by value** — they snapshot the surrounding locals they use,
-  so mutating the original afterwards (or trying to mutate it from inside the
-  lambda) has no effect. For shared mutable state, pass a handle explicitly.
+- Lambdas capture surrounding locals **by value for reads** (a snapshot —
+  mutating the original afterwards has no effect on the closure) and **by
+  reference for writes** (assigning a captured variable inside the lambda is
+  visible outside). See "Capturing closures" above.
 - Nested `def` functions **cannot capture** their parent's locals; use a
   `lambda` when you need capture.
-- There is **no automatic memory management (no GC)** yet: heap allocations such
-  as concatenated strings, array literals, closures, vectors, and maps are not
-  freed automatically, so long-running programs leak. Free vectors and maps
-  manually with `vecFree`/`mapFree` when you can.
-- `switch` and `defer` are **not** implemented — use `match` / `case` for
-  multi-way branching. There is also no `**` power operator and no `++`/`--`;
-  use `pow`/`x * x` and `x += 1` / `x -= 1` instead.
+- Memory is **garbage-collected** (Boehm GC): concatenated strings, array
+  literals, closures, vectors, and maps are reclaimed automatically when
+  unreachable. `vecFree`/`mapFree`/`free` remain for eager release of very
+  large buffers.
+- `switch` (an alias of `match`) and `defer` (run a statement at function
+  return) **are** implemented. There is no `**` power operator and no
+  `++`/`--`; use `pow`/`x * x` and `x += 1` / `x -= 1` instead.
+- Division or modulo by zero and out-of-bounds indexing don't corrupt memory —
+  they abort with a message like
+  `panic: integer division by zero at file.to:4:16`.
 
 When in doubt, do what this tutorial did: write the smallest program that
 exercises the feature, run it with `--run`, and check the output.
@@ -1385,6 +1406,21 @@ You can now write real Tocin: variables and functions, control flow,
 collections and strings, classes with traits and generics, error handling with
 `throw`/`try` and with `Option`/`Result`, null-safe references, first-class
 functions, concurrency, files, modules, macros, and C interop.
+
+A few features this tutorial didn't tour, all covered in the reference:
+
+- **Ternary conditionals** — `let m = a > b ? a : b;`
+  ([reference §3](language-reference.md#3-operators--precedence)).
+- **Default parameter values** — `def f(a: int, b: int = 10)`
+  ([reference §5](language-reference.md#5-functions)).
+- **Generators** — a `def` containing `yield` produces a `for`-iterable
+  sequence ([reference §5](language-reference.md#5-functions)).
+- **`async` / `await`** (eager semantics today) and the low-level **kernel
+  primitives** (volatile loads/stores, `fence()`, inline `asm`)
+  ([reference §14, §21](language-reference.md#14-concurrency)).
+- **Project tooling** — `tocin new` scaffolds a project, `tocin check`
+  typechecks without compiling, `tocin doc` generates API docs
+  ([reference §19](language-reference.md#19-compilation--execution)).
 
 To go deeper:
 

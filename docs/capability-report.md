@@ -20,7 +20,7 @@ opt-in borrow-check — move + `&`/`&mut` borrows (12/12), match-exhaustiveness
 | Write a long-running microservice / server? | **Yes now** — a garbage collector (Boehm GC) reclaims unreachable memory, so long-lived processes no longer grow without bound (2M allocations that would leak >128 MB peak at ~8 MB). Networking still goes through C FFI. |
 | OS / kernel / bare-metal work? | **Yes** — `--freestanding` emits a relocatable object with NO libc/GC/runtime (a pure arithmetic/raw-memory/asm program has zero undefined symbols; one using `alloc` references only the user-provided `__tocin_alloc`). Inline assembly and raw pointer/memory builtins give CPU and layout control. Verified end-to-end with a `-nostdlib` static binary. |
 | Self-host (write the Tocin compiler in Tocin)? | **A subset is achievable now** (a Tocin→C or Tocin→LLVM-text backend); a full LLVM-API self-host is a large project blocked by tooling (LLVM bindings), not by language gaps. Memory is no longer a blocker. |
-| C++-level optimizations? | **Yes for compute.** Native code runs LLVM's full `-O2`/`-O3` pipeline (same optimizer as clang). A compute benchmark (recursive fib + 100M-iteration loop) runs in **0.149 s vs C `-O2` at 0.137 s — within ~9 %**. Allocation-bound code now pays GC cost rather than leaking. |
+| C++-level optimizations? | **Yes for compute.** Native code runs LLVM's full `-O2`/`-O3` pipeline (same optimizer as clang), plus `--native` CPU tuning, whole-program internalization, and alias-aware buffer optimization. On a 12-kernel C/C++/Rust comparison the geomean **ties Rust** (~1.4× of C overall), with Tocin outright fastest on 5 of 12 kernels (`sqrtsum` ~2× faster than C); `matmul` and `levenshtein` are the known gaps. Allocation-bound code pays GC cost rather than leaking. |
 
 ---
 
@@ -213,9 +213,13 @@ binaries) — the *same optimizer clang uses*. Tight arithmetic and control-flow
 code is genuinely competitive with C++: inlining, constant folding,
 vectorization, register allocation, and instruction selection are all LLVM's.
 
-Measured: a compute benchmark — recursive `fib(34)` plus a 100-million-iteration
-accumulation loop — compiled with Tocin `-O2` runs in **0.149 s** versus the
-equivalent C at `-O2` in **0.137 s**: within ~9 %.
+Measured on a 12-kernel comparison against C, C++, and Rust (same machine,
+each language's `-O3`-equivalent, Tocin at `-O3 --native`): Tocin's geomean
+**ties Rust** at roughly 1.4× of C overall, and Tocin is outright fastest of
+the four on 5 of the 12 kernels — e.g. `sqrtsum` runs ~2× faster than the C
+version because `sqrt` lowers to the LLVM intrinsic and vectorizes. The known
+gaps are `matmul` (the reduction pattern blocks loop interchange — it limits
+Rust too) and `levenshtein`.
 
 **Frontend (what IR we hand to LLVM): B.** The emitted IR is still
 allocation-happy — arrays, string concatenations, closures, and Option/Result
@@ -237,8 +241,9 @@ correct and bounded, paying GC cost where C++ would pay none.**
 
 Tocin is a real, compiled, statically-typed language that today can build
 compilers, interpreters, CLI tools, parsers, long-running services, and
-low-level/systems programs, with a world-class optimizing backend (measured
-within ~9 % of C on compute) and a garbage-collected heap. Self-hosting runs
+low-level/systems programs, with a world-class optimizing backend (geomean
+ties Rust on a 12-kernel C/C++/Rust comparison; outright fastest on 5 of 12)
+and a garbage-collected heap. Self-hosting runs
 through a Tocin-emitting backend — concrete, scoped work, not blocked by a
 fundamental language deficiency. The keystone gaps called out in earlier
 revisions — memory management and missing operators/control-flow — are closed.

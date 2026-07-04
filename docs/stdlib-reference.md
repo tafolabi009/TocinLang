@@ -58,18 +58,20 @@ These properties recur throughout and are not repeated in every entry:
   `Option`/`Result` payloads are all stored as a single 64-bit slot. Integers go
   in directly; doubles are bit-cast into the slot; pointers/strings are stored as
   their address (an `i64`). There is no per-slot type tag.
-- **Storing a pointer/string in a vector or map is limited.** The address
-  round-trips as an `i64`, so reading it back gives you an integer, not a usable
-  string — the language exposes no way to cast that integer back to a pointer.
-  Use these collections for integer data (and booleans-as-int).
+- **Storing a pointer/string in a vector or map round-trips as an `i64`.**
+  Reading it back gives you the address as an integer; use `strFromAddr(p)` to
+  view that address as a string again (strings are the safe case — the GC
+  keeps the bytes alive). These collections remain simplest with integer data
+  (and booleans-as-int).
 - **Strings are NUL-terminated `char*`.** Every string-returning builtin returns
-  a *fresh* `malloc`'d buffer that never aliases its input.
-- **Leaks.** There is no garbage collector. String results (`substring`,
-  `intToStr`, `charToStr`, `toUpper`, `toLower`, `+` concatenation, `readFile`,
-  `readLine`, ...) and collection handles (`vecNew`, `mapNew`) are heap-allocated
-  and leak unless you free them. Vectors/maps have explicit `vecFree`/`mapFree`;
-  any heap pointer (including a malloc'd string) can be released with
-  `free(p)`. Only free a buffer you own and never use it afterward.
+  a *fresh* heap buffer that never aliases its input.
+- **Garbage-collected.** String results (`substring`, `intToStr`, `charToStr`,
+  `toUpper`, `toLower`, `+` concatenation, `readFile`, `readLine`, ...) and
+  collection handles (`vecNew`, `mapNew`) are allocated through the Boehm GC
+  and reclaimed automatically when unreachable — nothing leaks by default.
+  `vecFree`/`mapFree`/`free(p)` remain for *eager* release of large buffers
+  (only free a buffer you own, and never use it afterward); under `--no-gc`
+  they become mandatory again.
 - **`len` is for arrays only** (see below); use `strLen` for strings.
 
 ---

@@ -1,5 +1,7 @@
 # Advanced Topics in Tocin
 
+*Some sections of this document sketch design-intent APIs. For the implemented feature set, see [language-reference.md](language-reference.md).*
+
 This guide delves into the advanced features and techniques in the Tocin programming language. These topics build upon the fundamentals covered in the Language Basics and are designed for developers looking to leverage the full power of Tocin.
 
 ## Table of Contents
@@ -679,7 +681,7 @@ def hotLoop() -> int {
 
 ```tocin
 // Using SIMD (Single Instruction, Multiple Data) operations
-import math.simd;
+// design sketch — no math/simd module ships today
 
 // Create SIMD vectors
 let v1 = new Float32x4(1.0, 2.0, 3.0, 4.0);
@@ -776,7 +778,7 @@ class MathTests {
 ### Property-Based Testing
 
 ```tocin
-import testing.property;
+// design sketch — no testing/property module ships today (only std/testing ships)
 
 // Define a property test
 @PropertyTest

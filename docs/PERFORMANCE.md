@@ -6,7 +6,7 @@ Writing fast, efficient Tocin code is easy with the right techniques. Here are s
 - **Prefer immutable data** where possible for easier reasoning and optimization.
 - **Use built-in types and stdlib functions**—they are highly optimized.
 - **Minimize allocations** in tight loops (reuse objects, use preallocated lists).
-- **Avoid deep recursion** unless tail call optimization is guaranteed.
+- **Avoid deep recursion**—Tocin does not guarantee tail-call optimization, so prefer iteration for unbounded depth.
 
 ## Collections and LINQ
 - **Chain LINQ operations** efficiently; avoid unnecessary intermediate collections.
@@ -38,4 +38,4 @@ Writing fast, efficient Tocin code is easy with the right techniques. Here are s
 - **High memory usage:** Check for unnecessary allocations or large data structures.
 - **FFI slowdowns:** Minimize cross-language calls in performance-critical code.
 
-See also: [BENCHMARKS.md](../../BENCHMARKS.md) 
+See also: [Building](BUILDING.md), [Advanced Topics](05_Advanced_Topics.md) 

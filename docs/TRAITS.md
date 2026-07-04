@@ -5,7 +5,7 @@ Traits are a powerful feature in Tocin, inspired by Rust and Swift protocols. Th
 ## Defining a Trait
 ```to
 trait Printable {
-    fn print(self);
+    def print(self);
 }
 ```
 
@@ -13,7 +13,7 @@ trait Printable {
 ```to
 struct Point { x: int, y: int }
 impl Printable for Point {
-    fn print(self) {
+    def print(self) {
         print("Point(" + self.x + ", " + self.y + ")");
     }
 }
@@ -29,7 +29,7 @@ p.print();
 Traits can provide default implementations:
 ```to
 trait Describable {
-    fn describe(self) -> string {
+    def describe(self) -> string {
         return "[no description]";
     }
 }
@@ -39,13 +39,13 @@ trait Describable {
 A trait can require other traits:
 ```to
 trait Drawable: Printable {
-    fn draw(self);
+    def draw(self);
 }
 ```
 
 ## Trait Bounds in Generics
 ```to
-fn print_all<T: Printable>(items: list<T>) {
+def print_all<T: Printable>(items: list<T>) {
     for item in items { item.print(); }
 }
 ```
