@@ -130,4 +130,40 @@ else
     bad "mmio struct: freestanding failed"; cat "$TMP/mmiofs.err"
 fi
 
+# --- 6. escape analysis: a non-escaping struct needs no allocator freestanding -
+# A struct used locally (and passed to a non-retaining helper) is stack-allocated,
+# so the freestanding object has NO undefined __tocin_alloc symbol.
+cat > "$TMP/esc.to" <<'EOF'
+struct Pt { x: i32; y: i32; }
+def dist(p: Pt) -> int { return p.x + p.y; }
+def main() -> int { let p = Pt(3, 4); p.x = 10; return dist(p); }
+EOF
+if "$TOCIN" "$TMP/esc.to" --freestanding --target-triple x86_64-unknown-none \
+      -o "$TMP/esc.o" 2>"$TMP/esc.err"; then
+    if command -v nm >/dev/null 2>&1 && nm "$TMP/esc.o" 2>/dev/null | grep -q ' U __tocin_alloc'; then
+        bad "escape: non-escaping struct still pulls in __tocin_alloc"
+    else
+        pass "escape: non-escaping struct is stack-allocated (no allocator)"
+    fi
+else
+    bad "escape: freestanding compile failed"; cat "$TMP/esc.err"
+fi
+# 6b. soundness: an escaping struct (returned) MUST still heap-allocate.
+cat > "$TMP/esch.to" <<'EOF'
+struct P { x: i32; y: i32; }
+def make() -> P { let p = P(3, 4); return p; }
+def main() -> int { let q = make(); return q.x + q.y; }
+EOF
+if "$TOCIN" "$TMP/esch.to" -o "$TMP/esch.ll" 2>"$TMP/esch.err"; then
+    if grep -q 'call ptr @__tocin_alloc' "$TMP/esch.ll"; then
+        pass "escape: returned struct stays heap-allocated (sound)"
+    else
+        bad "escape: returned struct was wrongly stack-allocated (dangling!)"
+    fi
+    "$TOCIN" "$TMP/esch.to" --run >/dev/null 2>&1
+    [ $? -eq 7 ] || bad "escape: returned-struct runtime wrong (want exit 7)"
+else
+    bad "escape: heap-case compile failed"; cat "$TMP/esch.err"
+fi
+
 exit $fail

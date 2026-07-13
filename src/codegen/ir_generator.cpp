@@ -1393,10 +1393,24 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
         if (cit != classTypes.end())
         {
             llvm::StructType *st = cit->second.classType;
-            llvm::Function *mallocFn = stdLibFunctions["malloc"];
-            llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
-            llvm::Value *obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn,
-                                                  {size}, ctorName->name + ".obj");
+            llvm::Value *obj;
+            // Escape analysis proved this instance never leaves the frame:
+            // place it in a stack alloca (entry block) instead of the heap.
+            // No allocator, no GC, and no __tocin_alloc dependency (freestanding).
+            if (stackAllocSites_.count(expr))
+            {
+                llvm::Function *curFn = builder.GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry(&curFn->getEntryBlock(),
+                                        curFn->getEntryBlock().begin());
+                obj = entry.CreateAlloca(st, nullptr, ctorName->name + ".stack");
+            }
+            else
+            {
+                llvm::Function *mallocFn = stdLibFunctions["malloc"];
+                llvm::Value *size = llvm::ConstantExpr::getSizeOf(st);
+                obj = builder.CreateCall(mallocFn->getFunctionType(), mallocFn,
+                                         {size}, ctorName->name + ".obj");
+            }
             for (size_t i = 0; i < expr->arguments.size() &&
                                i < cit->second.memberNames.size();
                  ++i)
@@ -5913,6 +5927,385 @@ void IRGenerator::emitGlobalInit()
         builder.SetInsertPoint(savedBlock);
 }
 
+// ===========================================================================
+// Escape analysis (sound, conservative) for stack-allocating non-escaping
+// struct constructions.
+//
+// A struct is heap-allocated by default because instances are reference values
+// that may outlive the constructing frame. When we can PROVE an instance never
+// escapes its function, it is safe to place it in a stack alloca instead — no
+// allocator, no GC pressure, and (crucially for --freestanding) no dependency
+// on __tocin_alloc.
+//
+// Soundness rule: a use is treated as non-escaping only if it matches an
+// explicitly-recognized safe form (field read/write, comparison, a call whose
+// callee parameter is proven non-escaping, ...). EVERY other use — including
+// any AST node type not handled here — is treated as an escape. A missed case
+// therefore only costs an optimization (heap fallback); it can never produce a
+// dangling stack pointer.
+// ===========================================================================
+namespace {
+using ast::Expression;
+using ast::Statement;
+using ast::ExprPtr;
+using ast::StmtPtr;
+
+struct EscapeCtx {
+    const std::set<std::string> &classNames;                    // non-generic struct/class names (ctor detection)
+    const std::map<std::string, ast::FunctionStmt *> &freeFuncs; // top-level functions by name
+    std::map<std::string, std::vector<char>> &paramEsc;         // func name -> per-parameter may-escape
+};
+
+// Peel groupings so `(x)` reads as `x`.
+static Expression *peel(Expression *e) {
+    while (auto g = dynamic_cast<ast::GroupingExpr *>(e))
+        e = g->expression.get();
+    return e;
+}
+static bool isVarNamed(Expression *e, const std::string &name) {
+    e = peel(e);
+    auto v = dynamic_cast<ast::VariableExpr *>(e);
+    return v && v->name == name;
+}
+
+// Does `node` mention `name` anywhere in its subtree? Used as the conservative
+// catch-all: an unhandled construct that references the tracked local escapes.
+static bool exprRefsName(Expression *e, const std::string &name);
+static bool stmtRefsName(Statement *s, const std::string &name);
+
+static bool exprEscapes(Expression *e, const std::string &name, EscapeCtx &ctx);
+static bool stmtEscapes(Statement *s, const std::string &name, EscapeCtx &ctx);
+
+// Is param index `j` of function `fname` known to escape? Unknown callees
+// (builtins, externs, methods, indirect calls) conservatively escape their
+// pointer arguments.
+static bool paramEscapes(const std::string &fname, size_t j, EscapeCtx &ctx) {
+    auto it = ctx.paramEsc.find(fname);
+    if (it == ctx.paramEsc.end()) return true;      // unknown function -> escape
+    if (j >= it->second.size()) return true;        // variadic/over-arg -> escape
+    return it->second[j] != 0;
+}
+
+// True if evaluating `e` lets `name`'s pointer escape the current frame.
+static bool exprEscapes(Expression *e, const std::string &name, EscapeCtx &ctx) {
+    if (!e) return false;
+    e = peel(e);
+
+    // Bare read of the pointer, a literal, etc.: not itself an escape — any
+    // retaining context is checked by the parent handler below.
+    if (dynamic_cast<ast::VariableExpr *>(e) || dynamic_cast<ast::LiteralExpr *>(e))
+        return false;
+
+    // Field read `obj.f`: recurse into obj (obj == name is a safe read).
+    if (auto g = dynamic_cast<ast::GetExpr *>(e))
+        return exprEscapes(g->object.get(), name, ctx);
+
+    // Comparison / arithmetic: operands are read, never retained.
+    if (auto b = dynamic_cast<ast::BinaryExpr *>(e))
+        return exprEscapes(b->left.get(), name, ctx) || exprEscapes(b->right.get(), name, ctx);
+
+    // Unary: `&x` / `&mut x` / `move x` may be retained by whoever receives the
+    // reference -> conservative escape. Other unary ops just read.
+    if (auto u = dynamic_cast<ast::UnaryExpr *>(e)) {
+        if (u->op.type == lexer::TokenType::BORROW ||
+            u->op.type == lexer::TokenType::MUTABLE_BORROW ||
+            u->op.type == lexer::TokenType::MOVE)
+            return exprRefsName(u->right.get(), name);
+        return exprEscapes(u->right.get(), name, ctx);
+    }
+
+    // Ternary: reading the condition never escapes; a branch that yields the
+    // pointer as the ternary's value could propagate it -> conservative escape.
+    if (auto c = dynamic_cast<ast::ConditionalExpr *>(e)) {
+        if (isVarNamed(c->thenExpr.get(), name) || isVarNamed(c->elseExpr.get(), name))
+            return true;
+        return exprEscapes(c->condition.get(), name, ctx) ||
+               exprEscapes(c->thenExpr.get(), name, ctx) ||
+               exprEscapes(c->elseExpr.get(), name, ctx);
+    }
+
+    // Field write `obj.f = v`: writing into obj is safe (obj == name -> ok);
+    // storing the pointer AS the value escapes it into obj's field.
+    if (auto s = dynamic_cast<ast::SetExpr *>(e)) {
+        if (isVarNamed(s->value.get(), name)) return true;
+        return exprEscapes(s->object.get(), name, ctx) || exprEscapes(s->value.get(), name, ctx);
+    }
+
+    // Assignment `target = v`: `name.f = v` (GetExpr target) is a safe write;
+    // `y = name` aliases the pointer into another binding -> escape.
+    if (auto a = dynamic_cast<ast::AssignExpr *>(e)) {
+        if (isVarNamed(a->value.get(), name)) return true;
+        bool tgt = a->target ? exprEscapes(a->target.get(), name, ctx) : false;
+        return tgt || exprEscapes(a->value.get(), name, ctx);
+    }
+
+    // Call: the heart of the interprocedural rule.
+    if (auto call = dynamic_cast<ast::CallExpr *>(e)) {
+        // Method call `obj.m(args)`: conservative — self and any pointer arg
+        // that is `name` may be retained by the method.
+        if (auto meth = dynamic_cast<ast::GetExpr *>(call->callee.get())) {
+            if (isVarNamed(meth->object.get(), name)) return true;
+            if (exprEscapes(meth->object.get(), name, ctx)) return true;
+            for (auto &arg : call->arguments) {
+                if (isVarNamed(arg.get(), name)) return true;
+                if (exprEscapes(arg.get(), name, ctx)) return true;
+            }
+            return false;
+        }
+        if (auto callee = dynamic_cast<ast::VariableExpr *>(call->callee.get())) {
+            bool isCtor = ctx.classNames.count(callee->name) > 0;
+            bool isFree = ctx.freeFuncs.count(callee->name) > 0;
+            for (size_t j = 0; j < call->arguments.size(); ++j) {
+                Expression *arg = call->arguments[j].get();
+                if (isVarNamed(arg, name)) {
+                    // Constructor: the pointer is stored into the new object.
+                    // Free function: escapes iff that parameter escapes.
+                    // Unknown: conservative escape.
+                    if (isCtor) return true;
+                    if (isFree) { if (paramEscapes(callee->name, j, ctx)) return true; }
+                    else return true;
+                } else if (exprEscapes(arg, name, ctx)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Indirect / unknown callee: any pointer arg may be retained.
+        for (auto &arg : call->arguments) {
+            if (isVarNamed(arg.get(), name)) return true;
+            if (exprEscapes(arg.get(), name, ctx)) return true;
+        }
+        return exprEscapes(call->callee.get(), name, ctx);
+    }
+
+    // Index base/index are read.
+    if (auto ix = dynamic_cast<ast::IndexExpr *>(e))
+        return exprEscapes(ix->object.get(), name, ctx) || exprEscapes(ix->index.get(), name, ctx);
+
+    // Collection literals retain their elements -> escape if an element is name.
+    if (auto l = dynamic_cast<ast::ListExpr *>(e)) {
+        for (auto &el : l->elements) { if (isVarNamed(el.get(), name) || exprEscapes(el.get(), name, ctx)) return true; }
+        return false;
+    }
+    if (auto al = dynamic_cast<ast::ArrayLiteralExpr *>(e)) {
+        for (auto &el : al->elements) { if (isVarNamed(el.get(), name) || exprEscapes(el.get(), name, ctx)) return true; }
+        return false;
+    }
+    if (auto d = dynamic_cast<ast::DictionaryExpr *>(e)) {
+        for (auto &kv : d->entries) {
+            if (isVarNamed(kv.first.get(), name) || isVarNamed(kv.second.get(), name)) return true;
+            if (exprEscapes(kv.first.get(), name, ctx) || exprEscapes(kv.second.get(), name, ctx)) return true;
+        }
+        return false;
+    }
+
+    // A closure that references name may outlive the frame -> escape.
+    if (auto lam = dynamic_cast<ast::LambdaExpr *>(e))
+        return exprRefsName(lam->body.get(), name);
+
+    // Channel send retains the value on the channel -> escape.
+    if (auto cs = dynamic_cast<ast::ChannelSendExpr *>(e)) {
+        if (isVarNamed(cs->value.get(), name)) return true;
+        return exprEscapes(cs->channel.get(), name, ctx) || exprEscapes(cs->value.get(), name, ctx);
+    }
+    if (auto aw = dynamic_cast<ast::AwaitExpr *>(e))
+        return exprEscapes(aw->expression.get(), name, ctx);
+    if (auto cr = dynamic_cast<ast::ChannelReceiveExpr *>(e))
+        return exprEscapes(cr->channel.get(), name, ctx);
+
+    // Any other expression type: conservative — escape if it mentions name.
+    return exprRefsName(e, name);
+}
+
+static bool stmtEscapes(Statement *s, const std::string &name, EscapeCtx &ctx) {
+    if (!s) return false;
+
+    if (auto b = dynamic_cast<ast::BlockStmt *>(s)) {
+        for (auto &st : b->statements) if (stmtEscapes(st.get(), name, ctx)) return true;
+        return false;
+    }
+    if (auto r = dynamic_cast<ast::ReturnStmt *>(s)) {
+        if (isVarNamed(r->value.get(), name)) return true;          // return the pointer -> escape
+        return exprEscapes(r->value.get(), name, ctx);
+    }
+    if (auto v = dynamic_cast<ast::VariableStmt *>(s)) {
+        if (v->initializer && isVarNamed(v->initializer.get(), name)) return true; // let y = name -> alias
+        return v->initializer ? exprEscapes(v->initializer.get(), name, ctx) : false;
+    }
+    if (auto es = dynamic_cast<ast::ExpressionStmt *>(s))
+        return exprEscapes(es->expression.get(), name, ctx);
+    if (auto i = dynamic_cast<ast::IfStmt *>(s)) {
+        if (exprEscapes(i->condition.get(), name, ctx)) return true;
+        if (stmtEscapes(i->thenBranch.get(), name, ctx)) return true;
+        for (auto &eb : i->elifBranches)
+            if (exprEscapes(eb.first.get(), name, ctx) || stmtEscapes(eb.second.get(), name, ctx)) return true;
+        return stmtEscapes(i->elseBranch.get(), name, ctx);
+    }
+    if (auto w = dynamic_cast<ast::WhileStmt *>(s))
+        return exprEscapes(w->condition.get(), name, ctx) || stmtEscapes(w->body.get(), name, ctx);
+    if (auto f = dynamic_cast<ast::ForStmt *>(s))
+        return exprEscapes(f->iterable.get(), name, ctx) || stmtEscapes(f->body.get(), name, ctx);
+    if (auto d = dynamic_cast<ast::DeferStmt *>(s))
+        return stmtEscapes(d->body.get(), name, ctx);              // defer runs in-frame: not an escape
+    if (auto th = dynamic_cast<ast::ThrowStmt *>(s)) {
+        if (isVarNamed(th->value.get(), name)) return true;
+        return exprEscapes(th->value.get(), name, ctx);
+    }
+    // Goroutine: the closure/args outlive the frame -> any reference escapes.
+    if (auto g = dynamic_cast<ast::GoStmt *>(s))
+        return exprRefsName(g->expression.get(), name);
+
+    // Any other statement type: conservative — escape if it mentions name.
+    return stmtRefsName(s, name);
+}
+
+// ---- reference scan (conservative catch-all) ------------------------------
+static bool exprRefsName(Expression *e, const std::string &name) {
+    if (!e) return false;
+    if (auto v = dynamic_cast<ast::VariableExpr *>(e)) return v->name == name;
+    if (auto g = dynamic_cast<ast::GroupingExpr *>(e)) return exprRefsName(g->expression.get(), name);
+    if (auto ge = dynamic_cast<ast::GetExpr *>(e)) return exprRefsName(ge->object.get(), name);
+    if (auto b = dynamic_cast<ast::BinaryExpr *>(e)) return exprRefsName(b->left.get(), name) || exprRefsName(b->right.get(), name);
+    if (auto u = dynamic_cast<ast::UnaryExpr *>(e)) return exprRefsName(u->right.get(), name);
+    if (auto c = dynamic_cast<ast::ConditionalExpr *>(e)) return exprRefsName(c->condition.get(), name) || exprRefsName(c->thenExpr.get(), name) || exprRefsName(c->elseExpr.get(), name);
+    if (auto se = dynamic_cast<ast::SetExpr *>(e)) return exprRefsName(se->object.get(), name) || exprRefsName(se->value.get(), name);
+    if (auto a = dynamic_cast<ast::AssignExpr *>(e)) return (a->target && exprRefsName(a->target.get(), name)) || exprRefsName(a->value.get(), name);
+    if (auto call = dynamic_cast<ast::CallExpr *>(e)) {
+        if (call->callee && exprRefsName(call->callee.get(), name)) return true;
+        for (auto &arg : call->arguments) if (exprRefsName(arg.get(), name)) return true;
+        return false;
+    }
+    if (auto ix = dynamic_cast<ast::IndexExpr *>(e)) return exprRefsName(ix->object.get(), name) || exprRefsName(ix->index.get(), name);
+    if (auto l = dynamic_cast<ast::ListExpr *>(e)) { for (auto &el : l->elements) if (exprRefsName(el.get(), name)) return true; return false; }
+    if (auto al = dynamic_cast<ast::ArrayLiteralExpr *>(e)) { for (auto &el : al->elements) if (exprRefsName(el.get(), name)) return true; return false; }
+    if (auto d = dynamic_cast<ast::DictionaryExpr *>(e)) { for (auto &kv : d->entries) if (exprRefsName(kv.first.get(), name) || exprRefsName(kv.second.get(), name)) return true; return false; }
+    if (auto lam = dynamic_cast<ast::LambdaExpr *>(e)) return exprRefsName(lam->body.get(), name);
+    if (auto cs = dynamic_cast<ast::ChannelSendExpr *>(e)) return exprRefsName(cs->channel.get(), name) || exprRefsName(cs->value.get(), name);
+    if (auto cr = dynamic_cast<ast::ChannelReceiveExpr *>(e)) return exprRefsName(cr->channel.get(), name);
+    if (auto aw = dynamic_cast<ast::AwaitExpr *>(e)) return exprRefsName(aw->expression.get(), name);
+    return false;
+}
+static bool stmtRefsName(Statement *s, const std::string &name) {
+    if (!s) return false;
+    if (auto b = dynamic_cast<ast::BlockStmt *>(s)) { for (auto &st : b->statements) if (stmtRefsName(st.get(), name)) return true; return false; }
+    if (auto r = dynamic_cast<ast::ReturnStmt *>(s)) return exprRefsName(r->value.get(), name);
+    if (auto v = dynamic_cast<ast::VariableStmt *>(s)) return v->initializer && exprRefsName(v->initializer.get(), name);
+    if (auto es = dynamic_cast<ast::ExpressionStmt *>(s)) return exprRefsName(es->expression.get(), name);
+    if (auto i = dynamic_cast<ast::IfStmt *>(s)) {
+        if (exprRefsName(i->condition.get(), name) || stmtRefsName(i->thenBranch.get(), name)) return true;
+        for (auto &eb : i->elifBranches) if (exprRefsName(eb.first.get(), name) || stmtRefsName(eb.second.get(), name)) return true;
+        return stmtRefsName(i->elseBranch.get(), name);
+    }
+    if (auto w = dynamic_cast<ast::WhileStmt *>(s)) return exprRefsName(w->condition.get(), name) || stmtRefsName(w->body.get(), name);
+    if (auto f = dynamic_cast<ast::ForStmt *>(s)) return exprRefsName(f->iterable.get(), name) || stmtRefsName(f->body.get(), name);
+    if (auto d = dynamic_cast<ast::DeferStmt *>(s)) return stmtRefsName(d->body.get(), name);
+    if (auto th = dynamic_cast<ast::ThrowStmt *>(s)) return exprRefsName(th->value.get(), name);
+    if (auto g = dynamic_cast<ast::GoStmt *>(s)) return exprRefsName(g->expression.get(), name);
+    if (auto t = dynamic_cast<ast::TryStmt *>(s)) {
+        if (stmtRefsName(t->tryBlock.get(), name) || stmtRefsName(t->catchBlock.get(), name) || stmtRefsName(t->finallyBlock.get(), name)) return true;
+        return false;
+    }
+    if (auto m = dynamic_cast<ast::MatchStmt *>(s)) {
+        if (exprRefsName(m->value.get(), name)) return true;
+        for (auto &c : m->cases) if (stmtRefsName(c.second.get(), name)) return true;
+        return stmtRefsName(m->defaultCase.get(), name);
+    }
+    // Unknown statement mentioning name conservatively "references" it.
+    return false;
+}
+
+// Collect stack-allocatable ctor sites in a function body: a `let x = Ctor(...)`
+// where Ctor is a known non-generic class, x is never reassigned, and x
+// provably does not escape.
+static void collectSites(Statement *s, EscapeCtx &ctx, Statement *funcBody,
+                         std::set<const ast::CallExpr *> &out);
+} // namespace
+
+void IRGenerator::runEscapeAnalysis(const ast::StmtPtr &program)
+{
+    stackAllocSites_.clear();
+    // Gather top-level functions and (non-generic) class names.
+    std::map<std::string, ast::FunctionStmt *> freeFuncs;
+    std::set<std::string> classNames;
+    std::vector<ast::FunctionStmt *> allFns;  // free functions + methods (site scan)
+    std::function<void(Statement *)> gather = [&](Statement *s) {
+        if (!s) return;
+        if (auto blk = dynamic_cast<ast::BlockStmt *>(s)) { for (auto &st : blk->statements) gather(st.get()); return; }
+        if (auto fn = dynamic_cast<ast::FunctionStmt *>(s)) {
+            if (fn->body && !fn->isGeneric()) { freeFuncs[fn->name] = fn; allFns.push_back(fn); }
+            return;
+        }
+        if (auto cls = dynamic_cast<ast::ClassStmt *>(s)) {
+            // Only non-generic, non-mmio, destructor-free classes are eligible
+            // for stack allocation (RAII/mmio/monomorphization interactions).
+            bool eligible = !cls->isGeneric() && !cls->isMmio;
+            for (auto &m : cls->methods)
+                if (auto mf = dynamic_cast<ast::FunctionStmt *>(m.get())) {
+                    if (mf->name == "__del__") eligible = false;
+                    if (mf->body) allFns.push_back(mf);
+                }
+            if (eligible) classNames.insert(cls->name);
+            return;
+        }
+    };
+    gather(program.get());
+
+    std::map<std::string, std::vector<char>> paramEsc;
+    for (auto &kv : freeFuncs) paramEsc[kv.first] = std::vector<char>(kv.second->parameters.size(), 0);
+    EscapeCtx cx{classNames, freeFuncs, paramEsc};
+
+    // Fixpoint: a parameter escapes if its body leaks it (monotonic 0->1).
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto &kv : freeFuncs) {
+            ast::FunctionStmt *fn = kv.second;
+            auto &bits = paramEsc[kv.first];
+            for (size_t j = 0; j < fn->parameters.size(); ++j) {
+                if (bits[j]) continue;
+                if (stmtEscapes(fn->body.get(), fn->parameters[j].name, cx)) { bits[j] = 1; changed = true; }
+            }
+        }
+    }
+
+    // With summaries settled, collect the stack-allocatable ctor sites.
+    for (ast::FunctionStmt *fn : allFns)
+        collectSites(fn->body.get(), cx, fn->body.get(), stackAllocSites_);
+}
+
+namespace {
+// Recursively find `let x = Ctor(...)` bindings and test x for non-escape.
+static void collectSites(Statement *s, EscapeCtx &ctx, Statement *funcBody,
+                         std::set<const ast::CallExpr *> &out) {
+    if (!s) return;
+    if (auto b = dynamic_cast<ast::BlockStmt *>(s)) {
+        for (auto &st : b->statements) collectSites(st.get(), ctx, funcBody, out);
+        return;
+    }
+    if (auto i = dynamic_cast<ast::IfStmt *>(s)) {
+        collectSites(i->thenBranch.get(), ctx, funcBody, out);
+        for (auto &eb : i->elifBranches) collectSites(eb.second.get(), ctx, funcBody, out);
+        collectSites(i->elseBranch.get(), ctx, funcBody, out);
+        return;
+    }
+    if (auto w = dynamic_cast<ast::WhileStmt *>(s)) { collectSites(w->body.get(), ctx, funcBody, out); return; }
+    if (auto f = dynamic_cast<ast::ForStmt *>(s)) { collectSites(f->body.get(), ctx, funcBody, out); return; }
+    if (auto v = dynamic_cast<ast::VariableStmt *>(s)) {
+        if (!v->initializer) return;
+        auto call = dynamic_cast<ast::CallExpr *>(peel(v->initializer.get()));
+        if (!call) return;
+        auto callee = dynamic_cast<ast::VariableExpr *>(call->callee.get());
+        if (!callee || !ctx.classNames.count(callee->name)) return;   // not a known ctor
+        // Stack-allocate only if the local provably never escapes the frame.
+        // (Reassigning the variable later is fine — it only rebinds the pointer;
+        // the abandoned stack slot is reclaimed at scope exit.)
+        if (stmtEscapes(funcBody, v->name, ctx)) return;
+        out.insert(call);
+        return;
+    }
+}
+} // namespace
+
 std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
 {
     if (!ast)
@@ -5922,6 +6315,10 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ast::StmtPtr ast)
                                  std::string(curTok_.filename), curTok_.line, curTok_.column, error::ErrorSeverity::FATAL);
         return nullptr;
     }
+
+    // Escape analysis: decide which struct constructions can be stack-allocated
+    // (populates stackAllocSites_, consumed by the constructor codegen).
+    runEscapeAnalysis(ast);
 
     // Create a global scope
     enterScope();

@@ -221,19 +221,23 @@ version because `sqrt` lowers to the LLVM intrinsic and vectorizes. The known
 gaps are `matmul` (the reduction pattern blocks loop interchange — it limits
 Rust too) and `levenshtein`.
 
-**Frontend (what IR we hand to LLVM): B.** The emitted IR is still
-allocation-happy — arrays, string concatenations, closures, and Option/Result
-boxes are heap-allocated rather than stack-allocated (no escape analysis yet),
-and values cross boundaries as boxed `i64` slots. But two things changed the
-grade from "naive" to "fine in practice":
+**Frontend (what IR we hand to LLVM): B+.** Some values still cross boundaries
+as boxed `i64` slots, and arrays/string-concatenations/closures/Option-Result
+boxes are heap-allocated. But three things changed the grade from "naive" to
+"fine in practice":
 - **Garbage collection** reclaims those allocations, so they no longer leak.
 - **Constant folding** of literal string concatenation removes the
   `malloc`+`strcpy`+`strcat` for compile-time-constant strings.
+- **Escape analysis** stack-allocates `struct`/`class` instances that provably
+  never leave their function (a sound, conservative whole-module analysis with
+  interprocedural parameter summaries) — no allocator, no GC, no `__tocin_alloc`
+  dependency. This is also what lets bare-metal code use structs under
+  `--freestanding` without providing an allocator.
 
-The remaining headroom is escape analysis / stack allocation to avoid the GC
-entirely for short-lived values — a refinement, no longer a correctness issue.
+The remaining headroom is extending stack allocation to arrays / Option-Result
+boxes and unboxing the 64-bit slot ABI — refinements, not correctness issues.
 **Net: compute-bound code is C++-class (measured); allocation-bound code is
-correct and bounded, paying GC cost where C++ would pay none.**
+correct and bounded, and non-escaping structs now pay zero allocation cost.**
 
 ---
 

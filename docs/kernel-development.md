@@ -148,6 +148,27 @@ tables) — zero-initialized globals land in `.bss`. In freestanding mode `alloc
 calls a `__tocin_alloc(n)` you supply (e.g. a bump allocator over a `.bss`
 arena).
 
+**Structs without an allocator.** A `struct`/`class` instance that provably
+never escapes its function is **stack-allocated** — no heap, no `__tocin_alloc`.
+So a local struct you build, poke, and pass to non-retaining helpers works under
+`--freestanding` with no allocator at all:
+
+```tocin
+struct GdtEntry { limitLow: u16; baseLow: u16; baseMid: u8; access: u8; flags: u8; baseHigh: u8; }
+def encode(e: GdtEntry) -> int { return e.access + e.flags; }
+def build() -> int {
+    let e = GdtEntry(0, 0, 0, 0, 0, 0);   // stack alloca, no allocator
+    e.access = 0x9A;
+    e.flags = 0xA0;
+    return encode(e);                      // passing to a non-retaining fn stays on the stack
+}
+```
+
+A struct that **escapes** (is returned, stored into a field/global/collection,
+captured by a closure, or passed to a function that retains it) is
+heap-allocated as before, so it still needs `__tocin_alloc`. The analysis is
+conservative: anything it can't prove non-escaping falls back to the heap.
+
 ## Linking without a system toolchain
 
 Tocin's installed packages bundle `ld.lld`, so you can link a kernel with no
@@ -166,10 +187,13 @@ kernel.elf -serial stdio`).
 **Provided:** freestanding objects, cross-target codegen (triple/CPU/features/
 code-model/reloc/red-zone), `naked`/`interrupt` functions, module-level asm,
 constrained inline asm, volatile MMIO with typed `mmio struct` register blocks
-(sized `u8`/`u16`/`u32`/`u64` fields), raw memory, a bundled linker, and the C
-ABI (`extern def`) so Tocin objects link into C/asm and vice-versa.
+(sized `u8`/`u16`/`u32`/`u64` fields), raw memory, stack-allocated
+non-escaping structs (no allocator), a bundled linker, and the C ABI
+(`extern def`) so Tocin objects link into C/asm and vice-versa.
 
 **Still your job** (as in C): the boot trampoline, paging/long-mode setup for
-64-bit, the IDT/GDT tables and `lidt`/`lgdt`, the linker script, and an
-allocator. Tocin has the primitives to express all of these; they are not
-generated for you.
+64-bit, the IDT/GDT tables and `lidt`/`lgdt`, and the linker script. An
+allocator (`__tocin_alloc`) is needed only for heap use — escaping structs,
+dynamic collections, and string building; leaf/driver code that sticks to
+stack structs, raw memory, and MMIO needs none. Tocin has the primitives to
+express all of these; they are not generated for you.
