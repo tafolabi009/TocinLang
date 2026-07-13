@@ -296,6 +296,15 @@ public:
         bool nativeCpu;    // tune AOT codegen for the host CPU (POPCNT/AVX/...)
         bool permissive;   // do not block compilation on (non-fatal) type errors
         bool checkOnly;    // `tocin check`: stop after type checking (no codegen)
+        // Cross-compilation / bare-metal codegen controls. Empty strings mean
+        // "use the host default"; these let a kernel target e.g.
+        // x86_64-unknown-none with the kernel code model and no red zone.
+        std::string targetTriple;   // --target-triple (LLVM triple; overrides host)
+        std::string targetCpu;      // --cpu (e.g. x86-64, generic)
+        std::string targetFeatures; // --target-features (e.g. -mmx,-sse,+soft-float)
+        std::string codeModel;      // --code-model (tiny|small|kernel|medium|large)
+        std::string relocModel;     // --reloc (static|pic|dynamic-no-pic)
+        bool noRedZone;             // --no-red-zone (required for interrupt handlers)
 
         CompilationOptions()
             : dumpIR(false), optimize(false), optimizationLevel(2), outputFile(""),
@@ -303,7 +312,7 @@ public:
               enableMacros(true), enableAsync(true), enableDebugger(false),
               enableWASM(false), target("native"), enablePackageManager(true), run(false),
               freestanding(false), noGC(false), borrowCheck(false), nativeCpu(false),
-              permissive(false), checkOnly(false) {}
+              permissive(false), checkOnly(false), noRedZone(false) {}
     };
 
     // Exit code produced by the most recent JIT execution (--run).
@@ -482,6 +491,12 @@ public:
         auto module = std::make_unique<llvm::Module>(filename, *context);
 
         useNativeCpu_ = options.nativeCpu;   // read by createConfiguredTargetMachine()
+        targetTriple_ = options.targetTriple;
+        targetCpu_ = options.targetCpu;
+        targetFeatures_ = options.targetFeatures;
+        codeModel_ = options.codeModel;
+        relocModel_ = options.relocModel;
+        noRedZone_ = options.noRedZone;
 
         // Give the module its real triple and data layout BEFORE IR generation.
         // Alignment is stamped on allocas/loads/stores at creation time, so an
@@ -501,6 +516,7 @@ public:
 
         codegen::IRGenerator generator(*context, std::move(module), errorHandler);
         generator.freestanding = options.freestanding;
+        generator.noRedZone = options.noRedZone;
 
         // Generate LLVM IR from the AST
         auto generatedModule = generator.generate(program);
@@ -799,9 +815,18 @@ public:
      * build host's CPU and full feature set (POPCNT, BMI, AVX/AVX2, FMA, ...),
      * the equivalent of clang's -march=native. Returns nullptr on lookup failure.
      */
+    // The triple every codegen path targets: an explicit --target-triple wins,
+    // otherwise the build host. Centralized so the module triple, the
+    // TargetMachine, and object emission never disagree (a mismatch silently
+    // corrupts the DataLayout / cross-compiled output).
+    std::string effectiveTriple() const
+    {
+        return targetTriple_.empty() ? llvm::sys::getDefaultTargetTriple() : targetTriple_;
+    }
+
     std::unique_ptr<llvm::TargetMachine> createConfiguredTargetMachine()
     {
-        std::string triple = llvm::sys::getDefaultTargetTriple();
+        std::string triple = effectiveTriple();
         std::string error;
 #if LLVM_VERSION_MAJOR >= 21
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(llvm::Triple(triple), error);
@@ -813,7 +838,13 @@ public:
 
         std::string cpu = "generic";
         std::string features;
-        if (useNativeCpu_)
+        // Explicit --cpu / --target-features win. --native (host tuning) only
+        // makes sense when not cross-compiling to a different triple.
+        if (!targetCpu_.empty())
+            cpu = targetCpu_;
+        if (!targetFeatures_.empty())
+            features = targetFeatures_;
+        else if (useNativeCpu_ && targetTriple_.empty())
         {
             cpu = llvm::sys::getHostCPUName().str();
 #if LLVM_VERSION_MAJOR >= 19
@@ -830,15 +861,31 @@ public:
             }
         }
 
+        // Reloc model: default PIC for hosted output, but a kernel usually wants
+        // static (no GOT/PLT, loaded at a fixed address).
+        std::optional<llvm::Reloc::Model> reloc = llvm::Reloc::PIC_;
+        if (relocModel_ == "static")             reloc = llvm::Reloc::Static;
+        else if (relocModel_ == "pic")           reloc = llvm::Reloc::PIC_;
+        else if (relocModel_ == "dynamic-no-pic") reloc = llvm::Reloc::DynamicNoPIC;
+
+        // Code model: the "kernel" model is the higher-half convention (kernel
+        // mapped in the top 2GB, sign-extended addressing).
+        std::optional<llvm::CodeModel::Model> cm;
+        if (codeModel_ == "tiny")        cm = llvm::CodeModel::Tiny;
+        else if (codeModel_ == "small")  cm = llvm::CodeModel::Small;
+        else if (codeModel_ == "kernel") cm = llvm::CodeModel::Kernel;
+        else if (codeModel_ == "medium") cm = llvm::CodeModel::Medium;
+        else if (codeModel_ == "large")  cm = llvm::CodeModel::Large;
+
         llvm::TargetOptions opt;
         // LLVM 21 changed createTargetMachine's first parameter from a triple
         // string to an llvm::Triple. Guard so the same source builds on 18-22.
 #if LLVM_VERSION_MAJOR >= 21
         llvm::TargetMachine* tm = target->createTargetMachine(
-            llvm::Triple(triple), cpu, features, opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+            llvm::Triple(triple), cpu, features, opt, reloc, cm);
 #else
         llvm::TargetMachine* tm = target->createTargetMachine(
-            triple, cpu, features, opt, std::optional<llvm::Reloc::Model>(llvm::Reloc::PIC_));
+            triple, cpu, features, opt, reloc, cm);
 #endif
         return std::unique_ptr<llvm::TargetMachine>(tm);
     }
@@ -848,7 +895,10 @@ public:
      */
     bool emitObjectFile(llvm::Module& module, const std::string& outputPath, bool asAssembly)
     {
-        std::string triple = llvm::sys::getDefaultTargetTriple();
+        // Honor an explicit --target-triple so cross-compiled objects carry the
+        // right triple (previously this always forced the host, silently
+        // discarding the requested bare-metal target).
+        std::string triple = effectiveTriple();
         // LLVM 21 changed Module::setTargetTriple to take an llvm::Triple.
 #if LLVM_VERSION_MAJOR >= 21
         module.setTargetTriple(llvm::Triple(triple));
@@ -1165,6 +1215,14 @@ public:
 private:
     error::ErrorHandler &errorHandler;
     bool useNativeCpu_ = false;   // --native: tune AOT codegen for the host CPU
+    // Cross-compilation / bare-metal codegen config, populated from CompilationOptions
+    // and read by createConfiguredTargetMachine()/emitObjectFile().
+    std::string targetTriple_;    // overrides the host triple when non-empty
+    std::string targetCpu_;       // --cpu
+    std::string targetFeatures_;  // --target-features
+    std::string codeModel_;       // --code-model
+    std::string relocModel_;      // --reloc
+    bool noRedZone_ = false;      // --no-red-zone
     type_checker::FeatureManager featureManager;
     std::unique_ptr<compiler::MacroSystem> macroSystem;
     std::unique_ptr<runtime::AsyncSystem> asyncSystem;
@@ -1202,10 +1260,13 @@ private:
         auto targetMachine = createConfiguredTargetMachine();
         if (targetMachine)
         {
+            // Use the TargetMachine's own triple, not the host default — with
+            // --target-triple these differ, and pairing a host triple with a
+            // cross DataLayout below would be inconsistent.
 #if LLVM_VERSION_MAJOR >= 21
-            module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+            module.setTargetTriple(targetMachine->getTargetTriple());
 #else
-            module.setTargetTriple(llvm::sys::getDefaultTargetTriple());
+            module.setTargetTriple(targetMachine->getTargetTriple().str());
 #endif
             module.setDataLayout(targetMachine->createDataLayout());
         }
@@ -1290,6 +1351,13 @@ void displayUsage()
               << "  --permissive           Print type errors but compile anyway (not recommended)\n"
               << "  --freestanding         Emit a no-libc/no-GC object for kernel/bare-metal\n"
               << "  --no-gc                Do not link the garbage collector (alloc -> malloc)\n"
+              << "\nCross-compilation / bare-metal codegen:\n"
+              << "  --target-triple <t>    Target LLVM triple (e.g. x86_64-unknown-none)\n"
+              << "  --cpu <name>           Target CPU (e.g. x86-64, generic)\n"
+              << "  --target-features <f>  Comma-separated features (e.g. -mmx,-sse,+soft-float)\n"
+              << "  --code-model <m>       tiny|small|kernel|medium|large\n"
+              << "  --reloc <m>            static|pic|dynamic-no-pic\n"
+              << "  --no-red-zone          Disable the red zone (required for ISR-reachable code)\n"
               << "  --no-ffi               Disable FFI support\n"
               << "  --no-concurrency       Disable concurrency features\n"
               << "  --no-advanced          Disable advanced language features\n"
@@ -1679,6 +1747,37 @@ int main(int argc, char *argv[])
             // Tune AOT codegen for the build host (POPCNT/AVX/BMI/...). Faster
             // but the resulting binary may not run on older CPUs.
             options.nativeCpu = true;
+        }
+        else if ((arg == "--target-triple" || arg == "--triple") && i + 1 < argc)
+        {
+            // Cross-compile: emit an object for an arbitrary LLVM target triple
+            // (e.g. x86_64-unknown-none for a bare-metal kernel).
+            options.targetTriple = argv[++i];
+        }
+        else if (arg == "--cpu" && i + 1 < argc)
+        {
+            options.targetCpu = argv[++i];
+        }
+        else if ((arg == "--target-features" || arg == "--features") && i + 1 < argc)
+        {
+            // e.g. "-mmx,-sse,-sse2,+soft-float" to keep the kernel off the FPU/SSE.
+            options.targetFeatures = argv[++i];
+        }
+        else if (arg == "--code-model" && i + 1 < argc)
+        {
+            // tiny|small|kernel|medium|large. Kernel code usually wants `kernel`.
+            options.codeModel = argv[++i];
+        }
+        else if (arg == "--reloc" && i + 1 < argc)
+        {
+            // static|pic|dynamic-no-pic. Kernels usually want `static`.
+            options.relocModel = argv[++i];
+        }
+        else if (arg == "--no-red-zone" || arg == "--no-redzone")
+        {
+            // Disable the SysV red zone. Mandatory for code that can be
+            // interrupted (ISRs) — an interrupt clobbers the 128-byte red zone.
+            options.noRedZone = true;
         }
         else if (arg == "--permissive")
         {

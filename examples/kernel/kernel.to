@@ -1,0 +1,165 @@
+// -----------------------------------------------------------------------------
+// A real, bootable 32-bit x86 kernel written in Tocin.
+//
+// GRUB (or QEMU's -kernel) loads this via the Multiboot 1 protocol, which hands
+// control to `_start` in 32-bit protected mode with paging off — exactly what a
+// freestanding kernel wants. `_start` sets up a stack and calls `kmain`, which
+// is ordinary Tocin: it drives the VGA text console and the 16550 serial port
+// with the compiler's raw-memory, volatile-MMIO, and inline-asm builtins.
+//
+// Build + boot:  see README.md in this directory (build.sh + QEMU one-liner).
+// Compile:       tocin kernel.to --freestanding --target-triple i686-unknown-none
+//                      --reloc static --code-model small -o kernel.o
+//
+// Everything here compiles with NO libc, NO GC, and NO Tocin runtime.
+// -----------------------------------------------------------------------------
+
+// --- Multiboot 1 header --------------------------------------------------------
+// Must appear in the first 8 KiB of the binary, 4-byte aligned, in its own
+// section (the linker script puts .multiboot first). FLAGS 0x3 = page-align
+// modules + provide a memory map. CHECKSUM makes magic+flags+checksum == 0.
+// The `"a"` flag marks the section allocatable so the linker places it inside
+// the loaded image (GRUB requires the header in the first 8 KiB of the file).
+asmModule(".set MB_MAGIC, 0x1BADB002\n.set MB_FLAGS, 0x3\n.section .multiboot, \"a\"\n.align 4\n.long MB_MAGIC\n.long MB_FLAGS\n.long -(MB_MAGIC + MB_FLAGS)");
+
+// --- Boot stack + entry point --------------------------------------------------
+// A 16 KiB stack in .bss (Multiboot leaves ESP undefined). `_start` points ESP
+// at the top, calls the Tocin entry `kmain`, then halts forever if it returns.
+asmModule(".section .bss\n.align 16\nstack_bottom:\n.skip 16384\nstack_top:");
+asmModule(".section .text\n.global _start\n.type _start, @function\n_start:\n  mov $stack_top, %esp\n  call kmain\n  cli\n1: hlt\n  jmp 1b");
+
+// --- Port I/O ------------------------------------------------------------------
+// x86 in/out via constrained inline asm. AL<->port(DX); the builtins verify the
+// constraint strings at compile time.
+def outb(port: int, value: int) {
+    asm("outb %al, %dx", "{ax},{dx}", value, port);
+}
+def inb(port: int) -> int {
+    return asm("inb %dx, %al", "={ax},{dx}", port);
+}
+
+// --- VGA text console (0xB8000) ------------------------------------------------
+// 80x25 cells; each cell is a 16-bit value: low byte = ASCII, high byte = color
+// attribute (here 0x0F = white on black). Writes are volatile so they are never
+// elided or reordered by the optimizer.
+let vga_col: int = 0;
+let vga_row: int = 0;
+
+def vga_cell(row: int, col: int, ch: int, attr: int) {
+    let index = (row * 80 + col) * 2;
+    let cell = ch + attr * 256;
+    volatileStore16(0xB8000, index, cell);
+}
+
+def vga_clear() {
+    let r = 0;
+    while r < 25 {
+        let c = 0;
+        while c < 80 {
+            vga_cell(r, c, 32, 0x0F);   // space
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    vga_col = 0;
+    vga_row = 0;
+}
+
+def vga_putc(ch: int) {
+    if ch == 10 {                        // '\n'
+        vga_col = 0;
+        vga_row = vga_row + 1;
+        return;
+    }
+    vga_cell(vga_row, vga_col, ch, 0x0F);
+    vga_col = vga_col + 1;
+    if vga_col >= 80 {
+        vga_col = 0;
+        vga_row = vga_row + 1;
+    }
+}
+
+// --- 16550 UART serial (COM1 = 0x3F8) ------------------------------------------
+// The canonical init sequence: disable interrupts, set 38400 8N1, enable+clear
+// the FIFOs. Serial is how a headless kernel talks to the outside world (QEMU
+// `-serial stdio` pipes it to your terminal).
+def serial_init() {
+    outb(0x3F9, 0x00);   // disable interrupts
+    outb(0x3FB, 0x80);   // enable DLAB (set baud divisor)
+    outb(0x3F8, 0x03);   // divisor low  = 3 (38400 baud)
+    outb(0x3F9, 0x00);   // divisor high = 0
+    outb(0x3FB, 0x03);   // 8 bits, no parity, one stop bit
+    outb(0x3FA, 0xC7);   // enable FIFO, clear, 14-byte threshold
+    outb(0x3FC, 0x0B);   // IRQs enabled, RTS/DSR set
+}
+
+// Bit 5 of the line-status register (0x3FD) is set when the transmit holding
+// register is empty and ready for the next byte.
+def serial_can_send() -> int {
+    return inb(0x3FD) & 0x20;
+}
+
+def serial_putc(ch: int) {
+    while serial_can_send() == 0 { }
+    outb(0x3F8, ch);
+}
+
+// --- A tiny driver built on the above ------------------------------------------
+// Writes a byte to both the VGA console and the serial port, so output shows up
+// on screen and in your terminal. `text` is a raw buffer (loadByte) so this stays
+// freestanding — no string runtime.
+def emit(ch: int) {
+    vga_putc(ch);
+    serial_putc(ch);
+}
+
+// Emit `len` bytes from a raw buffer, then a newline. Works on any address —
+// here we point it at a static byte table (see `banner` below), so the kernel
+// needs no heap/allocator to print.
+def emit_bytes(buf: int, len: int) {
+    let i = 0;
+    while i < len {
+        emit(loadByte(buf, i));
+        i = i + 1;
+    }
+    emit(10);   // newline
+}
+
+// --- Interrupt handling demo ---------------------------------------------------
+// A real ISR written in Tocin: the `interrupt` qualifier makes the compiler use
+// the x86 interrupt calling convention (correct prologue/epilogue + iret) and
+// pass the CPU-pushed frame as an address. This one acknowledges a timer tick.
+let ticks: int = 0;
+
+interrupt def timer_isr(frame: int) {
+    ticks = ticks + 1;
+    outb(0x20, 0x20);   // EOI to the master PIC
+}
+
+// A `naked` entry stub: no compiler prologue/epilogue, pure asm. This is the
+// shape you put in an IDT gate to save/restore state around a handler.
+naked def spurious_stub() {
+    asm("iret");
+}
+
+// --- Kernel entry --------------------------------------------------------------
+// Called by `_start`. Puts a banner on screen and serial, exercises port input,
+// then returns (the _start halt loop takes over).
+def kmain() -> int {
+    vga_clear();
+    serial_init();
+
+    // "TOCIN OS" as ASCII bytes, emitted one at a time (no string runtime).
+    emit(84); emit(79); emit(67); emit(73); emit(78);   // TOCIN
+    emit(32);                                            // space
+    emit(79); emit(83);                                  // OS
+    emit(10);                                            // newline
+
+    // Read the PS/2 status port just to show port input works.
+    let kbd_status = inb(0x64);
+    if kbd_status == 0 {
+        emit(46);   // '.'
+    }
+
+    return 0;
+}

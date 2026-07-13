@@ -87,6 +87,12 @@ jobs:
         # standard library via `tocin --run`; they cannot run under lli.
         run: bash tests/run_stdlib_tests.sh
 
+      - name: Run bare-metal / cross-compile codegen tests
+        # Freestanding objects, cross triples, --no-red-zone, naked/interrupt
+        # functions, module asm, and the bootable kernel example. Emit objects
+        # (not JIT), verified with objdump + python3.
+        run: bash tests/kernel_codegen_test.sh
+
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
