@@ -182,6 +182,12 @@ namespace codegen
         // Symbol tables
         std::map<std::string, llvm::AllocaInst *> namedValues;                     // Variable symbol table
         std::map<std::string, std::string> varClasses;                            // Variable name -> class name
+        // Escape analysis: constructor call sites whose instance provably does
+        // not escape its function, so it can be stack-allocated (entry-block
+        // alloca) instead of heap-allocated via __tocin_alloc. Sound: a site is
+        // included only when every use of the local is proven non-escaping; any
+        // unrecognized use is treated as an escape (heap fallback).
+        std::set<const ast::CallExpr *> stackAllocSites_;
         std::map<std::string, llvm::Type *> varArrayElem;                         // Variable name -> array element LLVM type
         std::map<std::string, std::shared_ptr<ast::FunctionType>> varFuncSig;     // Variable name -> declared function-pointer signature
         std::set<std::string> varIsString;                                        // Variables statically known to hold strings
@@ -236,6 +242,10 @@ namespace codegen
         // created function: `noredzone` under --no-red-zone, and the `naked` /
         // x86-interrupt-cc qualifiers when the declaration carries them.
         void applyBareMetalAttributes(llvm::Function *function, ast::FunctionStmt *stmt);
+        // Whole-module escape analysis: populates stackAllocSites_ with the
+        // constructor calls whose result can be stack-allocated. Runs once,
+        // before IR generation.
+        void runEscapeAnalysis(const ast::StmtPtr &program);
         // If `expr` is a bare buffer-variable reference, return its name, else "".
         std::string bufferVarName(const ast::ExprPtr &expr) const;
         // Source cursor for diagnostics: updated at visit entry points so

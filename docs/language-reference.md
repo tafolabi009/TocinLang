@@ -1461,6 +1461,15 @@ x86-64 SysV ABI — use `-> i32` if you need an exact C `int`.
   literals, channels, and dynamic collections live on the heap, allocated
   through the GC-backed runtime allocator. Class/array/channel values are
   passed around as **opaque pointers**.
+* **Stack allocation of non-escaping structs.** A whole-module escape analysis
+  (sound and conservative, with interprocedural parameter summaries) detects
+  `struct`/`class` instances that provably never leave their function and
+  places them in a stack `alloca` instead of the heap — no allocator, no GC.
+  This is what lets `--freestanding` code use structs without providing
+  `__tocin_alloc`. An instance that escapes (returned, stored into a
+  field/global/collection, captured by a closure, or passed to a function that
+  retains it) is heap-allocated as before; anything the analysis cannot prove
+  non-escaping falls back to the heap.
 * **Garbage collection.** Heap memory — instances, strings, closures, arrays,
   `Option`/`Result` records, vectors, maps — is reclaimed automatically by the
   **Boehm conservative collector**, so long-running programs don't leak.
