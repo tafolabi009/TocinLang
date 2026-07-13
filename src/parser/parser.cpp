@@ -49,6 +49,38 @@ namespace parser
     {
         try
         {
+            // Bare-metal function qualifiers: `naked` and/or `interrupt`
+            // (contextual keywords, order-independent) may precede `def`. Only
+            // treated as qualifiers when the run of them is actually followed by
+            // `def`, so `naked` and `interrupt` remain usable as identifiers
+            // elsewhere.
+            if (check(lexer::TokenType::IDENTIFIER) &&
+                (peek().value == "naked" || peek().value == "interrupt"))
+            {
+                size_t look = current;
+                while (look < tokens.size() &&
+                       tokens[look].type == lexer::TokenType::IDENTIFIER &&
+                       (tokens[look].value == "naked" || tokens[look].value == "interrupt"))
+                    ++look;
+                if (look < tokens.size() && tokens[look].type == lexer::TokenType::DEF)
+                {
+                    bool nakedQ = false, interruptQ = false;
+                    while (check(lexer::TokenType::IDENTIFIER) &&
+                           (peek().value == "naked" || peek().value == "interrupt"))
+                    {
+                        if (peek().value == "naked") nakedQ = true; else interruptQ = true;
+                        advance();
+                    }
+                    consume(lexer::TokenType::DEF, "Expected 'def' after function qualifier");
+                    auto fn = functionDeclaration();
+                    if (auto f = std::dynamic_pointer_cast<ast::FunctionStmt>(fn))
+                    {
+                        f->isNaked = nakedQ;
+                        f->isInterrupt = interruptQ;
+                    }
+                    return fn;
+                }
+            }
             if (match(lexer::TokenType::LET) || match(lexer::TokenType::CONST))
             {
                 return varDeclaration();

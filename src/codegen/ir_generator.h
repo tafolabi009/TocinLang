@@ -86,6 +86,11 @@ namespace codegen
         // become compile errors; raw memory + inline asm + arithmetic remain.
         bool freestanding = false;
 
+        // --no-red-zone: stamp every defined function with the `noredzone`
+        // attribute. Required for interruptible code (an interrupt clobbers the
+        // 128-byte red zone below the stack pointer).
+        bool noRedZone = false;
+
         /**
          * @brief Generate LLVM IR from an AST.
          *
@@ -223,6 +228,10 @@ namespace codegen
         // hitting UB (SIGFPE, segfault). Execution continues on the ok path.
         // Used for division by zero, nil force-unwrap, and similar runtime traps.
         void emitTrapIf(llvm::Value *condFail, const std::string &msg);
+        // Apply bare-metal function attributes/calling-convention to a freshly
+        // created function: `noredzone` under --no-red-zone, and the `naked` /
+        // x86-interrupt-cc qualifiers when the declaration carries them.
+        void applyBareMetalAttributes(llvm::Function *function, ast::FunctionStmt *stmt);
         // If `expr` is a bare buffer-variable reference, return its name, else "".
         std::string bufferVarName(const ast::ExprPtr &expr) const;
         // Source cursor for diagnostics: updated at visit entry points so

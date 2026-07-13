@@ -648,6 +648,11 @@ namespace ast
         TypePtr returnType;
         StmtPtr body;
         bool isAsync;
+        // Bare-metal function qualifiers (parsed from `naked`/`interrupt` before
+        // `def`). `naked` emits no prologue/epilogue (the body is pure asm);
+        // `interrupt` uses the x86 interrupt calling convention for ISR handlers.
+        bool isNaked = false;
+        bool isInterrupt = false;
 
         bool isGeneric() const { return !typeParameters.empty(); }
     };

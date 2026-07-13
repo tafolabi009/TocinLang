@@ -605,6 +605,32 @@ void IRGenerator::emitTrapIf(llvm::Value *condFail, const std::string &msg)
     builder.SetInsertPoint(contBB);
 }
 
+void IRGenerator::applyBareMetalAttributes(llvm::Function *function, ast::FunctionStmt *stmt)
+{
+    if (!function)
+        return;
+    // --no-red-zone: an interrupt/exception clobbers the 128-byte red zone
+    // below rsp, so any code that can run in that context must not use it.
+    if (noRedZone)
+        function->addFnAttr(llvm::Attribute::NoRedZone);
+
+    if (stmt && stmt->isNaked)
+    {
+        // No compiler-generated prologue/epilogue: the body is responsible for
+        // the whole frame (entry stubs, trampolines). Implies noinline.
+        function->addFnAttr(llvm::Attribute::Naked);
+        function->addFnAttr(llvm::Attribute::NoInline);
+    }
+    if (stmt && stmt->isInterrupt)
+    {
+        // x86 interrupt calling convention: the backend emits the correct
+        // prologue/epilogue for an ISR (aligns the stack, uses iret, preserves
+        // all registers). The handler receives a pointer to the interrupt frame
+        // (and, for some vectors, an error code) per the x86_64 SysV ISR ABI.
+        function->setCallingConv(llvm::CallingConv::X86_INTR);
+    }
+}
+
 std::string IRGenerator::bufferVarName(const ast::ExprPtr &expr) const
 {
     if (auto v = std::dynamic_pointer_cast<ast::VariableExpr>(expr))
@@ -978,6 +1004,20 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
         returnType = llvm::Type::getVoidTy(context);
     }
 
+    // The x86 interrupt calling convention fixes the ABI: the handler takes a
+    // `ptr byval(frame)` (the CPU-pushed interrupt frame) and, for vectors that
+    // push one, a trailing i64 error code — returning void. We rewrite the
+    // signature to that shape and expose the frame to the body as an integer
+    // address (so loadInt(frame, off) reads the saved RIP/CS/RFLAGS/RSP/SS).
+    if (stmt->isInterrupt)
+    {
+        paramTypes.clear();
+        paramTypes.push_back(llvm::PointerType::get(context, 0));   // frame ptr (byval)
+        if (stmt->parameters.size() >= 2)
+            paramTypes.push_back(llvm::Type::getInt64Ty(context));  // error code
+        returnType = llvm::Type::getVoidTy(context);
+    }
+
     // Create function type
     llvm::FunctionType *funcType = llvm::FunctionType::get(
         returnType, paramTypes, false);
@@ -988,6 +1028,18 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     {
         function = llvm::Function::Create(
             funcType, llvm::Function::ExternalLinkage, funcName, *module);
+    }
+
+    // Bare-metal / kernel function attributes.
+    applyBareMetalAttributes(function, stmt);
+
+    // The interrupt frame parameter must carry byval(<frame struct>) for the
+    // x86_intrcc verifier. The frame is 5 machine words: RIP, CS, RFLAGS, RSP, SS.
+    if (stmt->isInterrupt && function->arg_size() >= 1)
+    {
+        llvm::Type *word = llvm::Type::getInt64Ty(context);
+        auto *frameTy = llvm::StructType::get(context, {word, word, word, word, word});
+        function->addParamAttr(0, llvm::Attribute::getWithByValType(context, frameTy));
     }
 
     // Set parameter names and store them in symbol table
@@ -1046,6 +1098,19 @@ void IRGenerator::visitFunctionStmt(ast::FunctionStmt *stmt)
     {
         if (idx < stmt->parameters.size())
         {
+            // Interrupt handlers receive the frame as a real pointer (byval); the
+            // Tocin body works with integer addresses, so materialize it as an
+            // i64 slot holding ptrtoint(frame).
+            if (stmt->isInterrupt && arg.getType()->isPointerTy())
+            {
+                llvm::Type *i64Ty = llvm::Type::getInt64Ty(context);
+                llvm::AllocaInst *alloca = builder.CreateAlloca(
+                    i64Ty, nullptr, stmt->parameters[idx].name);
+                builder.CreateStore(builder.CreatePtrToInt(&arg, i64Ty), alloca);
+                namedValues[stmt->parameters[idx].name] = alloca;
+                idx++;
+                continue;
+            }
             llvm::AllocaInst *alloca = builder.CreateAlloca(
                 arg.getType(), nullptr, stmt->parameters[idx].name);
             builder.CreateStore(&arg, alloca);
@@ -5517,19 +5582,41 @@ llvm::Function *IRGenerator::declareFunctionProto(ast::FunctionStmt *stmt)
         return existing;
     llvm::Type *i64 = llvm::Type::getInt64Ty(context);
     std::vector<llvm::Type *> paramTypes;
-    for (const auto &p : stmt->parameters)
+    llvm::Type *retType;
+    if (stmt->isInterrupt)
     {
-        llvm::Type *t = p.type ? getLLVMType(p.type) : i64;
-        if (!t || t->isVoidTy())
-            t = i64;
-        paramTypes.push_back(t);
-    }
-    llvm::Type *retType = stmt->returnType ? getLLVMType(stmt->returnType)
-                                           : inferFunctionReturnType(stmt);
-    if (!retType)
+        // Match the definition's x86-interrupt shape so the two passes agree
+        // (otherwise byval lands on the i64 prototype and the verifier rejects it).
+        paramTypes.push_back(llvm::PointerType::get(context, 0));
+        if (stmt->parameters.size() >= 2)
+            paramTypes.push_back(i64);
         retType = llvm::Type::getVoidTy(context);
+    }
+    else
+    {
+        for (const auto &p : stmt->parameters)
+        {
+            llvm::Type *t = p.type ? getLLVMType(p.type) : i64;
+            if (!t || t->isVoidTy())
+                t = i64;
+            paramTypes.push_back(t);
+        }
+        retType = stmt->returnType ? getLLVMType(stmt->returnType)
+                                   : inferFunctionReturnType(stmt);
+        if (!retType)
+            retType = llvm::Type::getVoidTy(context);
+    }
     llvm::FunctionType *ft = llvm::FunctionType::get(retType, paramTypes, false);
-    return llvm::Function::Create(ft, llvm::Function::ExternalLinkage, stmt->name, module.get());
+    llvm::Function *fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage, stmt->name, module.get());
+    // Stamp bare-metal attributes on the prototype too, so the definition (which
+    // reuses this function) inherits the calling convention / byval / noredzone.
+    applyBareMetalAttributes(fn, stmt);
+    if (stmt->isInterrupt && fn->arg_size() >= 1)
+    {
+        auto *frameTy = llvm::StructType::get(context, {i64, i64, i64, i64, i64});
+        fn->addParamAttr(0, llvm::Attribute::getWithByValType(context, frameTy));
+    }
+    return fn;
 }
 
 void IRGenerator::registerClassType(ast::ClassStmt *stmt)
