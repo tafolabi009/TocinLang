@@ -238,20 +238,22 @@ llvm::Type *IRGenerator::getLLVMType(ast::TypePtr type)
         if (bound != typeBindings.end())
             return bound->second;
 
-        // Check for basic type names
-        if (typeName == "int" || typeName == "i64")
+        // Check for basic type names. Sized ints (u*/i* — LLVM integers are
+        // sign-agnostic, so u32 and i32 share a width) are the field types for
+        // MMIO register structs and packed on-disk/on-wire layouts.
+        if (typeName == "int" || typeName == "i64" || typeName == "u64" || typeName == "usize" || typeName == "isize")
         {
             return llvm::Type::getInt64Ty(context);
         }
-        else if (typeName == "i32")
+        else if (typeName == "i32" || typeName == "u32")
         {
             return llvm::Type::getInt32Ty(context);
         }
-        else if (typeName == "i16")
+        else if (typeName == "i16" || typeName == "u16")
         {
             return llvm::Type::getInt16Ty(context);
         }
-        else if (typeName == "i8")
+        else if (typeName == "i8" || typeName == "u8")
         {
             return llvm::Type::getInt8Ty(context);
         }
@@ -1907,6 +1909,13 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
                 // that address back into a usable string value (no copy).
                 auto a = slot(0); if (!a) return;
                 lastValue = builder.CreateIntToPtr(a, ptrb, "s.fromaddr"); return; }
+            if (funcName == "mmioAt" && na == 1) {
+                // Treat an integer physical/virtual address as a typed struct
+                // pointer: `let u: Uart = mmioAt(0x10000000);`. The result is an
+                // opaque pointer; the `let`'s declared (mmio) struct type gives
+                // field access its layout and makes the loads/stores volatile.
+                auto a = slot(0); if (!a) return;
+                lastValue = builder.CreateIntToPtr(a, ptrb, "mmio.at"); return; }
             if (funcName == "bufToStr" && na == 2) {    // copy n bytes -> NUL-terminated string
                 // The missing piece for O(n) string building: assemble bytes in
                 // a raw buffer (data/strbuf) then materialize one string, instead
@@ -3820,6 +3829,7 @@ void IRGenerator::visitClassStmt(ast::ClassStmt *stmt)
 
     info.classType = structType;
     info.baseClass = nullptr;
+    info.isMmio = stmt->isMmio;
     classTypes[stmt->name] = info;
 
     // Generate each method (with an implicit leading 'this' parameter).
@@ -5074,7 +5084,12 @@ void IRGenerator::visitGetExpr(ast::GetExpr *expr)
             // Get a pointer to the field (using the known struct type)
             llvm::Value *fieldPtr = builder.CreateGEP(
                 structType, object, indices, "field." + expr->name);
-            lastValue = builder.CreateLoad(fieldType, fieldPtr);
+            llvm::LoadInst *ld = builder.CreateLoad(fieldType, fieldPtr);
+            // mmio struct: hardware register read must be volatile (never
+            // elided, hoisted, or merged with adjacent accesses).
+            if (classInfo.isMmio)
+                ld->setVolatile(true);
+            lastValue = ld;
             return;
         }
         else
@@ -5178,7 +5193,10 @@ void IRGenerator::visitSetExpr(ast::SetExpr *expr)
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), (unsigned)fieldIndex)};
     llvm::Value *fieldPtr = builder.CreateGEP(structType, object, indices, "field." + expr->name);
-    builder.CreateStore(val, fieldPtr);
+    llvm::StoreInst *st = builder.CreateStore(val, fieldPtr);
+    // mmio struct: hardware register write must be volatile.
+    if (info.isMmio)
+        st->setVolatile(true);
     lastValue = val;
 }
 
@@ -5662,6 +5680,7 @@ void IRGenerator::registerClassType(ast::ClassStmt *stmt)
         structType->setBody(fieldTypes);
     info.classType = structType;
     info.baseClass = nullptr;
+    info.isMmio = stmt->isMmio;
     classTypes[stmt->name] = info;
 }
 
@@ -6438,6 +6457,20 @@ void IRGenerator::visitBinaryExpr(ast::BinaryExpr *expr)
     } else if ((left->getType()->isFloatTy() || left->getType()->isDoubleTy()) &&
                right->getType()->isIntegerTy() && !right->getType()->isIntegerTy(1)) {
         right = builder.CreateSIToFP(right, left->getType(), "promote");
+    }
+    // Mixed integer widths: reconcile to the wider type before the op. Without
+    // this, mixing a sized field (i8/i16/i32, e.g. a u32 MMIO register) with a
+    // default `int` (i64) literal produces a type-mismatched icmp/add that fails
+    // verification. Sign-extend to match the language's signed integer model.
+    else if (left->getType()->isIntegerTy() && right->getType()->isIntegerTy() &&
+             !left->getType()->isIntegerTy(1) && !right->getType()->isIntegerTy(1) &&
+             left->getType() != right->getType()) {
+        unsigned lw = left->getType()->getIntegerBitWidth();
+        unsigned rw = right->getType()->getIntegerBitWidth();
+        if (lw < rw)
+            left = builder.CreateSExt(left, right->getType(), "iwiden");
+        else
+            right = builder.CreateSExt(right, left->getType(), "iwiden");
     }
 
     // Handle different operators

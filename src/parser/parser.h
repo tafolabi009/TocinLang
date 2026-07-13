@@ -68,7 +68,7 @@ namespace parser
         ast::StmtPtr declaration();
         ast::StmtPtr varDeclaration();
         ast::StmtPtr functionDeclaration();
-        ast::StmtPtr classDeclaration();
+        ast::StmtPtr classDeclaration(bool isMmio = false);
         ast::StmtPtr traitDeclaration();
         ast::StmtPtr implDeclaration();
         ast::StmtPtr enumDeclaration();

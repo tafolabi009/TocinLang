@@ -1,0 +1,69 @@
+// mmio_uart.to — a memory-mapped 16550 UART driver written with an `mmio struct`.
+//
+// Many platforms (ARM, RISC-V, embedded x86) expose the UART as a block of
+// memory-mapped registers rather than x86 I/O ports. An `mmio struct` models
+// that block directly: field access lowers to *volatile* loads/stores at the
+// physical base, so reads/writes are never elided, merged, or reordered — the
+// contract hardware registers require. This is the typed alternative to manual
+// `volatileStore32(base, offset, v)` calls.
+//
+// Build (freestanding, no libc/GC/runtime):
+//   tocin mmio_uart.to --freestanding --target-triple x86_64-unknown-none \
+//         --reloc static --no-red-zone -o mmio_uart.o
+//
+// Link mmio_uart.o into your kernel and call uartPuts() with a raw byte buffer.
+
+// A 16550-style UART with 32-bit, 4-byte-spaced registers (reg-shift 2), the
+// common memory-mapped layout. Sized fields (u32) give an exact C layout, so
+// each register sits at its true offset: thr=0x00, ier=0x04, ... scratch=0x1C.
+mmio struct Uart16550 {
+    thr_rbr: u32;   // 0x00  THR (write) / RBR (read) / DLL (when DLAB=1)
+    ier_dlh: u32;   // 0x04  IER / DLH
+    iir_fcr: u32;   // 0x08  IIR (read) / FCR (write)
+    lcr: u32;       // 0x0C  line control
+    mcr: u32;       // 0x10  modem control
+    lsr: u32;       // 0x14  line status
+    msr: u32;       // 0x18  modem status
+    scratch: u32;   // 0x1C  scratch
+}
+
+// Program the UART for 8-N-1 at the divisor `div`, FIFOs enabled.
+def uartInit(base: int, div: int) {
+    let u: Uart16550 = mmioAt(base);
+    u.ier_dlh = 0;         // mask interrupts
+    u.lcr = 0x80;          // DLAB=1: divisor latch accessible
+    u.thr_rbr = div;       // divisor low
+    u.ier_dlh = 0;         // divisor high
+    u.lcr = 0x03;          // DLAB=0, 8 bits, no parity, 1 stop
+    u.iir_fcr = 0xC7;      // enable + clear FIFOs, 14-byte trigger
+    u.mcr = 0x0B;          // DTR, RTS, OUT2
+}
+
+// Poll the Transmit-Holding-Register-Empty bit (LSR bit 5), then write a byte.
+def uartPutc(base: int, ch: int) {
+    let u: Uart16550 = mmioAt(base);
+    // Spin until the transmit holding register is empty.
+    while (u.lsr & 0x20) == 0 { }
+    u.thr_rbr = ch;
+}
+
+// Write `n` bytes from a raw buffer (freestanding: no string type).
+def uartPuts(base: int, buf: int, n: int) {
+    let i = 0;
+    while i < n {
+        uartPutc(base, loadByte(buf, i));
+        i = i + 1;
+    }
+}
+
+// Demo entry: assumes a UART mapped at 0x1000_0000 (adjust per platform).
+def main() -> int {
+    let base = 0x10000000;
+    uartInit(base, 1);         // divisor 1
+    let msg = alloc(3);
+    storeByte(msg, 0, 72);     // 'H'
+    storeByte(msg, 1, 105);    // 'i'
+    storeByte(msg, 2, 10);     // '\n'
+    uartPuts(base, msg, 3);
+    return 0;
+}

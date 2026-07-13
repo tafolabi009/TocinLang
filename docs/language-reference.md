@@ -141,7 +141,8 @@ identifier by a token-level preprocessing pass (see [§15](#15-macros)).
 | Tocin | LLVM | Description |
 |---|---|---|
 | `int` (alias `i64`) | `i64` | 64-bit signed integer. The default integer type. |
-| `i32`, `i16`, `i8` | `i32`/`i16`/`i8` | Sized integers (mainly for FFI). |
+| `i32`, `i16`, `i8` | `i32`/`i16`/`i8` | Sized integers (FFI, MMIO registers, packed layouts). |
+| `u64`, `u32`, `u16`, `u8` | `i64`/`i32`/`i16`/`i8` | Width aliases of the sized ints (LLVM integers are sign-agnostic). Mixed-width integer operands sign-extend to the wider type. |
 | `float` (alias `f64`) | `double` | 64-bit IEEE float. The default float type. |
 | `f32` (alias `float32`) | `float` | 32-bit IEEE float. |
 | `bool` | `i1` | `true` / `false`. |
@@ -711,6 +712,27 @@ Class instances are reference values (opaque pointers). A class-typed variable
 may hold `None` (see [§12](#12-null-safety)).
 
 Generic classes (`class C<T>`) are covered in [§8](#8-generics).
+
+### `mmio struct` — memory-mapped device registers
+
+A struct declared `mmio struct` models a block of hardware registers: it uses a
+C field layout (sized `u8`/`u16`/`u32`/`u64` fields at their natural offsets),
+and **every field read/write lowers to a *volatile* load/store** — never
+elided, merged, or reordered, as hardware requires. Obtain a typed handle at a
+physical address with the `mmioAt(addr)` builtin:
+
+```tocin
+mmio struct Uart { data: u32; status: u32; control: u32; }
+
+def putc(base: int, ch: int) {
+    let u: Uart = mmioAt(base);      // typed view at a physical address
+    while (u.status & 0x20) == 0 { } // volatile register read
+    u.data = ch;                     // volatile register write
+}
+```
+
+`mmio struct` needs no runtime, so it works under `--freestanding` for kernel
+and driver code. See [kernel-development.md](kernel-development.md).
 
 ---
 
@@ -1701,6 +1723,11 @@ At most one `=`-output constraint is allowed; templates use AT&T syntax with
 `$0`, `$1`, … operands. Combined with `--freestanding` these are the
 primitives for MMIO device registers and kernel work — see
 `tests/jit/kernel_primitives.to` for a runnable tour.
+
+For **typed** register access, `mmioAt(addr)` returns a typed handle to an
+`mmio struct` at a physical address, so device registers are named fields with
+volatile access instead of raw offsets (see the `mmio struct` subsection in
+§6). `mmioAt` is the typed counterpart to the raw `volatile{Load,Store}*`.
 
 **Module-level assembly.** `asmModule("...")` emits assembly verbatim into the
 module, outside any function — for a Multiboot header, an `_start` entry point,
