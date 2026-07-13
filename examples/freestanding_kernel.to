@@ -9,13 +9,23 @@
 //   cc -nostdlib -ffreestanding -static provide.c kernel.o -o kernel
 //
 // AVAILABLE freestanding: arithmetic, control flow, functions, raw memory
-// (alloc/memcpy/memset/ptrAdd/load*/store*), char predicates, and inline asm.
+// (alloc/memcpy/memset/ptrAdd/load*/store*), char predicates, volatile MMIO,
+// inline asm, and cross-compilation (--target-triple/--cpu/--code-model/
+// --no-red-zone) plus `naked`/`interrupt` functions and `asmModule`.
 // UNAVAILABLE (compile error): print/println, strings, collections, file I/O,
 // channels/goroutines — those need libc/GC/runtime.
+//
+// For a complete, bootable kernel using all of the above, see examples/kernel/.
 
+// Real x86 port output: value in AL, port in DX, via constrained inline asm.
+// (The "{ax},{dx}" constraints bind the operands to the right registers; the
+// asm builtin verifies them at compile time.)
 def outb(port: int, val: int) {
-    // Example of CPU-level I/O via inline assembly (x86 `out`).
-    asm("nop");   // placeholder; real code would use a constrained asm
+    asm("outb %al, %dx", "{ax},{dx}", val, port);
+}
+
+def inb(port: int) -> int {
+    return asm("inb %dx, %al", "={ax},{dx}", port);
 }
 
 def memzero(buf: int, n: int) {
@@ -28,7 +38,6 @@ def main() -> int {
     memzero(page, 4096);
     storeInt(page, 0, 0xDEADBEEF);
     storeByte(page, 8, 0x2A);
-    outb(0x60, 1);
-    asm("nop");
+    outb(0x60, 1);              // real `out` to port 0x60
     return loadByte(page, 8);   // 0x2A = 42
 }

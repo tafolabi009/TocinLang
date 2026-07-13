@@ -60,6 +60,10 @@ namespace type_checker
             {"fence", {0}},
             // inline assembly: asm(template) or asm(template, constraints, ...)
             {"asm", {}},
+            // module-level (top-level) inline assembly: emitted verbatim into the
+            // module, before any function. For multiboot headers, _start, GDT
+            // flush stubs — anything that must exist outside a Tocin function.
+            {"asmModule", {1}},
             // growable vector runtime
             {"vecNew", {0}}, {"vecPush", {2}}, {"vecGet", {2}}, {"vecSet", {3}},
             {"vecLen", {1}}, {"vecPop", {1}}, {"vecFree", {1}}, {"vecToArray", {1}},

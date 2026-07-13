@@ -1487,6 +1487,11 @@ tocin doc FILE.to          # generate Markdown API docs to stdout
 | `--permissive` | Downgrade type errors to warnings and compile anyway. Not recommended — strict is the supported mode. |
 | `--freestanding` | Emit a no-libc/no-GC relocatable object for kernel / bare-metal work (link with `-nostdlib`). |
 | `--no-gc` | Link without the garbage collector (allocation falls back to `malloc`). |
+| `--target-triple <t>` | Cross-compile for an arbitrary LLVM triple (e.g. `x86_64-unknown-none`). |
+| `--cpu <name>` / `--target-features <f>` | Target CPU and feature string (e.g. `-mmx,-sse,+soft-float`). |
+| `--code-model <m>` | `tiny` \| `small` \| `kernel` \| `medium` \| `large`. |
+| `--reloc <m>` | `static` \| `pic` \| `dynamic-no-pic`. |
+| `--no-red-zone` | Disable the SysV red zone (required for interrupt-reachable code). |
 | `--borrow-check` | Enable the opt-in move / use-after-move checker. |
 | `--dump-ir` | Print the generated LLVM IR to stdout. |
 | `--target <native\|wasm>` | Compilation target (native is the supported path). |
@@ -1696,6 +1701,30 @@ At most one `=`-output constraint is allowed; templates use AT&T syntax with
 `$0`, `$1`, … operands. Combined with `--freestanding` these are the
 primitives for MMIO device registers and kernel work — see
 `tests/jit/kernel_primitives.to` for a runnable tour.
+
+**Module-level assembly.** `asmModule("...")` emits assembly verbatim into the
+module, outside any function — for a Multiboot header, an `_start` entry point,
+a boot stack, or GDT stubs. Multiple calls accrete in source order.
+
+```tocin
+asmModule(".global _start\n_start:\n  mov $stack_top, %esp\n  call kmain\n1: hlt\n  jmp 1b");
+```
+
+**Bare-metal function qualifiers.** A function may be prefixed with `naked`
+and/or `interrupt` (before `def`):
+
+* `naked def f() { … }` — no compiler prologue/epilogue; the body is pure asm
+  (ISR entry stubs, trampolines). The body must transfer control itself.
+* `interrupt def h(frame: int[, err: int]) { … }` — the x86 interrupt calling
+  convention: the compiler emits the ISR prologue/epilogue and returns with
+  `iret`. `frame` is the CPU-pushed interrupt frame as an integer address
+  (`loadInt(frame, off)` reads saved RIP/CS/RFLAGS/RSP/SS); an optional second
+  parameter is the hardware error code.
+
+These, with the cross-compilation flags (`--target-triple`, `--code-model`,
+`--no-red-zone`, …) and `--freestanding`, are enough to write a bootable
+kernel — see [kernel-development.md](kernel-development.md) and
+[`examples/kernel/`](../examples/kernel/).
 
 ### LINQ-style collection ops (require `import std.linq;`)
 

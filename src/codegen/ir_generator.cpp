@@ -1998,6 +1998,26 @@ void IRGenerator::visitCallExpr(ast::CallExpr *expr)
             //       rdtsc: let t = asm("rdtsc; shl $$32, %rdx; or %rdx, %rax",
             //                          "={ax},~{dx}")
             //       cr3:   let p = asm("mov %cr3, $0", "=r")
+            if (funcName == "asmModule" && na >= 1) {
+                // Module-level inline asm: appended verbatim to the module (not a
+                // call inside the current function). Placement in the module is
+                // what lets a multiboot header / _start / GDT stub exist outside
+                // any Tocin function. Requires a string-literal body.
+                auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[0]);
+                if (!lit || lit->literalType != ast::LiteralExpr::LiteralType::STRING) {
+                    errorHandler.reportError(error::ErrorCode::T001_TYPE_MISMATCH,
+                        "asmModule(...) requires a string-literal assembly body",
+                        std::string(expr->token.filename), expr->token.line,
+                        expr->token.column, error::ErrorSeverity::ERROR);
+                    lastValue = nullptr; return;
+                }
+                // Append (newline-separated) so multiple asmModule calls accrete
+                // in source order rather than concatenating on one line.
+                std::string existing = module->getModuleInlineAsm();
+                module->setModuleInlineAsm(existing.empty() ? lit->value
+                                                            : existing + "\n" + lit->value);
+                lastValue = llvm::ConstantInt::get(i64b, 0); return;
+            }
             if (funcName == "asm" && na >= 1) {
                 auto lit = std::dynamic_pointer_cast<ast::LiteralExpr>(expr->arguments[0]);
                 if (!lit || lit->literalType != ast::LiteralExpr::LiteralType::STRING) {

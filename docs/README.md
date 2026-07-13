@@ -44,6 +44,7 @@ The documentation set for the Tocin language and compiler. Start here.
 | [INTERPRETER_GUIDE.md](INTERPRETER_GUIDE.md) | Running programs: the JIT (`--run`), native builds (`-o`), and what the REPL actually does. |
 | [INSTALLER_GUIDE.md](INSTALLER_GUIDE.md) | Building the native installers (points at the real `installer/` scripts). |
 | [native-linking.md](native-linking.md) | How `tocin file.to -o app` links with **no system compiler** (bundled `ld.lld` + static recipe). |
+| [kernel-development.md](kernel-development.md) | **Bare-metal / OS dev**: freestanding mode, cross-compilation, `naked`/`interrupt` functions, module-level asm, volatile MMIO. See also [`examples/kernel/`](../examples/kernel/). |
 | [PERFORMANCE.md](PERFORMANCE.md) | Performance practices. |
 | [capability-report.md](capability-report.md) | **Honest assessment** of what Tocin can build today, with measurements. |
 
