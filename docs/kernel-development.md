@@ -106,6 +106,39 @@ def outb(port: int, val: int) { asm("outb %al, %dx", "{ax},{dx}", val, port); }
 def inb(port: int) -> int      { return asm("inb %dx, %al", "={ax},{dx}", port); }
 ```
 
+## Typed device registers: `mmio struct`
+
+Manual `volatileStore32(base, offset, v)` calls are error-prone — the offsets
+are magic numbers. An **`mmio struct`** names a memory-mapped register block as
+a struct with sized fields (`u8`/`u16`/`u32`/`u64`, laid out in C order), and
+lowers **every field access to a volatile load/store** at the physical base.
+Get a typed handle from an address with `mmioAt(addr)`:
+
+```tocin
+mmio struct Uart {
+    thr: u32;      // offset 0x00
+    ier: u32;      // offset 0x04
+    iir_fcr: u32;  // offset 0x08
+    lcr: u32;      // offset 0x0C
+    lsr: u32;      // offset 0x14  (0x10 is mcr, elided here for brevity)
+}
+
+def putc(base: int, ch: int) {
+    let u: Uart = mmioAt(base);        // typed view at a physical address
+    while (u.lsr & 0x20) == 0 { }      // volatile read — polls the real register
+    u.thr = ch;                        // volatile write
+}
+```
+
+`u.thr = ch` emits `store volatile i32`, and `u.lsr` emits `load volatile i32`,
+each at the field's true offset — no elision, no reordering, no manual offset
+arithmetic. `mmio struct` works in `--freestanding` (it needs no runtime), and
+the sized fields interoperate with default `int` (i64) values in arithmetic and
+comparisons. Because LLVM integers are sign-agnostic, `u8`/`u16`/`u32`/`u64`
+are width aliases of `i8`/`i16`/`i32`/`i64`; mixed-width integer operands are
+sign-extended to the wider type. A full driver is in
+[`examples/kernel/mmio_uart.to`](../examples/kernel/mmio_uart.to).
+
 ## Raw memory and globals
 
 `alloc` / `free` / `memcpy` / `memset` / `ptrAdd` and the width-typed
@@ -132,7 +165,8 @@ kernel.elf -serial stdio`).
 
 **Provided:** freestanding objects, cross-target codegen (triple/CPU/features/
 code-model/reloc/red-zone), `naked`/`interrupt` functions, module-level asm,
-constrained inline asm, volatile MMIO, raw memory, a bundled linker, and the C
+constrained inline asm, volatile MMIO with typed `mmio struct` register blocks
+(sized `u8`/`u16`/`u32`/`u64` fields), raw memory, a bundled linker, and the C
 ABI (`extern def`) so Tocin objects link into C/asm and vice-versa.
 
 **Still your job** (as in C): the boot trampoline, paging/long-mode setup for

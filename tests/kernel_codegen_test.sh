@@ -86,4 +86,48 @@ if [ -f "$KDIR/kernel.to" ]; then
     fi
 fi
 
+# --- 5. mmio struct: volatile field access + C layout + runtime correctness ---
+cat > "$TMP/mmio.to" <<'EOF'
+mmio struct Uart { data: u32; status: u32; control: u32; baud: u32; }
+def main() -> int {
+    let base = alloc(16);
+    let u: Uart = mmioAt(base);
+    u.control = 1;
+    u.baud = 115200;
+    u.data = 65;
+    let sum = u.control + u.data;          // widen i32+i32; == 66
+    if (u.status == 0) { sum = sum + 1; }  // sized-field vs i64 literal -> 67
+    if (u.baud != 115200) { return 1; }
+    return sum;
+}
+EOF
+# 5a. IR: field accesses must be volatile, layout must be four i32s (offsets 0/4/8/12).
+if "$TOCIN" "$TMP/mmio.to" -o "$TMP/mmio.ll" 2>"$TMP/mmio.err"; then
+    nv_load=$(grep -c 'load volatile' "$TMP/mmio.ll")
+    nv_store=$(grep -c 'store volatile' "$TMP/mmio.ll")
+    if [ "$nv_load" -ge 1 ] && [ "$nv_store" -ge 1 ] && \
+       grep -q '%Uart = type { i32, i32, i32, i32 }' "$TMP/mmio.ll"; then
+        pass "mmio struct: volatile field access + C layout"
+    else
+        bad "mmio struct: non-volatile access or wrong layout ($nv_load loads, $nv_store stores)"
+    fi
+else
+    bad "mmio struct: compilation failed"; cat "$TMP/mmio.err"
+fi
+# 5b. runtime: fields land at distinct offsets and read back correctly (exit 67).
+"$TOCIN" "$TMP/mmio.to" --run >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 67 ]; then
+    pass "mmio struct: runtime field read/write (exit 67)"
+else
+    bad "mmio struct: runtime wrong (exit $rc, expected 67)"
+fi
+# 5c. mmio structs work freestanding (the actual kernel/driver use case).
+if "$TOCIN" "$TMP/mmio.to" --freestanding --target-triple x86_64-unknown-none \
+      -o "$TMP/mmio_fs.o" 2>"$TMP/mmiofs.err"; then
+    pass "mmio struct: freestanding object"
+else
+    bad "mmio struct: freestanding failed"; cat "$TMP/mmiofs.err"
+fi
+
 exit $fail

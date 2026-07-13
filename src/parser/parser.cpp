@@ -95,6 +95,17 @@ namespace parser
                 consume(lexer::TokenType::DEF, "Expected 'def' after 'extern'");
                 return methodDeclaration(/*allowNoBody=*/true);
             }
+            // `mmio struct Name { ... }`: a memory-mapped register block whose
+            // field accesses lower to volatile loads/stores. `mmio` is a
+            // contextual keyword (an identifier) recognized only before
+            // struct/class, so it stays usable as an ordinary name elsewhere.
+            if (check(lexer::TokenType::IDENTIFIER) && peek().value == "mmio" &&
+                (checkNext(lexer::TokenType::STRUCT) || checkNext(lexer::TokenType::CLASS)))
+            {
+                advance(); // consume 'mmio'
+                advance(); // consume 'struct'/'class'
+                return classDeclaration(/*isMmio=*/true);
+            }
             if (match(lexer::TokenType::CLASS) || match(lexer::TokenType::STRUCT))
             {
                 return classDeclaration();
@@ -289,7 +300,7 @@ namespace parser
         return std::make_shared<ast::BlockStmt>(tok, stmts);
     }
 
-    ast::StmtPtr Parser::classDeclaration()
+    ast::StmtPtr Parser::classDeclaration(bool isMmio)
     {
         auto name = consume(lexer::TokenType::IDENTIFIER, "Expected class name");
         std::vector<ast::TypeParameter> typeParams = parseTypeParameters();
@@ -330,11 +341,15 @@ namespace parser
             }
         }
         consume(lexer::TokenType::RIGHT_BRACE, "Expected '}' after class body");
+        std::shared_ptr<ast::ClassStmt> cls;
         if (!typeParams.empty())
-            return std::make_shared<ast::ClassStmt>(name, name.value, typeParams,
-                                                    nullptr, std::vector<ast::TypePtr>{},
-                                                    fields, methods);
-        return std::make_shared<ast::ClassStmt>(name, name.value, fields, methods);
+            cls = std::make_shared<ast::ClassStmt>(name, name.value, typeParams,
+                                                   nullptr, std::vector<ast::TypePtr>{},
+                                                   fields, methods);
+        else
+            cls = std::make_shared<ast::ClassStmt>(name, name.value, fields, methods);
+        cls->isMmio = isMmio;
+        return cls;
     }
 
     std::shared_ptr<ast::FunctionStmt> Parser::methodDeclaration(bool allowNoBody)

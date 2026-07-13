@@ -30,6 +30,10 @@ namespace codegen
         std::vector<std::string> memberNames; // Names of class members
         llvm::StructType *baseClass;          // Base class type (if any)
         std::map<std::string, llvm::Type *> memberTypes;
+        // `mmio struct`: a memory-mapped device register block. Every field
+        // load/store is emitted volatile (never elided, merged, or reordered),
+        // which is mandatory for hardware registers.
+        bool isMmio = false;
     };
 
     // Structure to hold generic instance information

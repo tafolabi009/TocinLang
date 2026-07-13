@@ -698,6 +698,9 @@ namespace ast
         std::vector<TypePtr> interfaces;           // Implemented interfaces/traits
         std::vector<StmtPtr> fields;
         std::vector<StmtPtr> methods;
+        // `mmio struct`: a memory-mapped device register block. Field accesses
+        // are lowered to volatile loads/stores (for hardware registers).
+        bool isMmio = false;
 
         bool isGeneric() const { return !typeParameters.empty(); }
     };

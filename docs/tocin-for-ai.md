@@ -384,6 +384,15 @@ Two calling styles:
 | `fence()` | `() -> int` | full sequentially-consistent hardware memory barrier |
 | `asm("tmpl")` | template literal | raw side-effecting assembly, no operands (`asm("cli")`, `asm("hlt")`) |
 | `asm(tmpl, constraints, args...)` | literals + ints | constrained assembly (LLVM/GCC syntax, AT&T dialect): at most one leading `"=..."` output, one constraint per input, `~{...}` clobbers. Returns the output operand (or 0). Examples: `let t = asm("rdtsc", "={ax},~{dx}")`, `let s = asm("lea 100($1), $0", "=r,r", x)`, `asm("outb %b1, %w0", "{dx},{ax}", port, val)` |
+| `asmModule("...")` | template literal | emit assembly at module scope (outside functions): multiboot header, `_start`, GDT stubs. Accretes in source order. |
+| `mmioAt(addr)` | `(int) -> ptr` | typed handle to an `mmio struct` at a physical address: `let u: Uart = mmioAt(0x10000000)`. Field access on it is volatile (see below). |
+
+**`mmio struct` — typed device registers.** `mmio struct Name { data: u32; status: u32; ... }` declares a memory-mapped register block: C field layout with sized fields (`u8`/`u16`/`u32`/`u64`, width-aliases of `i8`/`i16`/`i32`/`i64`), and **every field load/store is volatile**. Combine with `mmioAt(addr)`:
+```tocin
+mmio struct Uart { data: u32; status: u32; }
+def putc(base: int, ch: int) { let u: Uart = mmioAt(base); while (u.status & 0x20) == 0 { } u.data = ch; }
+```
+Needs no runtime → works under `--freestanding`. Sized-int fields interoperate with `int` (i64) literals in arithmetic/comparisons (mixed integer widths sign-extend to the wider type). Plain (non-`mmio`) structs keep normal non-volatile field access.
 
 **Option / Result / channels**
 | Builtin | Signature | Returns |

@@ -48,7 +48,7 @@ namespace type_checker
             {"range", {}},
             // raw memory (systems/kernel fast path)
             {"alloc", {1}}, {"free", {1}}, {"memcpy", {3}}, {"memset", {3}},
-            {"bufToStr", {2}}, {"strFromAddr", {1}},
+            {"bufToStr", {2}}, {"strFromAddr", {1}}, {"mmioAt", {1}},
             {"newArray", {1}}, {"zeros", {1}}, {"newFloatArray", {1}},
             {"ptrAdd", {2}}, {"loadByte", {2}}, {"storeByte", {3}},
             {"loadInt", {2}}, {"storeInt", {3}},
